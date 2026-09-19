@@ -1,0 +1,14 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens are introduced by the Frontend phase (P9a). Until then only the base
+ * colour scheme is set so the placeholder page is legible in light and dark mode.
+ */
+:root {
+  color-scheme: dark light;
+}
+
+body {
+  background: #0b0f14;
+  color: #e6edf3;
+}
