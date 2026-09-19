@@ -52,14 +52,43 @@ const RESTRICTED_SYNTAX = [
     selector: "CallExpression[callee.property.name='createContextualFragment']",
     message: HTML_SINK_MESSAGE,
   },
+  {
+    selector:
+      "CallExpression[callee.property.name=/^(write|writeln)$/][callee.object.property.name='document']",
+    message: HTML_SINK_MESSAGE,
+  },
+  {
+    selector: 'CallExpression[callee.property.name=/^(setHTMLUnsafe|parseHTMLUnsafe)$/]',
+    message: HTML_SINK_MESSAGE,
+  },
+  // Object literals feeding sinks, e.g. Object.assign(el, { innerHTML }).
+  { selector: 'Property[key.name=/^(innerHTML|outerHTML|srcdoc)$/i]', message: HTML_SINK_MESSAGE },
+  { selector: "MemberExpression[property.name='srcdoc']", message: HTML_SINK_MESSAGE },
+  { selector: 'JSXAttribute[name.name=/^srcdoc$/i]', message: HTML_SINK_MESSAGE },
+  {
+    selector:
+      "CallExpression[callee.property.name='setAttribute'][arguments.0.value=/^(on|srcdoc$)/i]",
+    message: HTML_SINK_MESSAGE,
+  },
 ];
 
 /** Outbound network calls are only allowed through @geonerva/http (docs/SECURITY.md M1, ADR-028). */
-const NO_DIRECT_NETWORK_GLOBALS = [
-  { name: 'fetch', message: 'Use @geonerva/http: host allowlist, timeouts and size caps.' },
-  { name: 'XMLHttpRequest', message: 'Use @geonerva/http.' },
-  { name: 'WebSocket', message: 'Use @geonerva/http.' },
-];
+const NETWORK_MESSAGE = 'Use @geonerva/http: host allowlist, timeouts and size caps (ADR-028).';
+const NETWORK_PRIMITIVES = ['fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource'];
+const NO_DIRECT_NETWORK_GLOBALS = NETWORK_PRIMITIVES.map((name) => ({
+  name,
+  message: NETWORK_MESSAGE,
+}));
+/** The same primitives reached through a global object (`globalThis.fetch`, `window['fetch']`). */
+const NO_DIRECT_NETWORK_PROPERTIES = ['globalThis', 'window', 'self', 'global'].flatMap((object) =>
+  NETWORK_PRIMITIVES.map((property) => ({ object, property, message: NETWORK_MESSAGE })),
+);
+
+/**
+ * The single browser module allowed to call fetch: the typed client for GeoNerva's own
+ * same-origin /api/v1 (it must reject absolute URLs at runtime; created in P9).
+ */
+const WEB_API_CLIENT = 'apps/web/lib/client/api-client.ts';
 
 const WEB_FILES = ['apps/web/**/*.{ts,tsx,js,jsx,mjs,cjs}'];
 const PURE_ENGINE_FILES = [
@@ -109,6 +138,10 @@ export default tseslint.config(
       ],
       'no-restricted-syntax': ['error', ...RESTRICTED_SYNTAX],
       'no-restricted-globals': ['error', ...NO_DIRECT_NETWORK_GLOBALS],
+      'no-restricted-properties': ['error', ...NO_DIRECT_NETWORK_PROPERTIES],
+      'no-eval': 'error',
+      'no-implied-eval': 'error',
+      'no-new-func': 'error',
     },
   },
 
@@ -118,26 +151,34 @@ export default tseslint.config(
     files: WEB_FILES,
     settings: { next: { rootDir: 'apps/web/' } },
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
-    rules: {
-      'react/no-danger': 'error',
-      // Browser code may call GeoNerva's own same-origin API; server code may not fetch at all.
-      'no-restricted-globals': 'off',
-    },
+    rules: { 'react/no-danger': 'error' },
+  },
+  // Web code (server components, route handlers, server actions, client components) never calls
+  // the network directly. The one exception is the same-origin API client module.
+  {
+    files: [WEB_API_CLIENT],
+    rules: { 'no-restricted-globals': 'off', 'no-restricted-properties': 'off' },
   },
   {
-    files: ['apps/web/app/api/**/*.{ts,js,mjs}', 'apps/web/lib/server/**/*.{ts,js,mjs}'],
-    rules: { 'no-restricted-globals': ['error', ...NO_DIRECT_NETWORK_GLOBALS] },
-  },
-  {
-    // `env` in next.config inlines variables into bundles regardless of their prefix.
+    // Channels that inline values into client bundles regardless of their prefix.
     files: ['apps/web/next.config.{ts,mjs,js}'],
     rules: {
       'no-restricted-syntax': [
         'error',
         ...RESTRICTED_SYNTAX,
         {
-          selector: "Property[key.name='env']",
-          message: 'next.config `env` inlines values into client bundles (docs/SECURITY.md C2).',
+          selector: 'Property[key.name=/^(env|define)$/]',
+          message:
+            'next.config `env`/`define` inline values into client bundles (docs/SECURITY.md C2).',
+        },
+        {
+          selector: 'AssignmentExpression[left.property.name=/^(env|define)$/]',
+          message:
+            'next.config `env`/`define` inline values into client bundles (docs/SECURITY.md C2).',
+        },
+        {
+          selector: "Identifier[name='DefinePlugin']",
+          message: 'DefinePlugin inlines values into client bundles (docs/SECURITY.md C2).',
         },
       ],
     },
@@ -152,11 +193,23 @@ export default tseslint.config(
         ...NO_DIRECT_NETWORK_GLOBALS,
         { name: 'process', message: 'Pure engines receive configuration as arguments.' },
       ],
+      'no-restricted-properties': [
+        'error',
+        ...NO_DIRECT_NETWORK_PROPERTIES,
+        {
+          object: 'globalThis',
+          property: 'process',
+          message: 'Pure engines receive configuration as arguments.',
+        },
+      ],
     },
   },
 
   // The hardened HTTP client is the one place that wraps the network primitives.
-  { files: ['packages/http/src/**/*.ts'], rules: { 'no-restricted-globals': 'off' } },
+  {
+    files: ['packages/http/src/**/*.ts'],
+    rules: { 'no-restricted-globals': 'off', 'no-restricted-properties': 'off' },
+  },
 
   // Tests may use non-null assertions on fixtures they control.
   {
@@ -169,7 +222,10 @@ export default tseslint.config(
     files: ['scripts/**/*.{ts,mjs}', 'apps/worker/src/main.ts', 'apps/worker/src/cli/**/*.ts'],
     rules: { 'no-console': 'off' },
   },
-  { files: ['scripts/**/*.{ts,mjs}'], rules: { 'no-restricted-globals': 'off' } },
+  {
+    files: ['scripts/**/*.{ts,mjs}'],
+    rules: { 'no-restricted-globals': 'off', 'no-restricted-properties': 'off' },
+  },
 
   // The rule definitions and their regression tests necessarily spell out the banned names.
   {
