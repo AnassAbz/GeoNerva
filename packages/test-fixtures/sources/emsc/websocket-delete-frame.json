@@ -1,0 +1,5 @@
+{
+  "frames": [
+    "{\"action\":\"delete\",\"data\":{\n  \"type\": \"Feature\",\n  \"geometry\": {\n    \"type\": \"Point\",\n    \"coordinates\": [\n      14.8718,\n      38.9139,\n      -272.1\n    ]\n  },\n  \"id\": \"20260919_0000246\",\n  \"properties\": {\n    \"source_id\": \"2062625\",\n    \"source_catalog\": \"EMSC-RTS\",\n    \"lastupdate\": \"2026-09-19T21:09:27.257408Z\",\n    \"time\": \"2026-09-19T20:55:32.082Z\",\n    \"flynn_region\": \"SICILY, ITALY\",\n    \"lat\": 38.9139,\n    \"lon\": 14.8718,\n    \"depth\": 272.1,\n    \"evtype\": \"ke\",\n    \"auth\": \"NEIC\",\n    \"mag\": 4.3,\n    \"magtype\": \"mb\",\n    \"unid\": \"20260919_0000246\"\n  }\n}}"
+  ]
+}

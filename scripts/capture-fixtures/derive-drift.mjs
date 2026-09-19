@@ -83,6 +83,11 @@ async function main() {
     extraField: ['"properties":', '"properties_v2_preview":{"x":1},"properties":'],
   }, 'application/json');
 
+  // EMSC websocket delete (P1): none observed in 25 min of listening (only create/update).
+  const ws = JSON.parse(await read('emsc', 'websocket-frames.json'));
+  const firstCreate = ws.frames.find((f) => f.startsWith('{"action":"create"'));
+  await save('emsc', 'websocket-delete-frame.json', JSON.stringify({ frames: [firstCreate.replace('{"action":"create"', '{"action":"delete"')] }, null, 2) + '\n', 'websocket-frames.json', 'SYNTHETIC: first real "create" frame with action changed to "delete" (no delete frame arrived during a 25 min listen on 2026-09-19). Assumes a delete frame carries the same Feature payload — unverified. Expect: tombstone version for that unid.', { http_status: 101, content_type: 'application/json (wrapper: {frames: [raw frame strings]})' });
+
   // GDACS event list
   const gd = await read('gdacs', 'geteventlist-search-eq.json');
   const gdFirst = splitTopLevelArray(gd, 'features').elements[0];

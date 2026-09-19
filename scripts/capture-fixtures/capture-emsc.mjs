@@ -5,7 +5,7 @@
 //   node scripts/capture-fixtures/capture-emsc.mjs revisions   # >= 1 h later: poll updatedafter again, store real revision pairs
 //   node scripts/capture-fixtures/capture-emsc.mjs ws [secs]   # listen to the realtime websocket (P1), default 180 s
 
-import { readFile } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FIXTURE_ROOT, USER_AGENT, captureUrl, politeFetch, saveFixture, trimFeatureCollection } from './lib.mjs';
 
@@ -99,8 +99,11 @@ async function ws(secs = 180) {
       resolve();
     };
   });
-  // Store raw frames verbatim, one per line (NDJSON of the raw text frames).
-  const body = msgs.map((m) => m.data).join('\n') + (msgs.length ? '\n' : '');
+  await saveFrames(url, secs, msgs);
+}
+
+/** Frames are pretty-printed multi-line JSON, so they are stored as a JSON array of the raw frame strings. */
+async function saveFrames(url, secs, msgs) {
   const actions = msgs.map((m) => {
     try {
       return JSON.parse(m.data).action;
@@ -108,18 +111,50 @@ async function ws(secs = 180) {
       return 'unparseable';
     }
   });
-  await saveFixture(SOURCE, 'websocket-frames.ndjson', body, {
+  const body = JSON.stringify({ frames: msgs.map((m) => m.data), received_at: msgs.map((m) => m.received_at) }, null, 2) + '\n';
+  await saveFixture(SOURCE, 'websocket-frames.json', body, {
     url,
     http_status: 101,
-    content_type: 'application/x-ndjson (one raw websocket text frame per line)',
-    notes: `Raw frames received during a ${secs}s listen. Actions: ${JSON.stringify(actions)}. Receive times: ${JSON.stringify(msgs.map((m) => m.received_at))}`,
+    content_type: 'application/json (wrapper: {frames: [raw websocket text frame strings], received_at: [...]})',
+    notes: `Raw text frames received during a ${secs}s listen, each kept verbatim as a string. Actions: ${JSON.stringify(actions)}. Frame payload shape: {action, data: GeoJSON Feature}.`,
   });
+}
+
+/** Convert a legacy websocket-frames.ndjson (frames joined by "\n", frames may span lines) into websocket-frames.json. */
+async function convertLegacy(secs) {
+  const p = join(FIXTURE_ROOT, SOURCE, 'websocket-frames.ndjson');
+  const text = await readFile(p, 'utf8');
+  const frames = [];
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let start = -1;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (c === '}') {
+      depth--;
+      if (depth === 0) frames.push(text.slice(start, i + 1));
+    }
+  }
+  await saveFrames('wss://www.seismicportal.eu/standing_order/websocket', secs, frames.map((data) => ({ data, received_at: null })));
+  await unlink(p);
 }
 
 const [cmd, arg] = process.argv.slice(2);
 if (cmd === 'main') await main();
 else if (cmd === 'revisions') await revisions();
 else if (cmd === 'ws') await ws(Number(arg ?? 180));
+else if (cmd === 'ws-convert') await convertLegacy(Number(arg ?? 1500));
 else {
   console.error('usage: capture-emsc.mjs main | revisions | ws [secs]');
   process.exit(2);

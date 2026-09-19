@@ -171,14 +171,26 @@
       "derived_from": null
     },
     {
-      "file": "websocket-frames.ndjson",
-      "url": "wss://www.seismicportal.eu/standing_order/websocket",
-      "captured_at": "2026-09-19T21:02:22.573Z",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "bytes": 0,
+      "file": "websocket-delete-frame.json",
+      "url": null,
+      "captured_at": "2026-09-19T00:00:00.000Z",
+      "sha256": "fc48bf7a3ea037a5c755497a21ce4f8cb8ae9d378fa6d0d394ef424160d49b14",
+      "bytes": 692,
       "http_status": 101,
-      "content_type": "application/x-ndjson (one raw websocket text frame per line)",
-      "notes": "Raw frames received during a 300s listen. Actions: []. Receive times: []",
+      "content_type": "application/json (wrapper: {frames: [raw frame strings]})",
+      "notes": "SYNTHETIC: first real \"create\" frame with action changed to \"delete\" (no delete frame arrived during a 25 min listen on 2026-09-19). Assumes a delete frame carries the same Feature payload — unverified. Expect: tombstone version for that unid.",
+      "synthetic": true,
+      "derived_from": "websocket-frames.json"
+    },
+    {
+      "file": "websocket-frames.json",
+      "url": "wss://www.seismicportal.eu/standing_order/websocket",
+      "captured_at": "2026-09-19T21:32:25.771Z",
+      "sha256": "ec407950b9e45eb8ab0fbef9e49f40fd570f4e91f00acebd273d4c7e7493d18f",
+      "bytes": 9640,
+      "http_status": 101,
+      "content_type": "application/json (wrapper: {frames: [raw websocket text frame strings], received_at: [...]})",
+      "notes": "Raw text frames received during a 1500s listen, each kept verbatim as a string. Actions: [\"create\",\"update\",\"create\",\"update\",\"update\",\"update\",\"create\",\"create\",\"create\",\"update\",\"update\",\"create\",\"create\",\"update\"]. Frame payload shape: {action, data: GeoJSON Feature}.",
       "synthetic": false,
       "derived_from": null
     }
