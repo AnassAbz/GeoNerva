@@ -1,0 +1,53 @@
+{"type":"FeatureCollection","metadata":{"count":13},"features":[{
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [
+      26.8410,
+      38.7883,
+      -6.9
+    ]
+  },
+  "id": "20260919_0000244",
+  "properties": {
+    "source_id": "2062623",
+    "source_catalog": "EMSC-RTS",
+    "lastupdate": "2026-09-19T20:46:48.559425Z",
+    "time": "2026-09-19T20:35:53.1Z",
+    "flynn_region": "NEAR THE COAST OF WESTERN TURKEY",
+    "lat": 38.7883,
+    "lon": 26.8410,
+    "depth": 6.9,
+    "evtype": "ke",
+    "auth": "KOERI",
+    "mag": 2.0,
+    "magtype": "ml",
+    "unid": "20260919_0000244"
+  }
+},{
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [
+      -155.2677,
+      19.4000,
+      0.2
+    ]
+  },
+  "id": "20260919_0000238",
+  "properties": {
+    "source_id": "2062613",
+    "source_catalog": "EMSC-RTS",
+    "lastupdate": "2026-09-19T20:23:50.277668Z",
+    "time": "2026-09-19T20:20:52.38Z",
+    "flynn_region": "ISLAND OF HAWAII, HAWAII",
+    "lat": 19.4000,
+    "lon": -155.2677,
+    "depth": -0.2,
+    "evtype": "ke",
+    "auth": "HV",
+    "mag": 2.5,
+    "magtype": "ml",
+    "unid": "20260919_0000238"
+  }
+}]}

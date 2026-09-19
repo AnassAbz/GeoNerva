@@ -183,6 +183,34 @@
       "derived_from": null
     },
     {
+      "file": "revision-t0.geojson",
+      "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson",
+      "captured_at": "2026-09-19T20:56:01.000Z",
+      "sha256": "b31c5b857aab2f3e5c92f74de5a13f7298cf1caeb03812bd4058460e32c578dd",
+      "bytes": 1768,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "TRIMMED from all_day.geojson (t0) to the 2 features that changed by t1. Reasons: {\"hv75040342\":\"status automatic->reviewed; mag 2.3->2.13; location/depth\",\"hv75040337\":\"status automatic->reviewed; mag 2.62->1.91; location/depth\"}",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "revision-t1.geojson",
+      "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson",
+      "captured_at": "2026-09-19T21:44:41.423Z",
+      "sha256": "ced1a968eee9c1596efe15961d65e418981f47b74618d5cdb7b42f0392268230",
+      "bytes": 1698,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "TRIMMED from a second all_day poll (t1, generated 2026-09-19T21:44:01.000Z) to the 2 features that changed since t0 (2 automatic->reviewed). Pair with revision-t0.geojson.",
+      "synthetic": false,
+      "derived_from": null,
+      "revision_reasons": {
+        "hv75040342": "status automatic->reviewed; mag 2.3->2.13; location/depth",
+        "hv75040337": "status automatic->reviewed; mag 2.62->1.91; location/depth"
+      }
+    },
+    {
       "file": "summary-pager-alert.geojson",
       "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_month.geojson",
       "captured_at": "2026-09-19T20:56:09.633Z",

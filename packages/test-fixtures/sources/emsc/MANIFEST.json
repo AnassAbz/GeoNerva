@@ -159,6 +159,30 @@
       "derived_from": null
     },
     {
+      "file": "revision-t0.json",
+      "url": "see updatedafter-t0.json",
+      "captured_at": "2026-09-19T21:44:47.519Z",
+      "sha256": "4979b762a65f3e4d889bff7b506b8b31858a1f4588f5c541ccabf88ffc06fdea",
+      "bytes": 1173,
+      "http_status": 200,
+      "content_type": "application/json",
+      "notes": "TRIMMED from updatedafter-t0.json to the 2 events whose lastupdate changed by t1. Changed properties: {\"20260919_0000244\":\"lastupdate,time,flynn_region,lat,lon,depth,auth,mag\",\"20260919_0000238\":\"lastupdate,time,lat,lon,depth,mag\"}",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "revision-t1.json",
+      "url": "https://www.seismicportal.eu/fdsnws/event/1/query?format=json&updatedafter=2026-09-19T20:07:33&limit=2000",
+      "captured_at": "2026-09-19T21:44:47.537Z",
+      "sha256": "b289725f2dc700c000d432563c45947de574f47fdc44210ed394893810ac9d02",
+      "bytes": 1157,
+      "http_status": 200,
+      "content_type": "application/json",
+      "notes": "TRIMMED to the same 2 events as revision-t0.json, polled later (real revisions: same unid, newer lastupdate).",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
       "file": "updatedafter-t0.json",
       "url": "https://www.seismicportal.eu/fdsnws/event/1/query?format=json&updatedafter=2026-09-19T19:57:09&limit=500",
       "captured_at": "2026-09-19T20:57:10.499Z",
