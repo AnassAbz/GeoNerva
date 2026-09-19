@@ -6,10 +6,13 @@
 const PURE_ENGINES = '^packages/(domain|geo|correlation|relevance|baselines|changes)/';
 const TEST_FILES = '\\.(int\\.)?test\\.ts$';
 
-const DATABASE_PACKAGES = ['pg', 'pg-pool', 'postgres', 'kysely', '@supabase'];
+// Entries are regular-expression alternatives: 'pg-[a-z-]+' covers pg-pool, pg-cursor, pg-native, …
+const DATABASE_PACKAGES = ['pg', 'pg-[a-z-]+', 'postgres', 'kysely', '@supabase', '@neondatabase'];
+const NETWORK_PACKAGES = ['undici', 'ws', 'axios', 'node-fetch', 'got', 'ky'];
+const NETWORK_CORE_MODULES = ['http', 'https', 'http2', 'net', 'tls', 'dgram'];
 const IO_PACKAGES = [
   ...DATABASE_PACKAGES,
-  'undici',
+  ...NETWORK_PACKAGES,
   'next',
   'react',
   'react-dom',
@@ -17,23 +20,27 @@ const IO_PACKAGES = [
   'croner',
 ];
 const IO_CORE_MODULES = [
+  ...NETWORK_CORE_MODULES,
   'fs',
   'fs/promises',
-  'net',
-  'http',
-  'https',
-  'http2',
-  'tls',
   'dns',
   'dns/promises',
-  'dgram',
   'child_process',
   'worker_threads',
   'cluster',
   'module',
   'process',
   'os',
+  'sqlite',
+  'vm',
+  'inspector',
+  'v8',
 ];
+
+/** @param {string[]} names */
+function coreModule(names) {
+  return `^(node:)?(${names.join('|')})$`;
+}
 
 /**
  * Matches npm modules as resolved by pnpm (node_modules/.pnpm/<name>@<version>/…, where a
@@ -88,7 +95,7 @@ module.exports = {
         'Pure engines must not import database, network, filesystem, process or framework modules.',
       severity: 'error',
       from: { path: PURE_ENGINES, pathNot: TEST_FILES },
-      to: { path: `(${npmModule(IO_PACKAGES)}|^(node:)?(${IO_CORE_MODULES.join('|')})$)` },
+      to: { path: `(${npmModule(IO_PACKAGES)}|${coreModule(IO_CORE_MODULES)})` },
     },
     {
       name: 'sql-only-in-db',
@@ -96,6 +103,14 @@ module.exports = {
       severity: 'error',
       from: { pathNot: '^(packages/db/|scripts/)' },
       to: { path: npmModule(DATABASE_PACKAGES) },
+    },
+    {
+      name: 'raw-network-only-in-http',
+      comment:
+        'Raw network modules bypass the host allowlist, SSRF checks and size caps; only packages/http (and operational scripts) may use them (ADR-028).',
+      severity: 'error',
+      from: { pathNot: '^(packages/http/|scripts/)' },
+      to: { path: `(${npmModule(NETWORK_PACKAGES)}|${coreModule(NETWORK_CORE_MODULES)})` },
     },
     {
       name: 'outbound-http-importers',
