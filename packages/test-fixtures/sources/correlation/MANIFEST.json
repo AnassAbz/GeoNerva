@@ -1,0 +1,17 @@
+{
+  "source": "correlation",
+  "fixtures": [
+    {
+      "file": "eq-pairs.json",
+      "url": null,
+      "captured_at": "2026-09-19T21:31:15.759Z",
+      "sha256": "949437e598418bb6671fb278ce497027589b0d5c2f5fd32dd4c758ac2355a697",
+      "bytes": 233154,
+      "http_status": null,
+      "content_type": null,
+      "notes": "Labelled correlation set: {\"total\":250,\"MATCH\":186,\"NO_MATCH\":64,\"hand_checked\":38,\"by_subset\":{\"global_m45\":111,\"sequence_m45\":74,\"euromed_m3_4.5\":65},\"usgs_events_sampled\":190,\"usgs_events_without_emsc_match\":2}. Built by build-eq-pairs.mjs (network requests this run: 0).",
+      "synthetic": true,
+      "derived_from": "USGS FDSN + EMSC EventID service + EMSC FDSN (live, 2026-09-19)"
+    }
+  ]
+}
