@@ -34,6 +34,9 @@ Index:
 | 026 | Internal packages ship TypeScript source; no package build step | Accepted |
 | 027 | Lint/tooling version constraints and supply-chain defaults | Accepted |
 | 028 | Geocoding package is the web app's only outbound route | Accepted |
+| 029 | GDACS incremental sync: RSS trigger + bounded SEARCH windows + content hash | Accepted |
+| 030 | Contributor identity decides independence; EMSC tombstones by reconcile | Accepted |
+| 031 | Target PostGIS 3.3; local/CI images pinned to 17-3.4 | Accepted |
 
 > **2026-09-19, product-owner review:** Architecture approved (gate G0 passed). ADR-012 model/budget is resolved: `AI_MODE=disabled` in production for v1, and no paid AI at launch. ADR-018 is resolved: `lean` profile on free infrastructure. Licence is Apache-2.0. The deployment is non-commercial.
 
@@ -327,3 +330,40 @@ Turborepo is not adopted until build times justify it.
   - `apps/web` must not reach `sources`/`pipeline` even transitively (`reachable` rule).
   - ESLint bans `fetch`/`XMLHttpRequest`/`WebSocket` outside `packages/http`, with two exceptions: browser code in `apps/web`, which calls its own same-origin API, and operational scripts.
 - **Trade-offs:** One more package. In exchange, the SSRF surface of the web process is a single, reviewable module.
+
+## ADR-029 — GDACS incremental sync: RSS trigger plus bounded SEARCH windows, change by content hash
+- **Date:** 2026-09-19 (P0 verification, items V2 and §2.1)
+- **Context:** P0 measured the GDACS API rather than trusting its Swagger document:
+  - `geteventlist/latest?datemodified=` silently omits Green events unless `alertlevel=green;orange;red` is passed, and it is ordered by `todate`, not by `datemodified`.
+  - **Paging overlaps.** Page 1 and page 2 of the same query shared 78 of 100 events (`latest`) and 67 of 100 (`SEARCH`), so `pageNumber > 1` cannot be used for completeness.
+  - `datemodified` is **bulk-restamped**: dozens of unrelated old events get the same new timestamp within one minute.
+  - `SEARCH` without `alertlevel` reproducibly returns HTTP 204.
+- **Chosen:**
+  - Poll `rss_24h.xml` as the cheap change trigger (it carries `eventid`, `episodeid` and alert level).
+  - Reconcile with `SEARCH` over date windows chosen so each returns **fewer than 100 events**, splitting recursively when a window fills; never page.
+  - Always send `alertlevel=green;orange;red`; treat 204 as "empty and suspicious".
+  - Deduplicate by `(eventtype, eventid)`.
+  - **Detect change only by the content hash of the normalised episode**, never by `source_updated_at`.
+- **Consequence for replay:** `getepisodedata` for an old episode returns the *event's current* alert level and severity, so historical episode content cannot be reconstructed. GDACS replay contains only episodes GeoNerva observed live, which is stated in the UI's replay caveats.
+- **Trade-offs:** More requests than a true incremental feed, and a small risk of missing an event whose window was sized wrongly — hence the "no window may return ≥ 100 rows" assertion in the ingestion drill.
+
+## ADR-030 — Contributor identity decides independence; EMSC deletions are tombstoned by reconcile
+- **Date:** 2026-09-19 (P0 verification, item V6 and the correlation calibration set)
+- **Context:**
+  - EMSC republishes other agencies' solutions and exposes the agency in `auth`. P0 found a real case where EMSC carried **`auth: NEIC` with a stale magnitude**: USGS M4.5 versus EMSC M3.2 at Δt 0 s and Δdistance 0 km.
+  - EMSC's FDSN service has **no deleted-event query**; deletions appear only on its websocket, which v1 does not consume.
+  - The 250-pair labelled set shows true pairs reaching 16.4 s / 135 km / ΔM 1.9, while *distinct* events come as close as 21 s / 30 km, and 46 s / 34 km with identical magnitudes.
+- **Chosen:**
+  - `contributor` (`auth` for EMSC, `net`/`sources` for USGS) is a **first-class normalised field**, not an `attributes` key.
+  - An EMSC observation whose contributor is the same agency as the matched USGS record is linked as `DERIVED_COPY`, not as an independent source, and is excluded from the independent-agreement calculation exactly like a GDACS copy (ADR-006).
+  - The magnitude veto does **not** apply when time and location are effectively identical and the contributor indicates republication; magnitude disagreement is then expected and is reported as a staleness caveat rather than as a conflict.
+  - Thresholds alone cannot separate the hardest true pairs from the hardest distinct events, so the **uniqueness gap is load-bearing**, and the misfit scales must be calibrated against `packages/test-fixtures/sources/correlation/eq-pairs.json` in P5 (target: precision ≥ 0.98, recall ≥ 0.95, with the 4 `ambiguous` pairs reported separately). The scales in ARCHITECTURE §6 are a starting point known to reject the most extreme true pairs.
+  - EMSC deletions: re-query the last 7 days daily; a `unid` missing from two consecutive reconciles gets a tombstone version with lifecycle status **`MISSING_FROM_SOURCE`**, which is distinct from `DELETED` (an explicit provider statement).
+- **Trade-offs:** A deleted EMSC event stays visible for up to two reconcile cycles. The alternative (a websocket consumer) is P1.
+
+## ADR-031 — Target PostGIS 3.3; local and CI images pinned to 17-3.4
+- **Date:** 2026-09-19 (P0 verification, item V8)
+- **Context:** Supabase ships **PostGIS 3.3.7 on Postgres 17** (3.3.2 on Postgres 15), and new projects default to Postgres 17. The Docker Hub library publishes no `postgis/postgis:17-3.3` tag.
+- **Alternatives:** target 3.5 and accept that production differs (rejected: migrations would fail in production, which is the worst possible place to find out); move the database to Neon, which ships 3.5/3.6 (rejected for now: owner decision Q2 fixed Supabase Free); self-host Postgres on the worker VM (kept as the escape hatch if a 3.3 limitation bites).
+- **Chosen:** Migrations and spatial SQL use **PostGIS 3.3 features only**. Local development and CI pin `postgis/postgis:17-3.4@sha256:…` (the closest published tag, enforced identical in both places by `scripts/infra-consistency.test.ts`), and the database layer records `postgis_full_version()` so a mismatch is visible. P10 asserts the live Supabase version.
+- **Trade-offs:** A one-minor gap between development and production remains, in the safe direction (development is newer, so a 3.4-only function still compiles locally). This is why the feature restriction is a review item on every migration, not only an image pin.

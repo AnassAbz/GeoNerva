@@ -162,9 +162,9 @@ Changes from the brief:
 | Source | Poll | Request | Reconcile |
 |---|---|---|---|
 | USGS | 5 min | `summary/all_day.geojson` (conditional GET) | Hourly FDSN `updatedafter=last_success−2h`. Daily `includedeleted=only` for the last 30 d. Cold start or gap > 20 h: `all_week` |
-| EMSC | 5 min | FDSN `format=json&updatedafter=last_success−30min&limit=2000` | Daily `starttime=−7d` sweep for deletions/merges |
-| GDACS | 10 min | `rss.xml` (conditional). For new or changed `(eventid, episodeid)`: `geteventdata` (+ `getgeometry` for FL/TC/WF) | Daily `geteventlist/SEARCH` last 30 d, paged at 100 |
-| FIRMS | 30 min | Area API `world`, `DAY_RANGE=2`, per active VIIRS product. Keyless 24 h CSV if no key / key exhausted | `missing_data` daily, which marks "no satellite data" days |
+| EMSC | 5 min | FDSN `format=json&updatedafter=last_success−30min&limit=2000`. `updatedafter` is **not** ordered by `lastupdate` and resurfaces old revised events | Daily re-query of the last 7 d. A `unid` absent from two consecutive reconciles is tombstoned `MISSING_FROM_SOURCE` (ADR-030): FDSN has no deleted-event query |
+| GDACS | 10 min | `rss_24h.xml` (conditional) as the change trigger. For new or changed `(eventid, episodeid)`: `geteventdata` (+ `getgeometry` for FL/TC/WF; cap/simplify geometry, observed up to 1.8 MB per call) | `SEARCH` over windows sized to return **< 100 events**, split recursively, `alertlevel=green;orange;red` always, dedupe by `(eventtype, eventid)`. **Never page**: pages overlap (ADR-029) |
+| FIRMS | 30 min | Area API `world`, `DAY_RANGE=2`, per active VIIRS product. Keyless CSV if no key / key exhausted — note the keyless "24 h" file actually spans ≈ 42 h, so it is a rolling window, not a day | `missing_data` daily (the keyless `?action=fetch_data` JSON works without a key), which marks "no satellite data" days |
 
 ### 4.4 Backfills (worker CLI, idempotent, resumable)
 
@@ -219,7 +219,7 @@ Correlation is deterministic, versioned (`algorithm_version`) and explainable. A
 **Stage 2: spatiotemporal (`SPATIOTEMPORAL`)**, used for USGS↔EMSC (independent solutions).
 
 ```text
-candidate generation (indexed):   |Δt| ≤ 60 s  AND  ST_DWithin(epicentres, 150 km)   against canonical_event_state
+candidate generation (indexed):   |Δt| ≤ 90 s  AND  ST_DWithin(epicentres, 150 km)   against canonical_event_state
                                   excluding canonical events that already hold a record from the same source
 misfit(c) = |Δt| / 16 s  +  d_epi / 100 km  +  |ΔM| / 0.8
            ΔM compared on each source's preferred magnitude; if magnitude-type families differ (Mw vs mb vs ML)
@@ -236,6 +236,12 @@ Threshold rationale:
 - EMSC's own EventID service uses a misfit of the same form with (105 km, 13 s, 0.8 mag).
 - The brief's 120 s / 50 km / 0.5 is inverted: 120 s is far too loose in time (it lets aftershocks match), and 50 km is too tight in space for global solutions, which USGS says can be "10s of kilometers" off.
 - All parameters live in `correlation/earthquake.config.ts` and are calibrated against a labelled fixture set built from the EMSC EventID service (§TESTING). The EventID service's matches serve as ground truth for evaluation only, not at runtime.
+
+**What the labelled set says [P0 2026-09-19]** (250 pairs, `packages/test-fixtures/sources/correlation/eq-pairs.json`, 38 hand-checked):
+- True pairs reach **16.4 s / 135 km / ΔM 1.9** (medians 0.72 s / 8.5 km / ΔM 0); distinct events come as close as **21 s / 30 km**, and 46 s / 34 km with *identical* magnitudes.
+- Therefore **no threshold triple separates the hardest cases**, and the uniqueness gap carries the decision. The scales above are a starting point that is known to reject the most extreme true pairs, and P5 must calibrate against this set to the G5 targets (precision ≥ 0.98, recall ≥ 0.95), reporting the 4 `ambiguous` pairs separately.
+- A true pair at Δt 0 s / 0 km can still show ΔM 1.3 when EMSC republishes a stale USGS magnitude, so the magnitude veto is suspended when the contributor indicates republication (ADR-030). Independence is decided by contributor identity, never by value agreement.
+- The EventID service itself is fallible: hand-checking found 2 errors in the reviewed subset (≈ 99 % precision), so it is usable ground truth but not an oracle.
 
 **Revisions and hysteresis.** When a linked record gets a new version, its link is re-evaluated:
 
@@ -647,19 +653,21 @@ The packet contains the place label, rounded coordinates, and distances. It neve
 
 ## 12. Storage budget and retention profiles
 
-The brief assumes Supabase Free (500 MB) can host a global, multi-hazard, replayable archive. It cannot: FIRMS alone produces ~230k detections/day (NOAA-20 + NOAA-21). Retention is therefore a **profile** (`RETENTION_PROFILE`), and the replay horizon is derived from it and exposed via the API.
+The brief assumes Supabase Free (500 MB) can host a global, multi-hazard, replayable archive. It cannot: FIRMS alone produces roughly **146k detections/day** (NOAA-20 + NOAA-21). Retention is therefore a **profile** (`RETENTION_PROFILE`), and the replay horizon is derived from it and exposed via the API.
 
-**Estimated steady state, lean profile** (to be measured in Phase 2 with real data using `scripts/estimate-storage.ts`; estimates, not facts):
+> **Volume correction [P0 2026-09-19].** An earlier figure of ~230k/day came from row counts of the keyless "24 h" files. P0 measured that those files actually span **≈ 42 h** of acquisition times (128k rows for NOAA-20 over 42 h), so the real rate is **≈ 73k rows/day/satellite**. The estimates below are still estimates; P2 replaces them with measured table and index sizes.
+
+**Estimated steady state, lean profile** (measured in P2; estimates, not facts):
 
 | Table | Estimate |
 |---|---|
-| fire_detections (72 h, ~700k rows) | ~140 MB |
+| fire_detections (72 h, ~440k rows) | ~90 MB |
 | EQ versions: USGS M ≥ 4.5 since 2000 (~190k) + EMSC M ≥ 3.0 since 2021 + recent all-magnitude 90 d | ~150–200 MB |
 | GDACS + geometries | ~20 MB |
 | fire_cluster_versions (30 d), fire_daily_cells (0.5°, 400 d) | ~40 MB |
 | places (GeoNames cities15000) | ~10 MB |
 | runs, snapshots, caches | ~20 MB |
-| **Total** | **~380–430 MB of 500 MB** |
+| **Total** | **~330–380 MB of 500 MB** |
 
 This is tight but feasible. If measurement exceeds 450 MB, the lean profile reduces the EMSC backfill to M ≥ 3.5 or narrows fire retention to 48 h. **Standard profile** (≥ 8 GB, e.g. Supabase Pro at ~US$25/month or self-hosted Postgres on the worker VM) keeps 30 d detections, 5 y fire cells and 2 y small-EQ history. The choice is an open product-owner question (see `IMPLEMENTATION_PLAN.md` §Open questions).
 
