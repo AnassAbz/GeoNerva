@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ConfigError, DEFAULT_MAP_STYLE_URL, loadWebConfig, loadWorkerConfig } from './env.ts';
 
 // Deterministic test value with the shape of `openssl rand -hex 32`.
-const SECRET = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
+const SECRET = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08'; // gitleaks:allow
 
 const validWeb = {
   DATABASE_URL: 'postgresql://web:pw@localhost:5432/geonerva',

@@ -11,7 +11,7 @@ describe('describeWorkerConfig', () => {
       FIRMS_MAP_KEY: 'firms-map-key-value',
       AI_MODE: 'anthropic',
       ANTHROPIC_API_KEY: 'sk-ant-should-not-appear',
-      WORKER_TRIGGER_SECRET: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+      WORKER_TRIGGER_SECRET: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08', // gitleaks:allow
     });
     const text = describeWorkerConfig(config).join('\n');
 

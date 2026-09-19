@@ -1,0 +1,8 @@
+# Allowlisted findings. Each line is a gitleaks fingerprint (commit:file:rule:line).
+#
+# These are deterministic, non-secret test fixtures used to assert that configuration
+# validation and log redaction work (packages/config, apps/worker). They are credentials for
+# nothing. Current revisions carry an inline `gitleaks:allow` comment; these entries cover the
+# commits that introduced them, because CI scans full history.
+2b471806bd80cf3471307ad67cecd9cd95a85a29:packages/config/src/env.test.ts:generic-api-key:6
+2b471806bd80cf3471307ad67cecd9cd95a85a29:apps/worker/src/cli/check-config.test.ts:generic-api-key:14
