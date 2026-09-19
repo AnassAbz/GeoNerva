@@ -582,8 +582,9 @@ describe('retention (ADR-018)', () => {
 
     expect(await listDetectionPartitionDays(db)).toContain('20260910');
 
-    const dropped = await dropDetectionPartitionsBefore(db, new Date('2026-09-15T00:00:00.000Z'));
-    expect(dropped).toContain('fire_detections_20260910');
+    const retention = await dropDetectionPartitionsBefore(db, new Date('2026-09-15T00:00:00.000Z'));
+    expect(retention.dropped).toContain('fire_detections_20260910');
+    expect(retention.deferred).toEqual([]);
 
     const remaining = await listDetectionPartitionDays(db);
     expect(remaining).not.toContain('20260910');

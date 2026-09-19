@@ -148,15 +148,44 @@ export async function bulkInsertDetections(
   };
 }
 
-/** Retention: drops whole daily partitions. Returns the names dropped (ADR-018). */
+/**
+ * Retention: drops whole daily partitions, **one statement at a time** (ADR-018, S-7).
+ *
+ * `DROP TABLE` on a partition takes ACCESS EXCLUSIVE on the parent, and PostgreSQL's lock queue
+ * is FIFO: dropping every expired day in one transaction would park all ingestion behind one
+ * long-running reader. Each day is dropped separately, under a lock timeout, and a day that is
+ * busy right now is simply left for the next run — retention is never urgent.
+ */
 export async function dropDetectionPartitionsBefore(
   db: Db,
   cutoff: Date,
-): Promise<readonly string[]> {
-  const result = await sql<{ name: string }>`
-    SELECT geonerva.drop_fire_detection_partitions_before(${cutoff.toISOString().slice(0, 10)}::date) AS name
+  options: { lockTimeoutMs?: number } = {},
+): Promise<{ readonly dropped: readonly string[]; readonly deferred: readonly string[] }> {
+  const due = await sql<{ day: string }>`
+    SELECT to_char(day, 'YYYYMMDD') AS day
+    FROM geonerva.fire_detection_partitions_before(${cutoff.toISOString().slice(0, 10)}::date) AS day
   `.execute(db);
-  return result.rows.map((row) => row.name);
+
+  const dropped: string[] = [];
+  const deferred: string[] = [];
+  for (const { day } of due.rows) {
+    try {
+      const result = await sql<{ dropped: boolean }>`
+        SELECT geonerva.drop_fire_detection_partition(
+          to_date(${day}, 'YYYYMMDD'), ${options.lockTimeoutMs ?? 5000}
+        ) AS dropped
+      `.execute(db);
+      if (result.rows[0]?.dropped === true) dropped.push(`fire_detections_${day}`);
+    } catch (error) {
+      // 55P03 lock_not_available: someone is reading the fire table. Try again tonight.
+      if ((error as { code?: string }).code === '55P03') {
+        deferred.push(`fire_detections_${day}`);
+        continue;
+      }
+      throw error;
+    }
+  }
+  return { dropped, deferred };
 }
 
 /** The days that currently have a partition, oldest first: the fire replay horizon in practice. */
