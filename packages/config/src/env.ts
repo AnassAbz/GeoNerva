@@ -63,6 +63,23 @@ const common = {
   RETENTION_PROFILE: z.enum(RETENTION_PROFILES).default('lean'),
 };
 
+/**
+ * Variables that must never reach a browser, used by `pnpm build:canary`
+ * (scripts/check-bundle-secrets.ts). `env.test.ts` fails if a new secret-looking variable is
+ * added to a schema without being listed here (docs/reviews/security-p1.md R-3).
+ */
+export const SECRET_ENV_VARS = [
+  'DATABASE_URL',
+  'DATABASE_URL_WORKER',
+  'RATE_LIMIT_SECRET',
+  'FIRMS_MAP_KEY',
+  'WORKER_TRIGGER_SECRET',
+  'ANTHROPIC_API_KEY',
+] as const;
+
+/** Variables whose names look sensitive but are deliberately public. */
+export const PUBLIC_ENV_VARS = ['MAP_STYLE_URL'] as const;
+
 const webSchema = z.object({
   ...common,
   DATABASE_URL: postgresUrl,
@@ -79,7 +96,7 @@ const webSchema = z.object({
     .default(DEFAULT_MAP_STYLE_URL),
 });
 
-const workerSchema = z
+const workerObject = z
   .object({
     ...common,
     DATABASE_URL_WORKER: postgresUrl,
@@ -106,6 +123,13 @@ const workerSchema = z
       });
     }
   });
+
+const workerSchema = workerObject;
+
+/** Every declared variable name, so tests can check the secret inventory (R-3). */
+export const ENV_VAR_NAMES: readonly string[] = [
+  ...new Set([...Object.keys(webSchema.shape), ...Object.keys(workerObject.shape)]),
+];
 
 export type WebConfig = Readonly<z.infer<typeof webSchema>>;
 export type WorkerConfig = Readonly<z.infer<typeof workerSchema>>;

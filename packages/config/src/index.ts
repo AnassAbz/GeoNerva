@@ -6,10 +6,13 @@
  */
 export {
   AI_MODES,
+  ENV_VAR_NAMES,
   ConfigError,
   DEFAULT_AI_MODEL,
   DEFAULT_MAP_STYLE_URL,
+  PUBLIC_ENV_VARS,
   RETENTION_PROFILES,
+  SECRET_ENV_VARS,
   isPostgresUrl,
   loadWebConfig,
   loadWorkerConfig,

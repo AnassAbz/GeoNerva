@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { ConfigError, DEFAULT_MAP_STYLE_URL, loadWebConfig, loadWorkerConfig } from './env.ts';
+import {
+  ConfigError,
+  DEFAULT_MAP_STYLE_URL,
+  ENV_VAR_NAMES,
+  PUBLIC_ENV_VARS,
+  SECRET_ENV_VARS,
+  loadWebConfig,
+  loadWorkerConfig,
+} from './env.ts';
 
 // Deterministic test value with the shape of `openssl rand -hex 32`.
 const SECRET = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08'; // gitleaks:allow
@@ -145,5 +153,25 @@ describe('loadWorkerConfig', () => {
     expect(
       issuesOf(() => loadWorkerConfig({ ...validWorker, WORKER_TRIGGER_SECRET: 'short' })),
     ).toEqual(['WORKER_TRIGGER_SECRET: must be at least 32 characters']);
+  });
+});
+
+describe('secret inventory (docs/reviews/security-p1.md R-3)', () => {
+  it('lists every declared variable whose name implies a credential', () => {
+    const sensitive = ENV_VAR_NAMES.filter((name) =>
+      /(SECRET|KEY|TOKEN|PASSWORD|CREDENTIAL|_URL$|_DSN$)/.test(name),
+    );
+    const covered = new Set<string>([...SECRET_ENV_VARS, ...PUBLIC_ENV_VARS]);
+    const uncovered = sensitive.filter((name) => !covered.has(name));
+    expect(
+      uncovered,
+      'add each of these to SECRET_ENV_VARS (canary-scanned) or PUBLIC_ENV_VARS (deliberately public)',
+    ).toEqual([]);
+  });
+
+  it('only lists variables that are actually declared', () => {
+    for (const name of [...SECRET_ENV_VARS, ...PUBLIC_ENV_VARS]) {
+      expect(ENV_VAR_NAMES, `${name} is listed but not declared in any schema`).toContain(name);
+    }
   });
 });

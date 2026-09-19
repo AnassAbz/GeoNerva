@@ -4,10 +4,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  SECRET_ENV_NAMES,
+  SECRET_ENV_VARS,
   canaryMarker,
   canaryValue,
   findCanaries,
+  markerEncodings,
 } from './check-bundle-secrets.ts';
 
 const dirs: string[] = [];
@@ -30,9 +31,9 @@ describe('bundle secret canaries', () => {
   const marker = canaryMarker('RATE_LIMIT_SECRET');
 
   it('covers every secret variable with a distinct marker embedded in its value', () => {
-    const markers = SECRET_ENV_NAMES.map(canaryMarker);
-    expect(new Set(markers).size).toBe(SECRET_ENV_NAMES.length);
-    for (const name of SECRET_ENV_NAMES) expect(canaryValue(name)).toContain(canaryMarker(name));
+    const markers = SECRET_ENV_VARS.map(canaryMarker);
+    expect(new Set(markers).size).toBe(SECRET_ENV_VARS.length);
+    for (const name of SECRET_ENV_VARS) expect(canaryValue(name)).toContain(canaryMarker(name));
     expect(URL.canParse(canaryValue('DATABASE_URL'))).toBe(true);
   });
 
@@ -44,7 +45,24 @@ describe('bundle secret canaries', () => {
     expect(findCanaries(next, [marker])).toHaveLength(2);
   });
 
-  it('ignores server-only bundles, which never reach the browser', () => {
+  it('scans error pages the server serves (R-1)', () => {
+    const next = fakeNextDir({ 'server/pages/500.html': `<p>${marker}</p>` });
+    expect(findCanaries(next, [marker])).toHaveLength(1);
+  });
+
+  it('detects a base64-encoded canary (R-2)', () => {
+    const encoded = Buffer.from(marker, 'utf8').toString('base64');
+    const next = fakeNextDir({ 'static/chunks/a.js': `var k="${encoded}";` });
+    expect(findCanaries(next, [marker])[0]).toContain('(encoded)');
+  });
+
+  it('reports each occurrence once, not once per equivalent encoding', () => {
+    const encodings = markerEncodings(marker);
+    expect(new Set(encodings).size).toBe(encodings.length);
+    expect(findCanaries(fakeNextDir({ 'static/chunks/a.js': marker }), [marker])).toHaveLength(1);
+  });
+
+  it('ignores server-side JavaScript chunks, which never reach the browser', () => {
     const next = fakeNextDir({ 'server/chunks/route.js': `process.env.X="${marker}"` });
     expect(findCanaries(next, [marker])).toEqual([]);
   });

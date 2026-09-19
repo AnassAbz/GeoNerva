@@ -169,6 +169,9 @@ importers:
       '@eslint/js':
         specifier: 9.39.5
         version: 9.39.5
+      '@geonerva/config':
+        specifier: workspace:*
+        version: link:packages/config
       '@types/node':
         specifier: 24.13.5
         version: 24.13.5
