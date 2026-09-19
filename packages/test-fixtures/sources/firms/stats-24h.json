@@ -1,0 +1,130 @@
+{
+  "j1": {
+    "key": "j1",
+    "bytes": 10704866,
+    "lastModified": "Sat, 19 Sep 2026 20:40:52 GMT",
+    "rows": 128046,
+    "columns": [
+      "latitude",
+      "longitude",
+      "bright_ti4",
+      "scan",
+      "track",
+      "acq_date",
+      "acq_time",
+      "satellite",
+      "confidence",
+      "version",
+      "bright_ti5",
+      "frp",
+      "daynight"
+    ],
+    "version": {
+      "2.0NRT": 128046
+    },
+    "satellite": {
+      "N20": 128046
+    },
+    "confidence": {
+      "nominal": 105661,
+      "high": 6990,
+      "low": 15395
+    },
+    "daynight": {
+      "N": 31641,
+      "D": 96405
+    },
+    "acq_date": {
+      "2026-09-18": 74023,
+      "2026-09-19": 54023
+    },
+    "min_acq": "2026-09-18T0001",
+    "max_acq": "2026-09-19T1834",
+    "line_ending": "LF"
+  },
+  "j2": {
+    "key": "j2",
+    "bytes": 9977157,
+    "lastModified": "Sat, 19 Sep 2026 20:44:20 GMT",
+    "rows": 119443,
+    "columns": [
+      "latitude",
+      "longitude",
+      "bright_ti4",
+      "scan",
+      "track",
+      "acq_date",
+      "acq_time",
+      "satellite",
+      "confidence",
+      "version",
+      "bright_ti5",
+      "frp",
+      "daynight"
+    ],
+    "version": {
+      "2.0NRT": 119443
+    },
+    "satellite": {
+      "N21": 119443
+    },
+    "confidence": {
+      "high": 7127,
+      "low": 16762,
+      "nominal": 95554
+    },
+    "daynight": {
+      "D": 87919,
+      "N": 31524
+    },
+    "acq_date": {
+      "2026-09-18": 65029,
+      "2026-09-19": 54414
+    },
+    "min_acq": "2026-09-18T0009",
+    "max_acq": "2026-09-19T1834",
+    "line_ending": "LF"
+  },
+  "j1usa": {
+    "key": "j1usa",
+    "bytes": 182754,
+    "rows": 2167,
+    "columns": [
+      "latitude",
+      "longitude",
+      "bright_ti4",
+      "scan",
+      "track",
+      "acq_date",
+      "acq_time",
+      "satellite",
+      "confidence",
+      "version",
+      "bright_ti5",
+      "frp",
+      "daynight"
+    ],
+    "version": {
+      "2.0NRT": 2167
+    },
+    "satellite": {
+      "N20": 2167
+    },
+    "confidence": {
+      "nominal": 2016,
+      "high": 90,
+      "low": 61
+    },
+    "daynight": {
+      "N": 1383,
+      "D": 784
+    },
+    "acq_date": {
+      "2026-09-18": 1448,
+      "2026-09-19": 719
+    },
+    "min_acq": "2026-09-18T0644",
+    "max_acq": "2026-09-19T1749",
+    "line_ending": "LF"
+  }
+}

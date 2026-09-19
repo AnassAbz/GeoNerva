@@ -1,0 +1,48 @@
+{
+  "polls": {
+    "a": {
+      "label": "a",
+      "timeStamp": "2026-09-19T20:51:41.320921Z",
+      "count": 65
+    },
+    "b": {
+      "label": "b",
+      "timeStamp": "2026-09-19T20:54:11.548537Z",
+      "count": 65
+    }
+  },
+  "ids_identical_across_polls": 65,
+  "ids_only_in_a": [],
+  "ids_only_in_b": [],
+  "same_id_with_changed_properties": [],
+  "distinct_alert_messages_in_a": 8,
+  "feature_id_duplicates_within_a": 1,
+  "id_suffix_equals_properties_feature_id": true,
+  "natural_key_collisions_in_a": 0,
+  "property_keys": [
+    "alert_code",
+    "alert_name_en",
+    "alert_name_fr",
+    "alert_short_name_en",
+    "alert_short_name_fr",
+    "alert_text_en",
+    "alert_text_fr",
+    "alert_type",
+    "confidence_en",
+    "confidence_fr",
+    "event_end_datetime",
+    "expiration_datetime",
+    "feature_id",
+    "feature_name_en",
+    "feature_name_fr",
+    "impact_en",
+    "impact_fr",
+    "province",
+    "publication_datetime",
+    "risk_colour_en",
+    "risk_colour_fr",
+    "status_en",
+    "status_fr",
+    "validity_datetime"
+  ]
+}

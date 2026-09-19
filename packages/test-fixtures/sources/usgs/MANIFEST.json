@@ -1,0 +1,125 @@
+{
+  "source": "usgs",
+  "fixtures": [
+    {
+      "file": "all_day.geojson",
+      "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson",
+      "captured_at": "2026-09-19T20:56:01.152Z",
+      "sha256": "f61aeef37bb3ab20764cdd29d4d3800cd69f83c1f413028ba09d9ca14cd4fc1f",
+      "bytes": 164231,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "Real-time summary feed, whole (not trimmed). Also serves as t0 of the revision pair (see revision-t0/t1).",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "fdsn-count-over-limit.json",
+      "url": "https://earthquake.usgs.gov/fdsnws/event/1/count?format=geojson&starttime=2026-01-01&endtime=2026-09-19",
+      "captured_at": "2026-09-19T20:56:17.735Z",
+      "sha256": "2324165e0ac23a3aef03475e2021f1f80008f069334e2298ffb148bc27edd0c6",
+      "bytes": 190,
+      "http_status": 200,
+      "content_type": "application/json",
+      "notes": "count endpoint returns 200 with {count,maxAllowed,error} when over the limit — use it for chunk planning.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "fdsn-eventid-by-alias.geojson",
+      "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&eventid=us7000tiar",
+      "captured_at": "2026-09-19T20:56:02.619Z",
+      "sha256": "51bc146cc50a5214da1042fbbd0c7b4ec92082c576f95fe261756ae11cd94831",
+      "bytes": 45645,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "Queried by secondary alias us7000tiar; response id is the preferred id pr2026261000 (ids ,pt26261050,us7000tiar,pr2026261000,). Demonstrates that the queried id != returned id (ids/preferred-id change). FDSN detail format (single Feature with products).",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "fdsn-eventid-deleted-409.txt",
+      "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&eventid=nn00924612",
+      "captured_at": "2026-09-19T20:56:07.144Z",
+      "sha256": "8c6eb20afbd62e7a2009b892dfc3f1266009c6002c99900e82f9830cecfad124",
+      "bytes": 368,
+      "http_status": 409,
+      "content_type": "text/plain;charset=UTF-8",
+      "notes": "Querying a deleted event by eventid (nn00924612); documented to return HTTP 409.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "fdsn-includedeleted-only.geojson",
+      "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&includedeleted=only&starttime=2026-09-12&endtime=2026-09-19",
+      "captured_at": "2026-09-19T20:56:05.840Z",
+      "sha256": "4ab17dbf7caf67c205097dc48178b4158acd3604a54624e4bb5bb4f498c9e7c9",
+      "bytes": 59514,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "Deleted events (status \"deleted\", types null, place may be null) for a fixed 7-day window. Summary feeds silently drop these.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "fdsn-mag-null-sonic-boom.geojson",
+      "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&eventtype=sonic%20boom&starttime=2024-01-01&endtime=2026-09-19",
+      "captured_at": "2026-09-19T20:56:08.488Z",
+      "sha256": "1e607d6fa9d42fcb14ef553b13c4b0d8e72f4252ad2f80f501e68fdab850e7b7",
+      "bytes": 5422,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "Contains real features with \"mag\":null and \"magType\":null (sonic booms). No mag-null feature existed in all_month on 2026-09-19.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "fdsn-over-20k-400.txt",
+      "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=2026-01-01&endtime=2026-09-19",
+      "captured_at": "2026-09-19T20:56:13.815Z",
+      "sha256": "c61e031a34b3a4853e2e8786ab2ed0356e11743b6058d640c3c3279a0fe31fc8",
+      "bytes": 360,
+      "http_status": 400,
+      "content_type": "text/plain;charset=UTF-8",
+      "notes": "Query matching > 20,000 events returns HTTP 400 text/plain. NB: an open-ended query from 2000-01-01 returned HTTP 503 \"table is full\" once on 2026-09-19 instead of 400 — adapters must treat both as \"split the range\".",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "fdsn-superseded-detail.geojson",
+      "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&eventid=us7000tiet&includesuperseded=true",
+      "captured_at": "2026-09-19T20:56:04.075Z",
+      "sha256": "5a92b16e01c725c13e5ec5e7328ae37b80e67387488431c63c1918213657217d",
+      "bytes": 41819,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "Detail with includesuperseded=true: origin products from us and ak (AKa2026snnoxq) with different magnitudes (3.6 vs 3.5). includesuperseded only works with eventid.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "summary-pager-alert.geojson",
+      "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_month.geojson",
+      "captured_at": "2026-09-19T20:56:09.633Z",
+      "sha256": "0b0ae072751c118047940726324d10d77120d27fcc41c9c2c0750215e63802f3",
+      "bytes": 35731,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "TRIMMED: 4.5_month feed keeping only features with non-null PAGER alert (48/517; green and yellow present). metadata.count reflects the untrimmed feed.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "summary-tsunami.geojson",
+      "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_month.geojson",
+      "captured_at": "2026-09-19T20:56:09.625Z",
+      "sha256": "d4809e7ba9e23551f8c8f394618778dd926303577c68e7ba186fc7bc751e8bcc",
+      "bytes": 6543,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "TRIMMED: 4.5_month feed keeping only features with tsunami=1 (8/517). Feature bytes are verbatim; metadata.count still reflects the untrimmed feed.",
+      "synthetic": false,
+      "derived_from": null
+    }
+  ]
+}

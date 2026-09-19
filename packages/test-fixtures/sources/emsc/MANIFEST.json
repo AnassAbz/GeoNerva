@@ -1,0 +1,101 @@
+{
+  "source": "emsc",
+  "fixtures": [
+    {
+      "file": "eventid-late-update.json",
+      "url": "https://www.seismicportal.eu/fdsnws/event/1/query?format=json&eventid=20250913_0000173",
+      "captured_at": "2026-09-19T20:57:14.254Z",
+      "sha256": "f1f83021c32c08b96521e71401abc76faae8bb3b800df0b898b09e459a50e964",
+      "bytes": 548,
+      "http_status": 200,
+      "content_type": "application/json",
+      "notes": "Event whose lastupdate is ~1 year after origin time (re-revised on 2026-09-19). Update case: lastupdate changed -> new version.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "eventid-morocco.json",
+      "url": "https://www.seismicportal.eu/fdsnws/event/1/query?format=json&eventid=20260803_0000324",
+      "captured_at": "2026-09-19T20:57:11.749Z",
+      "sha256": "40edef331a88d5007ead55b9df0469f40426510944cee3c8f8b77b75565ecae6",
+      "bytes": 531,
+      "http_status": 200,
+      "content_type": "application/json",
+      "notes": "The Morocco M4.7 of 2026-08-03 (= USGS us6000thv7). Single Feature (not a FeatureCollection) when queried by eventid.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "format-geojson-400.json",
+      "url": "https://www.seismicportal.eu/fdsnws/event/1/query?format=geojson&limit=1",
+      "captured_at": "2026-09-19T20:57:15.497Z",
+      "sha256": "3a4364bda615205ef29ee4ba71462efac9e5fa688d3acc0d70359e2cb9d7be81",
+      "bytes": 235,
+      "http_status": 400,
+      "content_type": "application/json",
+      "notes": "format=geojson is rejected with HTTP 400 (body is JSON {\"detail\": ...}); the GeoJSON format is format=json.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "json-page.json",
+      "url": "https://www.seismicportal.eu/fdsnws/event/1/query?format=json&starttime=2026-09-18T00:00:00&endtime=2026-09-19T00:00:00&limit=200&orderby=time",
+      "captured_at": "2026-09-19T20:57:09.163Z",
+      "sha256": "b7f5664e5b139b4c7b8f5a41b57b61248cc7f56d83d5923e4f681dd2b140c230",
+      "bytes": 108599,
+      "http_status": 200,
+      "content_type": "application/json",
+      "notes": "One page (limit=200) of format=json (GeoJSON FeatureCollection) for a fixed UTC day. NB geometry z = -depth (negative km); properties.depth is positive.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "morocco-marrakech-300km-12mo.json",
+      "url": "https://www.seismicportal.eu/fdsnws/event/1/query?format=json&lat=31.63&lon=-8.0&maxradius=2.7&starttime=2025-09-19T00:00:00&endtime=2026-09-19T00:00:00&limit=500",
+      "captured_at": "2026-09-19T20:57:13.006Z",
+      "sha256": "7ce6b325ced04fdc76f1dea973458e847c77451115b5c35047610d6bd92f59d7",
+      "bytes": 5392,
+      "http_status": 200,
+      "content_type": "application/json",
+      "notes": "Morocco sample: Marrakech (31.63,-8.0), maxradius 2.7 deg (~300 km), 12 months. Radius parameters are degrees.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "nodata-204.txt",
+      "url": "https://www.seismicportal.eu/fdsnws/event/1/query?format=json&starttime=2026-09-18T00:00:00&endtime=2026-09-18T00:00:01&minmag=9",
+      "captured_at": "2026-09-19T20:57:16.751Z",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "http_status": 204,
+      "content_type": null,
+      "notes": "Empty result: FDSN nodata behaviour (expected HTTP 204 with empty body unless nodata=404).",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "updatedafter-t0.json",
+      "url": "https://www.seismicportal.eu/fdsnws/event/1/query?format=json&updatedafter=2026-09-19T19:57:09&limit=500",
+      "captured_at": "2026-09-19T20:57:10.499Z",
+      "sha256": "9a7986c7d34a85cc94278a1153be0f48e5c174b0d4846605b0c19234cf65ad7b",
+      "bytes": 7176,
+      "http_status": 200,
+      "content_type": "application/json",
+      "notes": "The production poll shape: updatedafter=now-1h. Contains recent events and old events revised within the hour (lastupdate >> time). t0 of the revision pair.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "websocket-frames.ndjson",
+      "url": "wss://www.seismicportal.eu/standing_order/websocket",
+      "captured_at": "2026-09-19T21:02:22.573Z",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "http_status": 101,
+      "content_type": "application/x-ndjson (one raw websocket text frame per line)",
+      "notes": "Raw frames received during a 300s listen. Actions: []. Receive times: []",
+      "synthetic": false,
+      "derived_from": null
+    }
+  ]
+}
