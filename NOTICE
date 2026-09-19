@@ -1,0 +1,8 @@
+GeoNerva
+Copyright 2026 The GeoNerva Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+GeoNerva ingests and redistributes data from third-party providers under their own terms.
+Required attributions are listed in docs/DATA_SOURCES.md §9 and are displayed in the
+application. Provider data is not covered by this project's licence.
