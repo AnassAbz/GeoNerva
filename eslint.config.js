@@ -72,6 +72,24 @@ const RESTRICTED_SYNTAX = [
   },
 ];
 
+/**
+ * SQL is written with bound parameters. `sql.raw` interpolates its argument into the statement
+ * verbatim, so it is banned outright rather than "banned unless the argument looks like a
+ * literal": docs/SECURITY.md C3 names this rule as the backstop behind code review (S-10).
+ */
+const NO_RAW_SQL = [
+  {
+    selector: "CallExpression[callee.object.name='sql'][callee.property.name='raw']",
+    message:
+      'sql.raw interpolates verbatim. Use a bound parameter, or sql.ref/sql.lit for identifiers (docs/SECURITY.md C3).',
+  },
+  {
+    selector: "MemberExpression[object.name='sql'][property.name='raw']",
+    message:
+      'sql.raw interpolates verbatim. Use a bound parameter, or sql.ref/sql.lit for identifiers (docs/SECURITY.md C3).',
+  },
+];
+
 /** Outbound network calls are only allowed through @geonerva/http (docs/SECURITY.md M1, ADR-028). */
 const NETWORK_MESSAGE = 'Use @geonerva/http: host allowlist, timeouts and size caps (ADR-028).';
 const NETWORK_PRIMITIVES = ['fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource'];
@@ -137,7 +155,7 @@ export default tseslint.config(
         'error',
         { allowNumber: true, allowBoolean: true },
       ],
-      'no-restricted-syntax': ['error', ...RESTRICTED_SYNTAX],
+      'no-restricted-syntax': ['error', ...RESTRICTED_SYNTAX, ...NO_RAW_SQL],
       'no-restricted-globals': ['error', ...NO_DIRECT_NETWORK_GLOBALS],
       'no-restricted-properties': ['error', ...NO_DIRECT_NETWORK_PROPERTIES],
       'no-eval': 'error',
@@ -167,6 +185,7 @@ export default tseslint.config(
       'no-restricted-syntax': [
         'error',
         ...RESTRICTED_SYNTAX,
+        ...NO_RAW_SQL,
         {
           selector: 'Property[key.name=/^(env|define)$/]',
           message:
