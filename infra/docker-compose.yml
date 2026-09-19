@@ -4,13 +4,15 @@
 #   pnpm db:down   stop it (data persists in the named volume)
 #
 # Credentials here are for local development only and are not secrets.
-# The PostGIS major version tracks the production host (docs/DATA_SOURCES.md V8).
+# Supabase ships PostGIS 3.3.7 on Postgres 17 (docs/DATA_SOURCES.md V8). No 17-3.3 image is
+# published, so local development and CI use the closest available tag (17-3.4) and migrations
+# must stay within PostGIS 3.3 features (ADR-031).
 
 name: geonerva
 
 services:
   db:
-    image: postgis/postgis:17-3.5@sha256:01a6a70e41e6c4467c8f55f6063555ed72db2d6662cd0d571040d42eadaeb6f6
+    image: postgis/postgis:17-3.4@sha256:d0b5a6ecab18997637f55a83cb4a9467391de5645916cfa1b6f2a8d19eee7be5
     environment:
       POSTGRES_DB: geonerva
       POSTGRES_USER: geonerva

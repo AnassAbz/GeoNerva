@@ -36,6 +36,8 @@ jobs:
       - run: pnpm format:check
       - run: pnpm depcruise
       - run: pnpm test:unit
+      # Fixture integrity: re-hashes every captured provider payload (no dependencies).
+      - run: node scripts/capture-fixtures/verify-manifests.mjs
 
   integration:
     name: Integration (PostGIS)
@@ -43,7 +45,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgis:
-        image: postgis/postgis:17-3.5@sha256:01a6a70e41e6c4467c8f55f6063555ed72db2d6662cd0d571040d42eadaeb6f6
+        image: postgis/postgis:17-3.4@sha256:d0b5a6ecab18997637f55a83cb4a9467391de5645916cfa1b6f2a8d19eee7be5
         env:
           POSTGRES_DB: geonerva
           POSTGRES_USER: geonerva
