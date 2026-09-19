@@ -475,3 +475,63 @@ pnpm build       → ✓ (probe builds + final clean rebuild)
 - **N-1 and N-9 (MEDIUM) are real gaps in the outbound-network boundary. Fix both before P3 (adapters) and P8 (web server code) start.**
 - The LOW residuals can be batched.
 - No CRITICAL or HIGH findings remain open.
+
+## Re-check (N-1, N-9 and the N-2/N-3/N-6/N-7 backstops)
+
+- **Date:** 2026-09-19
+- **Scope:** `git diff 08e2869..HEAD` (`b48d0ff`, `00e8aa0`, `89393f1`, `358c4d9`, `07b9ec4`, `7f6817a`).
+- **Method:** 41 further `ESLint.lintText` bypass cases; 6 depcruise probe files placed in web, worker, geocoding, pipeline, sources and http; 3 `next build` runs through `pnpm build:canary`, one of them trying to smuggle a canary out; an inspection of the real build-output layout; `pnpm db:up` plus `pnpm db:check` against the digest-pinned image. All probes deleted, and the final `build:canary` left a clean build.
+
+### Status
+
+| ID | Status | Evidence |
+|---|---|---|
+| N-1 | **FIXED** | `fetch` is now flagged in every web context I could construct: Server Component `page`, `layout`, a route handler outside `app/api`, `proxy.mjs`, `middleware.mjs`, a `'use server'` action file, a client component, and `lib/client/other.mjs` (a sibling of the exempt module). `no-restricted-properties` catches `globalThis.fetch`, `globalThis['fetch']`, `window.fetch` and `const { fetch: f } = globalThis`. `EventSource` is caught. Only the exempt path `apps/web/lib/client/api-client.ts` is free, and it does not exist yet. |
+| N-9 | **FIXED** | `raw-network-only-in-http` fires on `apps/web → node:https`, `apps/worker → node:https` (static **and** dynamic `import('node:https')`), `apps/worker → node:net`, `packages/geocoding → node:tls`, `packages/pipeline → node:http2`. `packages/http` is allowed. An uninstalled `ws` import fails `not-to-unresolvable`, so it is fail-closed. |
+| N-2 | **FIXED** for the forms I raised | Flagged: `Object.assign(el, {innerHTML})`, `setHTMLUnsafe`, `Document.parseHTMLUnsafe`, `el.srcdoc`, JSX `srcDoc`, `window.document.write`, `globalThis.document.write`, `setAttribute('onclick'|'srcdoc')`, `eval` (`no-eval`), `new Function` (`no-new-func`). |
+| N-3 | **FIXED**, with a strong new backstop | `compiler.define`, `config.env =` and `DefinePlugin` are flagged in `next.config`. `pnpm build:canary` works: it passes on a clean tree, and it caught my reproduction of the client-component leak (`server\app\zzprobe.html: geonerva-rate-limit-secret-c4n4ry7f3a9e`). This is now the real control for C2, with lint as the fast feedback. |
+| N-4 | **FIXED** | ARCHITECTURE §3 rules are renumbered, and rules 2 and 3 now match what is enforced. |
+| N-5, F-2b | Recorded in §3a | Correct phases. |
+| N-6 | **FIXED** (verification pending) | Both fixtures carry `// gitleaks:allow`, and `.gitleaksignore` has two well-formed fingerprints whose commit `2b47180` exists in the current history. gitleaks is still not installed here, so I am relying on the orchestrator's run. On brittleness: see R-6. |
+| N-7 | **FIXED** | `scripts/infra-consistency.test.ts` asserts both images are digest-pinned and identical. Verified independently: `pnpm db:up` pulled and started the pinned digest, `pnpm db:check` reported PostgreSQL 17.5 with PostGIS 3.5.2 and pg_trgm 1.6, and `docker port` showed `5432/tcp -> 127.0.0.1:54320`, so the loopback binding survives digest pinning. I then ran `pnpm db:down`. |
+
+### Residual gaps (all LOW; none blocks G1)
+
+| ID | Location | Issue | Recommendation |
+|---|---|---|---|
+| R-1 | `scripts/check-bundle-secrets.ts:38-41` | `PUBLIC_OUTPUT` covers `static/**` and `server/app/*.{html,rsc,body,meta}`, but the build also emits **`server/pages/404.html` and `server/pages/500.html`**, which are served to browsers. Pages-router prerender `.json` files would be public too. | Scan `static/**` plus every `.html`, `.rsc`, `.body`, `.meta` and `.json` under `server/`. Manifests holding a canary would be a finding anyway, so the wider net costs nothing. |
+| R-2 | `scripts/check-bundle-secrets.ts:59-63` | The scan matches the marker **verbatim**. I confirmed the evasion: a client component that renders `Buffer.from(secret).toString('base64')` puts `Z2VvbmVydmEtcmF0ZS1saW1pdC1zZWNyZXQtYzRuNHJ5N2YzYTll` into the prerendered HTML and the check passes. Reversed and split forms evade it too. | Also search for the base64, base64url and percent-encoded forms of each marker. Deliberate obfuscation cannot be caught this way, and that is fine, but base64 and URL encoding are realistic accidents (JSON payloads, query strings). |
+| R-3 | `scripts/check-bundle-secrets.ts:15-22` | `SECRET_ENV_NAMES` is a hand-maintained list. A secret added to `packages/config` later will not be covered. | Add a unit test asserting the list matches the secret-bearing keys of the config schemas, or derive it from the schema. |
+| R-4 | `eslint.config.js` (network rules) | Not flagged: `Reflect.get(globalThis, 'fetch')`, and an alias (`const g = globalThis; g.fetch(…)`). Also `new Request(…)` alone, which is harmless without a fetch. | Acceptable as deliberate-obfuscation residuals for a lint control. `raw-network-only-in-http`, code review and the P9a CSP `connect-src` are the backstops. |
+| R-5 | `eslint.config.js` (HTML sinks / next.config) | Not flagged: `Reflect.set(el, 'innerHTML', h)`, a bound alias of `insertAdjacentHTML`, `setTimeout(string)` in untyped `.jsx/.mjs` files (`no-implied-eval` needs type information), `compiler.defineServer`, and a computed `next.config` key (`{ [k]: … }`). | Acceptable. `defineServer` only affects server bundles, and `build:canary` covers the config channels. If you want the last one cheaply, ban `Identifier[name='defineServer']` in `next.config.*`. |
+| R-6 | `.gitleaksignore` | The fingerprints pin commit `2b47180`. Your judgement is right: any further history rewrite invalidates them, and the security job then fails. It fails closed, so it is safe but noisy. | Prefer a `.gitleaks.toml` allowlist that matches the fixture value itself (`regexes = ['9f86d081…0a08']`) or `paths` limited to those two test files. That survives rebases. Keep the inline `gitleaks:allow` comments either way. |
+| R-7 | `eslint.config.js:161-164` | The one exempt module, `apps/web/lib/client/api-client.ts`, has **both** `no-restricted-globals` and `no-restricted-properties` off. | When P9 creates it, it must reject absolute URLs and non-`/api/v1` paths at runtime, with a unit test, and it should be reviewed as security-relevant. Add it to the P9a exit criteria. |
+
+Also worth noting, and not a defect: `build:canary` is a **build-time** check. It cannot see a runtime leak, such as a route handler that returns a secret in its response. That belongs to the P8 API review.
+
+### Checks run (re-check)
+
+```text
+pnpm typecheck    → all packages Done
+pnpm lint         → exit 0
+pnpm depcruise    → ✔ no dependency violations found (32 modules, 14 dependencies cruised)
+pnpm test:unit    → Test Files 7 passed (7); Tests 69 passed (69)
+pnpm build:canary → ✓ no secret canary in client bundles or prerendered output (exit 0)
+                    ✗ exit 1 on the injected client-component leak (as designed)
+pnpm db:up && pnpm db:check → ✓ PostgreSQL 17.5, postgis 3.5.2, pg_trgm 1.6; port 127.0.0.1:54320
+```
+
+### G1 sign-off (security)
+
+**Yes, G1 can be signed off from a security standpoint. Nothing blocks it.**
+
+- No CRITICAL or HIGH finding is open. Every MEDIUM that was a defect in the P1 code (F-2, F-3, F-4 and the N-1/N-9 residuals) is fixed and verified here.
+- The remaining MEDIUM items (F-5 to F-8, F-12) are later-phase work, recorded as exit criteria in IMPLEMENTATION_PLAN §3a with the right phases.
+- All residuals in this re-check are LOW, and each has a backstop.
+
+Two conditions on the **evidence** for G1, which are not security defects but are part of the gate's own wording ("CI green"):
+
+1. CI has still never run: the repository has no remote. The first run must confirm the `security` job (gitleaks with `.gitleaksignore`), `build:canary` inside CI, and that Dependabot accepts the pnpm 12 lockfile. Until then "CI green" is unverified.
+2. The pinned action SHAs and the PostGIS digest have not been checked against upstream, because this sandbox has no network. Verify the SHAs with `gh api` before the first push. The digest is at least self-consistent between CI and compose, and it pulls and runs.
+
+Recommended for the P1 wrap-up, none of them blocking: R-1, R-2 and R-3 on the canary scanner (about an hour of work), R-6 on the gitleaks allowlist, and adding R-7 to the P9a exit criteria.
