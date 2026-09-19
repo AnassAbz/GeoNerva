@@ -1,43 +1,237 @@
 {
   "description": "Hand-checked labels for build-eq-pairs.mjs (reviewed 2026-09-19 by the P0 Source Research agent). Method: for each pair, compare origin-time difference, epicentral distance, magnitude and depth, and look for a *different* USGS event (global M>=4.5 or Euro-Med M3-4.5 lists) within 20 s / 100 km of the EMSC event. If the EMSC event has its own USGS counterpart, the pair is NO_MATCH with high confidence. 'ambiguous: true' marks pairs where both readings are defensible; calibration should report metrics with and without them.",
   "checks": [
-    { "usgs_id": "us7000t2se", "emsc_unid": "20260717_0000484", "label": "NO_MATCH", "notes": "2026-07-17 Chiapas/Guatemala offshore sequence (M7.3 us7000t1bu 7 min earlier). EMSC event +46 s, 34 km, same M5.0mb, NEIC-sourced; it coincides (0.0 s) with a different USGS event us7000t2q5. Distinct aftershock." },
-    { "usgs_id": "us7000t2se", "emsc_unid": "20260717_0000482", "label": "NO_MATCH", "notes": "Same sequence. EMSC event -48 s, 45 km, M5.1mb NEIC-sourced = USGS us7000t2si (0.0 s). Distinct aftershock; the true counterpart of us7000t2se is 20260717_0000483 (dt 0, 0 km)." },
-    { "usgs_id": "us7000t2se", "emsc_unid": "20260717_0000483", "label": "MATCH", "notes": "Identical origin (dt 0 s, 0 km, M5.0mb, auth NEIC): EMSC carries the NEIC solution verbatim. Three USGS/EMSC events within 95 s and 45 km here — a correlation engine must use uniqueness, not just thresholds." },
-    { "usgs_id": "us7000qxhw", "emsc_unid": "20250920_0000018", "label": "NO_MATCH", "notes": "Kuril doublet: EMSC event +51 s, 12 km, M5.0 vs M4.9 — spatially and magnitude-wise compatible, but it is the counterpart of USGS us7000qxhz (-0.8 s). Distinct event." },
-    { "usgs_id": "us6000s4x4", "emsc_unid": "20260128_0000466", "label": "NO_MATCH", "notes": "Mindanao: EMSC event +53 s, 53 km, M4.7 = USGS us6000s8yf (0.0 s). Distinct event." },
-    { "usgs_id": "us6000s4x4", "emsc_unid": "20260128_0000461", "label": "NO_MATCH", "notes": "Mindanao: EMSC event -86 s, 24 km, M4.5 = USGS us6000s8wv (0.0 s). Distinct foreshock." },
-    { "usgs_id": "us6000rm87", "emsc_unid": "20251108_0000439", "label": "NO_MATCH", "notes": "Kamchatka aftershock zone: EMSC +55 s, 32 km, M4.5 = USGS us7000re6t (0.0 s). Distinct event." },
-    { "usgs_id": "us6000srlr", "emsc_unid": "20260410_0000220", "label": "NO_MATCH", "notes": "Kermadec: EMSC +55 s, 23 km, M5.0 = USGS us6000snxb (+0.2 s). Distinct event; true counterpart 20260410_0000480 (identical NEIC copy)." },
-    { "usgs_id": "us7000t1f6", "emsc_unid": "20260717_0000474", "label": "NO_MATCH", "notes": "Chiapas sequence: EMSC -58 s, 72 km, M4.3 vs M5.0, depth differs 27 km. No USGS M>=4.5 counterpart (below the USGS list threshold), but origin-time difference of 58 s alone rules out the same rupture; true counterpart 20260717_0000311 (+3 s, 8 km)." },
-    { "usgs_id": "us6000tmgx", "emsc_unid": "20260816_0000931", "label": "NO_MATCH", "notes": "Flores Sea: EMSC -110 s, 9 km, M4.6 = USGS usd0015e72 (0.0 s). Distinct event only 9 km away — location alone cannot separate them." },
-    { "usgs_id": "us6000tmgx", "emsc_unid": "20260816_0000302", "label": "MATCH", "notes": "EMSC (BMKG) +1.4 s, 12 km, M4.3 vs M4.5mb. Only EMSC event within 60 s. Different agency/magnitude type but same origin." },
-    { "usgs_id": "us6000tkvc", "emsc_unid": "20260814_0000425", "label": "NO_MATCH", "notes": "Flores swarm: EMSC +70 s, 92 km, M4.9 = USGS us6000tlx3 (0.0 s). Distinct event." },
-    { "usgs_id": "us6000tkvc", "emsc_unid": "20260814_0000368", "label": "NO_MATCH", "notes": "Flores swarm: EMSC -178 s, 16 km, M4.5 = USGS us6000tkvb (0.0 s). Distinct event." },
-    { "usgs_id": "us6000rl59", "emsc_unid": "20251103_0000570", "label": "NO_MATCH", "notes": "Kamchatka: EMSC (GSRAS) -70 s, 25 km, M4.4. No USGS M>=4.5 counterpart, but 70 s origin difference = different rupture; true counterpart 20251103_0000141 (+0.3 s)." },
-    { "usgs_id": "us6000rl59", "emsc_unid": "20251103_0000165", "label": "NO_MATCH", "notes": "Kamchatka: EMSC (GSRAS) +175 s, 22 km, M4.6 = USGS us6000rple (+3.1 s). Distinct aftershock." },
-    { "usgs_id": "us7000sqaw", "emsc_unid": "20260527_0000297", "label": "NO_MATCH", "notes": "Aeolian Islands / Tyrrhenian: EMSC (INGV) +82 s, 17 km, ML3.0 vs mb4.2. Aftershock/secondary event; true counterpart 20260527_0000292 (-0.04 s, ML3.8)." },
-    { "usgs_id": "us7000sqaw", "emsc_unid": "20260527_0000292", "label": "MATCH", "notes": "EMSC -0.04 s, 17 km, ML3.8 vs mb4.2 (ΔM -0.4 across magnitude types, typical ML vs mb offset). Same origin." },
-    { "usgs_id": "us6000tima", "emsc_unid": "20260801_0000325", "label": "NO_MATCH", "notes": "Iraq/Iran border: EMSC -89 s, 20 km, M4.6 (EMSC) = USGS us6000thht (-3.4 s, M4.4). Distinct preceding event." },
-    { "usgs_id": "usd0015e9a", "emsc_unid": "20260816_0000643", "label": "NO_MATCH", "notes": "Flores Sea: EMSC (BMKG) -93 s, 16 km, M3.9 vs M4.9. Small preceding event, not the same rupture; counterpart is 20260816_0000656 (+0.6 s, M4.9)." },
-    { "usgs_id": "us6000szqx", "emsc_unid": "20260523_0000219", "label": "NO_MATCH", "notes": "Crete: EMSC (THE) -93 s, 4.5 km, ML2.6 vs mb4.2. Foreshock 4.5 km away — only time and magnitude separate it; counterpart 20260523_0000220 (+0.4 s, ML4.0)." },
-    { "usgs_id": "us6000szqx", "emsc_unid": "20260523_0000429", "label": "NO_MATCH", "notes": "Crete: EMSC (THE) +124 s, 7.7 km, ML2.9. Aftershock." },
-    { "usgs_id": "us6000rkwi", "emsc_unid": "20251101_0000088", "label": "NO_MATCH", "notes": "Western Turkey (Balıkesir–Kütahya area): EMSC +110 s, 9 km, ML3.0 vs mb4.1. Aftershock." },
-    { "usgs_id": "us7000t2sj", "emsc_unid": "20260717_0000260", "label": "NO_MATCH", "notes": "Chiapas sequence: EMSC -103 s, 13 km, M5.3 = USGS us7000t1c1 (-4.3 s). Distinct event." },
-    { "usgs_id": "us7000t2sj", "emsc_unid": "20260717_0000259", "label": "NO_MATCH", "notes": "Chiapas sequence: EMSC +205 s, 13 km, Mw6.4 = USGS us7000t1cc (Mww6.4, -0.5 s). Large aftershock; ΔM +1.9 vs us7000t2sj." },
-    { "usgs_id": "us6000sr2n", "emsc_unid": "20260418_0000101", "label": "MATCH", "ambiguous": true, "notes": "Carlsberg Ridge: EMSC Mw5.5 +3.7 s, 18 km from USGS Mww5.5 us6000sr2n, but the same EMSC event is also -19.1 s from USGS us7000sgi7 (M4.5mb, 19 km). Magnitude and time favour sr2n; EMSC appears to have no separate event for sgi7. Two USGS candidates for one EMSC event = uniqueness-gap test." },
-    { "usgs_id": "us6000sr2n", "emsc_unid": "20260418_0000444", "label": "NO_MATCH", "notes": "Carlsberg Ridge: EMSC -112 s, 6.5 km, M4.6 = USGS us7000sggq (0.0 s). Distinct foreshock 6.5 km away." },
-    { "usgs_id": "us7000s8v7", "emsc_unid": "20260330_0000126", "label": "NO_MATCH", "ambiguous": true, "notes": "Vanuatu 2026-03-30: USGS has TWO events — us7000s8v7 (mb5.4, 117.7 km depth) and the mainshock us7000s8q0 (Mww7.3) 6.2 s later and 9 km away. EMSC has ONE event, Mw7.3, 2.0 s after s8v7 and 4.2 s before s8q0. The EventID service picked s8v7 (misfit 0.88, very high) on time; magnitude (ΔM 1.9) says the EMSC event is the M7.3 = us7000s8q0. Hand label NO_MATCH for s8v7; a magnitude veto (e.g. ΔM>1.0 with Mw/Mww types) is needed." },
-    { "usgs_id": "us7000s8v7", "emsc_unid": "20260330_0000140", "label": "NO_MATCH", "notes": "Vanuatu: EMSC +1101 s, 17 km, M5.0 = USGS us7000s8rs (-0.3 s). Distinct aftershock." },
-    { "usgs_id": "us6000svz5", "emsc_unid": "20260429_0000290", "label": "NO_MATCH", "notes": "Southwest Indian Ridge sequence: EventID service matched us6000svz5 (mb4.6) to this EMSC mb5.1 event at +14 s / 27 km (misfit 0.65), but the EMSC event is 0.8 s from USGS us7000sh1d (mb5.1). It is sh1d's counterpart; us6000svz5 appears to have no EMSC counterpart. Service label overridden." },
-    { "usgs_id": "us6000svz5", "emsc_unid": "20260429_0000288", "label": "NO_MATCH", "notes": "Southwest Indian Ridge: EMSC -195 s, 19 km, M5.0 = USGS us7000sh1c (-0.9 s). Distinct event." },
-    { "usgs_id": "us7000rke3", "emsc_unid": "20251207_0000228", "label": "MATCH", "ambiguous": true, "notes": "Vanuatu: USGS has us7000rke3 (Mww5.5) and us6000rt4z (mb5.2) 18 s and 2 km apart — possibly a doublet or a USGS near-duplicate. EMSC has one Mw5.6 event 16.4 s before rke3 and 1.7 s after rt4z. Magnitude type/size favour rke3 (service choice), origin time favours rt4z." },
-    { "usgs_id": "us6000rc4p", "emsc_unid": "20250922_0000346", "label": "MATCH", "notes": "Kamchatka: +6.3 s, 79 km, same mb4.6, depth 50 vs 66 km. Large location difference but no competing event in either catalogue within 25 min; plausible EMSC mislocation offshore." },
-    { "usgs_id": "us6000rc4p", "emsc_unid": "20250922_0000352", "label": "NO_MATCH", "notes": "Kamchatka: EMSC +1627 s, 27 km, Mw5.6 = USGS us6000rc4t (Mww5.6, -1.1 s). Distinct later event." },
-    { "usgs_id": "us6000t9ke", "emsc_unid": "20260702_0000087", "label": "MATCH", "ambiguous": true, "notes": "Off Aomori, Japan: +8.2 s, 135 km, M4.5 vs M4.6mb, misfit 0.68. No other USGS or EMSC event nearby within the hour, so this is most likely the same event badly located by one agency, but 135 km exceeds any sane distance gate — good test that a correlation engine prefers 'unmatched' over a forced match." },
-    { "usgs_id": "us7000strv", "emsc_unid": "20260605_0000323", "label": "MATCH", "notes": "Luzon: identical origin (dt 0, 0 km) but EMSC holds a NEIC-sourced M3.2 while USGS now says mb4.5 — EMSC kept an earlier NEIC magnitude. Same event; a naive ΔM>1.0 veto would wrongly split it. Identical time+location from the same agency (auth NEIC) should override the magnitude veto." },
-    { "usgs_id": "us6000sg1l", "emsc_unid": "20260313_0000325", "label": "MATCH", "notes": "Kermadec/Fiji deep event: +0.7 s, 81 km, same mb4.7, depth 281 vs 340 km. Deep-event location scatter; no competing event." },
-    { "usgs_id": "us7000t1c2", "emsc_unid": "20260717_0000259", "label": "NO_MATCH", "notes": "Chiapas sequence: EventID service has no EMSC match for us7000t1c2 (mb5.1). The nearest EMSC event is +21 s, 30 km, Mw6.4 — but it is the counterpart of USGS us7000t1cc (Mww6.4, 20.6 s after t1c2). Hardest negative in the set: within 21 s and 30 km, separated only by magnitude and by the existence of a better USGS counterpart." },
-    { "usgs_id": "us7000sghd", "emsc_unid": "20260418_0000435", "label": "NO_MATCH", "notes": "Kermadec: EventID service has no EMSC match for us7000sghd (mb4.6). Nearest EMSC event +200 s, 10 km, M4.5 NEIC = USGS us7000sgh8 (+200.3 s). EMSC simply lacks sghd." }
+    {
+      "usgs_id": "us7000t2se",
+      "emsc_unid": "20260717_0000484",
+      "label": "NO_MATCH",
+      "notes": "2026-07-17 Chiapas/Guatemala offshore sequence (M7.3 us7000t1bu 7 min earlier). EMSC event +46 s, 34 km, same M5.0mb, NEIC-sourced; it coincides (0.0 s) with a different USGS event us7000t2q5. Distinct aftershock."
+    },
+    {
+      "usgs_id": "us7000t2se",
+      "emsc_unid": "20260717_0000482",
+      "label": "NO_MATCH",
+      "notes": "Same sequence. EMSC event -48 s, 45 km, M5.1mb NEIC-sourced = USGS us7000t2si (0.0 s). Distinct aftershock; the true counterpart of us7000t2se is 20260717_0000483 (dt 0, 0 km)."
+    },
+    {
+      "usgs_id": "us7000t2se",
+      "emsc_unid": "20260717_0000483",
+      "label": "MATCH",
+      "notes": "Identical origin (dt 0 s, 0 km, M5.0mb, auth NEIC): EMSC carries the NEIC solution verbatim. Three USGS/EMSC events within 95 s and 45 km here — a correlation engine must use uniqueness, not just thresholds."
+    },
+    {
+      "usgs_id": "us7000qxhw",
+      "emsc_unid": "20250920_0000018",
+      "label": "NO_MATCH",
+      "notes": "Kuril doublet: EMSC event +51 s, 12 km, M5.0 vs M4.9 — spatially and magnitude-wise compatible, but it is the counterpart of USGS us7000qxhz (-0.8 s). Distinct event."
+    },
+    {
+      "usgs_id": "us6000s4x4",
+      "emsc_unid": "20260128_0000466",
+      "label": "NO_MATCH",
+      "notes": "Mindanao: EMSC event +53 s, 53 km, M4.7 = USGS us6000s8yf (0.0 s). Distinct event."
+    },
+    {
+      "usgs_id": "us6000s4x4",
+      "emsc_unid": "20260128_0000461",
+      "label": "NO_MATCH",
+      "notes": "Mindanao: EMSC event -86 s, 24 km, M4.5 = USGS us6000s8wv (0.0 s). Distinct foreshock."
+    },
+    {
+      "usgs_id": "us6000rm87",
+      "emsc_unid": "20251108_0000439",
+      "label": "NO_MATCH",
+      "notes": "Kamchatka aftershock zone: EMSC +55 s, 32 km, M4.5 = USGS us7000re6t (0.0 s). Distinct event."
+    },
+    {
+      "usgs_id": "us6000srlr",
+      "emsc_unid": "20260410_0000220",
+      "label": "NO_MATCH",
+      "notes": "Kermadec: EMSC +55 s, 23 km, M5.0 = USGS us6000snxb (+0.2 s). Distinct event; true counterpart 20260410_0000480 (identical NEIC copy)."
+    },
+    {
+      "usgs_id": "us7000t1f6",
+      "emsc_unid": "20260717_0000474",
+      "label": "NO_MATCH",
+      "notes": "Chiapas sequence: EMSC -58 s, 72 km, M4.3 vs M5.0, depth differs 27 km. No USGS M>=4.5 counterpart (below the USGS list threshold), but origin-time difference of 58 s alone rules out the same rupture; true counterpart 20260717_0000311 (+3 s, 8 km)."
+    },
+    {
+      "usgs_id": "us6000tmgx",
+      "emsc_unid": "20260816_0000931",
+      "label": "NO_MATCH",
+      "notes": "Flores Sea: EMSC -110 s, 9 km, M4.6 = USGS usd0015e72 (0.0 s). Distinct event only 9 km away — location alone cannot separate them."
+    },
+    {
+      "usgs_id": "us6000tmgx",
+      "emsc_unid": "20260816_0000302",
+      "label": "MATCH",
+      "notes": "EMSC (BMKG) +1.4 s, 12 km, M4.3 vs M4.5mb. Only EMSC event within 60 s. Different agency/magnitude type but same origin."
+    },
+    {
+      "usgs_id": "us6000tkvc",
+      "emsc_unid": "20260814_0000425",
+      "label": "NO_MATCH",
+      "notes": "Flores swarm: EMSC +70 s, 92 km, M4.9 = USGS us6000tlx3 (0.0 s). Distinct event."
+    },
+    {
+      "usgs_id": "us6000tkvc",
+      "emsc_unid": "20260814_0000368",
+      "label": "NO_MATCH",
+      "notes": "Flores swarm: EMSC -178 s, 16 km, M4.5 = USGS us6000tkvb (0.0 s). Distinct event."
+    },
+    {
+      "usgs_id": "us6000rl59",
+      "emsc_unid": "20251103_0000570",
+      "label": "NO_MATCH",
+      "notes": "Kamchatka: EMSC (GSRAS) -70 s, 25 km, M4.4. No USGS M>=4.5 counterpart, but 70 s origin difference = different rupture; true counterpart 20251103_0000141 (+0.3 s)."
+    },
+    {
+      "usgs_id": "us6000rl59",
+      "emsc_unid": "20251103_0000165",
+      "label": "NO_MATCH",
+      "notes": "Kamchatka: EMSC (GSRAS) +175 s, 22 km, M4.6 = USGS us6000rple (+3.1 s). Distinct aftershock."
+    },
+    {
+      "usgs_id": "us7000sqaw",
+      "emsc_unid": "20260527_0000297",
+      "label": "NO_MATCH",
+      "notes": "Aeolian Islands / Tyrrhenian: EMSC (INGV) +82 s, 17 km, ML3.0 vs mb4.2. Aftershock/secondary event; true counterpart 20260527_0000292 (-0.04 s, ML3.8)."
+    },
+    {
+      "usgs_id": "us7000sqaw",
+      "emsc_unid": "20260527_0000292",
+      "label": "MATCH",
+      "notes": "EMSC -0.04 s, 17 km, ML3.8 vs mb4.2 (ΔM -0.4 across magnitude types, typical ML vs mb offset). Same origin."
+    },
+    {
+      "usgs_id": "us6000tima",
+      "emsc_unid": "20260801_0000325",
+      "label": "NO_MATCH",
+      "notes": "Iraq/Iran border: EMSC -89 s, 20 km, M4.6 (EMSC) = USGS us6000thht (-3.4 s, M4.4). Distinct preceding event."
+    },
+    {
+      "usgs_id": "usd0015e9a",
+      "emsc_unid": "20260816_0000643",
+      "label": "NO_MATCH",
+      "notes": "Flores Sea: EMSC (BMKG) -93 s, 16 km, M3.9 vs M4.9. Small preceding event, not the same rupture; counterpart is 20260816_0000656 (+0.6 s, M4.9)."
+    },
+    {
+      "usgs_id": "us6000szqx",
+      "emsc_unid": "20260523_0000219",
+      "label": "NO_MATCH",
+      "notes": "Crete: EMSC (THE) -93 s, 4.5 km, ML2.6 vs mb4.2. Foreshock 4.5 km away — only time and magnitude separate it; counterpart 20260523_0000220 (+0.4 s, ML4.0)."
+    },
+    {
+      "usgs_id": "us6000szqx",
+      "emsc_unid": "20260523_0000429",
+      "label": "NO_MATCH",
+      "notes": "Crete: EMSC (THE) +124 s, 7.7 km, ML2.9. Aftershock."
+    },
+    {
+      "usgs_id": "us6000rkwi",
+      "emsc_unid": "20251101_0000088",
+      "label": "NO_MATCH",
+      "notes": "Western Turkey (Balıkesir–Kütahya area): EMSC +110 s, 9 km, ML3.0 vs mb4.1. Aftershock."
+    },
+    {
+      "usgs_id": "us7000t2sj",
+      "emsc_unid": "20260717_0000260",
+      "label": "NO_MATCH",
+      "notes": "Chiapas sequence: EMSC -103 s, 13 km, M5.3 = USGS us7000t1c1 (-4.3 s). Distinct event."
+    },
+    {
+      "usgs_id": "us7000t2sj",
+      "emsc_unid": "20260717_0000259",
+      "label": "NO_MATCH",
+      "notes": "Chiapas sequence: EMSC +205 s, 13 km, Mw6.4 = USGS us7000t1cc (Mww6.4, -0.5 s). Large aftershock; ΔM +1.9 vs us7000t2sj."
+    },
+    {
+      "usgs_id": "us6000sr2n",
+      "emsc_unid": "20260418_0000101",
+      "label": "MATCH",
+      "ambiguous": true,
+      "notes": "Carlsberg Ridge: EMSC Mw5.5 +3.7 s, 18 km from USGS Mww5.5 us6000sr2n, but the same EMSC event is also -19.1 s from USGS us7000sgi7 (M4.5mb, 19 km). Magnitude and time favour sr2n; EMSC appears to have no separate event for sgi7. Two USGS candidates for one EMSC event = uniqueness-gap test."
+    },
+    {
+      "usgs_id": "us6000sr2n",
+      "emsc_unid": "20260418_0000444",
+      "label": "NO_MATCH",
+      "notes": "Carlsberg Ridge: EMSC -112 s, 6.5 km, M4.6 = USGS us7000sggq (0.0 s). Distinct foreshock 6.5 km away."
+    },
+    {
+      "usgs_id": "us7000s8v7",
+      "emsc_unid": "20260330_0000126",
+      "label": "NO_MATCH",
+      "ambiguous": true,
+      "notes": "Vanuatu 2026-03-30: USGS has TWO events — us7000s8v7 (mb5.4, 117.7 km depth) and the mainshock us7000s8q0 (Mww7.3) 6.2 s later and 9 km away. EMSC has ONE event, Mw7.3, 2.0 s after s8v7 and 4.2 s before s8q0. The EventID service picked s8v7 (misfit 0.88, very high) on time; magnitude (ΔM 1.9) says the EMSC event is the M7.3 = us7000s8q0. Hand label NO_MATCH for s8v7; a magnitude veto (e.g. ΔM>1.0 with Mw/Mww types) is needed."
+    },
+    {
+      "usgs_id": "us7000s8v7",
+      "emsc_unid": "20260330_0000140",
+      "label": "NO_MATCH",
+      "notes": "Vanuatu: EMSC +1101 s, 17 km, M5.0 = USGS us7000s8rs (-0.3 s). Distinct aftershock."
+    },
+    {
+      "usgs_id": "us6000svz5",
+      "emsc_unid": "20260429_0000290",
+      "label": "NO_MATCH",
+      "notes": "Southwest Indian Ridge sequence: EventID service matched us6000svz5 (mb4.6) to this EMSC mb5.1 event at +14 s / 27 km (misfit 0.65), but the EMSC event is 0.8 s from USGS us7000sh1d (mb5.1). It is sh1d's counterpart; us6000svz5 appears to have no EMSC counterpart. Service label overridden."
+    },
+    {
+      "usgs_id": "us6000svz5",
+      "emsc_unid": "20260429_0000288",
+      "label": "NO_MATCH",
+      "notes": "Southwest Indian Ridge: EMSC -195 s, 19 km, M5.0 = USGS us7000sh1c (-0.9 s). Distinct event."
+    },
+    {
+      "usgs_id": "us7000rke3",
+      "emsc_unid": "20251207_0000228",
+      "label": "MATCH",
+      "ambiguous": true,
+      "notes": "Vanuatu: USGS has us7000rke3 (Mww5.5) and us6000rt4z (mb5.2) 18 s and 2 km apart — possibly a doublet or a USGS near-duplicate. EMSC has one Mw5.6 event 16.4 s before rke3 and 1.7 s after rt4z. Magnitude type/size favour rke3 (service choice), origin time favours rt4z."
+    },
+    {
+      "usgs_id": "us6000rc4p",
+      "emsc_unid": "20250922_0000346",
+      "label": "MATCH",
+      "notes": "Kamchatka: +6.3 s, 79 km, same mb4.6, depth 50 vs 66 km. Large location difference but no competing event in either catalogue within 25 min; plausible EMSC mislocation offshore."
+    },
+    {
+      "usgs_id": "us6000rc4p",
+      "emsc_unid": "20250922_0000352",
+      "label": "NO_MATCH",
+      "notes": "Kamchatka: EMSC +1627 s, 27 km, Mw5.6 = USGS us6000rc4t (Mww5.6, -1.1 s). Distinct later event."
+    },
+    {
+      "usgs_id": "us6000t9ke",
+      "emsc_unid": "20260702_0000087",
+      "label": "MATCH",
+      "ambiguous": true,
+      "notes": "Off Aomori, Japan: +8.2 s, 135 km, M4.5 vs M4.6mb, misfit 0.68. No other USGS or EMSC event nearby within the hour, so this is most likely the same event badly located by one agency, but 135 km exceeds any sane distance gate — good test that a correlation engine prefers 'unmatched' over a forced match."
+    },
+    {
+      "usgs_id": "us7000strv",
+      "emsc_unid": "20260605_0000323",
+      "label": "MATCH",
+      "notes": "Luzon: identical origin (dt 0, 0 km) but EMSC holds a NEIC-sourced M3.2 while USGS now says mb4.5 — EMSC kept an earlier NEIC magnitude. Same event; a naive ΔM>1.0 veto would wrongly split it. Identical time+location from the same agency (auth NEIC) should override the magnitude veto."
+    },
+    {
+      "usgs_id": "us6000sg1l",
+      "emsc_unid": "20260313_0000325",
+      "label": "MATCH",
+      "notes": "Kermadec/Fiji deep event: +0.7 s, 81 km, same mb4.7, depth 281 vs 340 km. Deep-event location scatter; no competing event."
+    },
+    {
+      "usgs_id": "us7000t1c2",
+      "emsc_unid": "20260717_0000259",
+      "label": "NO_MATCH",
+      "notes": "Chiapas sequence: EventID service has no EMSC match for us7000t1c2 (mb5.1). The nearest EMSC event is +21 s, 30 km, Mw6.4 — but it is the counterpart of USGS us7000t1cc (Mww6.4, 20.6 s after t1c2). Hardest negative in the set: within 21 s and 30 km, separated only by magnitude and by the existence of a better USGS counterpart."
+    },
+    {
+      "usgs_id": "us7000sghd",
+      "emsc_unid": "20260418_0000435",
+      "label": "NO_MATCH",
+      "notes": "Kermadec: EventID service has no EMSC match for us7000sghd (mb4.6). Nearest EMSC event +200 s, 10 km, M4.5 NEIC = USGS us7000sgh8 (+200.3 s). EMSC simply lacks sghd."
+    }
   ]
 }

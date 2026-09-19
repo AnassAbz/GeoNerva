@@ -75,7 +75,8 @@ async function cachedGet(url) {
   }
   const r = await politeFetch(url, { timeoutMs: 120_000 });
   requests++;
-  if (r.timedOut || r.status >= 500) throw new Error(`HTTP ${r.status} (timeout=${r.timedOut}) for ${url}`);
+  if (r.timedOut || r.status >= 500)
+    throw new Error(`HTTP ${r.status} (timeout=${r.timedOut}) for ${url}`);
   const out = { status: r.status, text: r.body.toString('utf8') };
   await writeFile(p, JSON.stringify(out));
   return out;
@@ -86,12 +87,31 @@ const qs = (o) => new URLSearchParams(o).toString();
 function usgsRec(f) {
   const [lon, lat, depth] = f.geometry.coordinates;
   const p = f.properties;
-  return { id: f.id, time: new Date(p.time).toISOString(), lat, lon, depth_km: depth, mag: p.mag, magType: p.magType, ids: p.ids };
+  return {
+    id: f.id,
+    time: new Date(p.time).toISOString(),
+    lat,
+    lon,
+    depth_km: depth,
+    mag: p.mag,
+    magType: p.magType,
+    ids: p.ids,
+  };
 }
 function emscRec(f) {
   const p = f.properties;
   const t = p.time.endsWith('Z') ? p.time : p.time + 'Z';
-  return { unid: p.unid, time: new Date(t).toISOString(), lat: p.lat, lon: p.lon, depth_km: p.depth, mag: p.mag, magType: p.magtype, auth: p.auth, lastupdate: p.lastupdate };
+  return {
+    unid: p.unid,
+    time: new Date(t).toISOString(),
+    lat: p.lat,
+    lon: p.lon,
+    depth_km: p.depth,
+    mag: p.mag,
+    magType: p.magtype,
+    auth: p.auth,
+    lastupdate: p.lastupdate,
+  };
 }
 function delta(u, e) {
   return {
@@ -122,23 +142,39 @@ async function main() {
       }
     }
   }
-  const seq = sample(g.filter((u) => seqIds.has(u.id)), N_SEQUENCE);
+  const seq = sample(
+    g.filter((u) => seqIds.has(u.id)),
+    N_SEQUENCE,
+  );
   const seqSet = new Set(seq.map((u) => u.id));
-  const glob = sample(g.filter((u) => !seqSet.has(u.id)), N_GLOBAL);
+  const glob = sample(
+    g.filter((u) => !seqSet.has(u.id)),
+    N_GLOBAL,
+  );
   const eu = sample(em, N_EUROMED);
-  const picked = [...glob.map((u) => [u, 'global_m45']), ...seq.map((u) => [u, 'sequence_m45']), ...eu.map((u) => [u, 'euromed_m3_4.5'])];
+  const picked = [
+    ...glob.map((u) => [u, 'global_m45']),
+    ...seq.map((u) => [u, 'sequence_m45']),
+    ...eu.map((u) => [u, 'euromed_m3_4.5']),
+  ];
   picked.sort((a, b) => a[0].time.localeCompare(b[0].time));
-  console.log(`sampled: global ${glob.length}, sequence ${seq.length} (of ${seqIds.size}), euromed ${eu.length}`);
+  console.log(
+    `sampled: global ${glob.length}, sequence ${seq.length} (of ${seqIds.size}), euromed ${eu.length}`,
+  );
 
   // 3. EMSC
-  const hand = JSON.parse(await readFile(join(here, 'eq-pairs-hand-checks.json'), 'utf8').catch(() => '{"checks":[]}')).checks;
+  const hand = JSON.parse(
+    await readFile(join(here, 'eq-pairs-hand-checks.json'), 'utf8').catch(() => '{"checks":[]}'),
+  ).checks;
   const handKey = new Map(hand.map((h) => [`${h.usgs_id}|${h.emsc_unid}`, h]));
   const pairs = [];
   const unmatched = [];
   const reviewRows = [];
   const windowCands = new Map(); // usgs id -> { u, subset, S, misfit, cands }
   for (const [u, subset] of picked) {
-    const conv = await cachedGet(`https://www.seismicportal.eu/eventid/api/convert?${qs({ source_id: u.id, source_catalog: 'USGS', out_catalog: 'UNID' })}`);
+    const conv = await cachedGet(
+      `https://www.seismicportal.eu/eventid/api/convert?${qs({ source_id: u.id, source_catalog: 'USGS', out_catalog: 'UNID' })}`,
+    );
     let S = null;
     let misfit = null;
     if (conv.status === 200) {
@@ -163,14 +199,35 @@ async function main() {
     const cands = win.status === 200 && win.text ? JSON.parse(win.text).features.map(emscRec) : [];
     let matched = S ? cands.find((c) => c.unid === S) : null;
     if (S && !matched) {
-      const one = await cachedGet(`https://www.seismicportal.eu/fdsnws/event/1/query?${qs({ format: 'json', eventid: S })}`);
+      const one = await cachedGet(
+        `https://www.seismicportal.eu/fdsnws/event/1/query?${qs({ format: 'json', eventid: S })}`,
+      );
       if (one.status === 200) matched = emscRec(JSON.parse(one.text));
     }
-    windowCands.set(u.id, { u, subset, S, misfit, cands: matched && !cands.some((c) => c.unid === matched.unid) ? [...cands, matched] : cands });
+    windowCands.set(u.id, {
+      u,
+      subset,
+      S,
+      misfit,
+      cands: matched && !cands.some((c) => c.unid === matched.unid) ? [...cands, matched] : cands,
+    });
     if (matched) {
       pairs.push({ u, e: matched, label: 'MATCH', source: 'emsc_eventid_service', misfit, subset });
     } else {
-      unmatched.push({ usgs: u, subset, eventid_service: conv.status !== 200 ? `HTTP ${conv.status}` : S ? `unid ${S} not retrievable` : `HTTP 200, empty match list`, nearest_candidates: cands.map((c) => ({ ...c, delta: delta(u, c) })).sort((a, b) => Math.abs(a.delta.dt_s) - Math.abs(b.delta.dt_s)).slice(0, 2) });
+      unmatched.push({
+        usgs: u,
+        subset,
+        eventid_service:
+          conv.status !== 200
+            ? `HTTP ${conv.status}`
+            : S
+              ? `unid ${S} not retrievable`
+              : `HTTP 200, empty match list`,
+        nearest_candidates: cands
+          .map((c) => ({ ...c, delta: delta(u, c) }))
+          .sort((a, b) => Math.abs(a.delta.dt_s) - Math.abs(b.delta.dt_s))
+          .slice(0, 2),
+      });
     }
     const negs = cands
       .filter((c) => c.unid !== S)
@@ -179,13 +236,26 @@ async function main() {
     negs.sort((a, b) => Math.abs(a.d.dt_s) - Math.abs(b.d.dt_s));
     const hardNegs = negs.slice(0, MAX_NEG_PER_EVENT);
     for (const { c } of hardNegs) {
-      if (S) pairs.push({ u, e: c, label: 'NO_MATCH', source: 'emsc_eventid_service', misfit: null, subset, inferred: true, S });
+      if (S)
+        pairs.push({
+          u,
+          e: c,
+          label: 'NO_MATCH',
+          source: 'emsc_eventid_service',
+          misfit: null,
+          subset,
+          inferred: true,
+          S,
+        });
     }
-    if (review && (negs.length || !matched)) reviewRows.push({ u, S, matched, negs: negs.slice(0, 4) });
+    if (review && (negs.length || !matched))
+      reviewRows.push({ u, S, matched, negs: negs.slice(0, 4) });
   }
   // Keep only the hardest service-inferred negatives (smallest |dt|), always keeping hand-checked pairs.
   const isHand = (p) => handKey.has(`${p.u.id}|${p.e.unid}`);
-  const autoNeg = pairs.filter((p) => p.label === 'NO_MATCH' && !isHand(p)).sort((a, b) => Math.abs(delta(a.u, a.e).dt_s) - Math.abs(delta(b.u, b.e).dt_s));
+  const autoNeg = pairs
+    .filter((p) => p.label === 'NO_MATCH' && !isHand(p))
+    .sort((a, b) => Math.abs(delta(a.u, a.e).dt_s) - Math.abs(delta(b.u, b.e).dt_s));
   const keepNeg = new Set(autoNeg.slice(0, MAX_AUTO_NEG));
   const kept = pairs.filter((p) => p.label === 'MATCH' || isHand(p) || keepNeg.has(p));
   // Hand checks may add pairs that were not auto-generated, as long as the EMSC event is in that USGS event's window.
@@ -193,7 +263,17 @@ async function main() {
     if (kept.some((p) => p.u.id === h.usgs_id && p.e.unid === h.emsc_unid)) continue;
     const w = windowCands.get(h.usgs_id);
     const c = w?.cands.find((x) => x.unid === h.emsc_unid);
-    if (c) kept.push({ u: w.u, e: c, label: h.label, source: 'hand_checked', misfit: null, subset: w.subset, S: w.S, added_by_hand: true });
+    if (c)
+      kept.push({
+        u: w.u,
+        e: c,
+        label: h.label,
+        source: 'hand_checked',
+        misfit: null,
+        subset: w.subset,
+        S: w.S,
+        added_by_hand: true,
+      });
   }
 
   // 4. apply hand checks and emit
@@ -207,8 +287,25 @@ async function main() {
     const h = handKey.get(key);
     const entry = {
       pair_id: key.replace('|', '__'),
-      usgs: { id: p.u.id, time: p.u.time, lat: p.u.lat, lon: p.u.lon, depth_km: p.u.depth_km, mag: p.u.mag, magType: p.u.magType },
-      emsc: { unid: p.e.unid, time: p.e.time, lat: p.e.lat, lon: p.e.lon, depth_km: p.e.depth_km, mag: p.e.mag, magType: p.e.magType, auth: p.e.auth },
+      usgs: {
+        id: p.u.id,
+        time: p.u.time,
+        lat: p.u.lat,
+        lon: p.u.lon,
+        depth_km: p.u.depth_km,
+        mag: p.u.mag,
+        magType: p.u.magType,
+      },
+      emsc: {
+        unid: p.e.unid,
+        time: p.e.time,
+        lat: p.e.lat,
+        lon: p.e.lon,
+        depth_km: p.e.depth_km,
+        mag: p.e.mag,
+        magType: p.e.magType,
+        auth: p.e.auth,
+      },
       delta: delta(p.u, p.e),
       label: h ? h.label : p.label,
       label_source: h ? 'hand_checked' : p.source,
@@ -228,26 +325,35 @@ async function main() {
     };
     out.push(entry);
   }
-  for (const h of hand) if (!seen.has(`${h.usgs_id}|${h.emsc_unid}`)) console.warn(`WARN hand check not found among generated pairs: ${h.usgs_id}|${h.emsc_unid}`);
+  for (const h of hand)
+    if (!seen.has(`${h.usgs_id}|${h.emsc_unid}`))
+      console.warn(`WARN hand check not found among generated pairs: ${h.usgs_id}|${h.emsc_unid}`);
 
   const counts = {
     total: out.length,
     MATCH: out.filter((x) => x.label === 'MATCH').length,
     NO_MATCH: out.filter((x) => x.label === 'NO_MATCH').length,
     hand_checked: out.filter((x) => x.label_source === 'hand_checked').length,
-    by_subset: Object.fromEntries(['global_m45', 'sequence_m45', 'euromed_m3_4.5'].map((s) => [s, out.filter((x) => x.subset === s).length])),
+    by_subset: Object.fromEntries(
+      ['global_m45', 'sequence_m45', 'euromed_m3_4.5'].map((s) => [
+        s,
+        out.filter((x) => x.subset === s).length,
+      ]),
+    ),
     usgs_events_sampled: picked.length,
     usgs_events_without_emsc_match: unmatched.length,
   };
   const doc = {
-    description: 'Labelled USGS<->EMSC earthquake pairs for correlation calibration (G5). Ground truth: EMSC EventID service (itself a fuzzy misfit match) plus a hand-checked subset.',
+    description:
+      'Labelled USGS<->EMSC earthquake pairs for correlation calibration (G5). Ground truth: EMSC EventID service (itself a fuzzy misfit match) plus a hand-checked subset.',
     generated_at: new Date().toISOString(),
     method: {
       script: 'scripts/capture-fixtures/build-eq-pairs.mjs',
       seed: SEED,
       period: [START + 'Z', END + 'Z'],
       usgs_queries: [usgsUrl, emUrl],
-      eventid_service: 'https://www.seismicportal.eu/eventid/api/convert?source_id=<USGS id>&source_catalog=USGS&out_catalog=UNID',
+      eventid_service:
+        'https://www.seismicportal.eu/eventid/api/convert?source_id=<USGS id>&source_catalog=USGS&out_catalog=UNID',
       emsc_window: `format=json, +-${WINDOW_S}s, maxradius=${WINDOW_DEG} deg around the USGS epicentre`,
       hard_negative_rule: `EMSC event != service match, |dt| <= ${WINDOW_S}s and distance <= ${HARD_NEG_KM} km, closest-in-time ${MAX_NEG_PER_EVENT} per USGS event, then the ${MAX_AUTO_NEG} smallest |dt| overall; hand-checked pairs always kept`,
       hand_checks: 'scripts/capture-fixtures/eq-pairs-hand-checks.json',
@@ -270,9 +376,15 @@ async function main() {
 
   if (review) {
     for (const r of reviewRows) {
-      console.log(`\nU ${r.u.id} ${r.u.time} M${r.u.mag}${r.u.magType} ${r.u.lat},${r.u.lon} d${r.u.depth_km}  service=${r.S}  matched=${r.matched ? 'yes' : 'NO'}`);
-      if (r.matched) console.log(`   S ${r.matched.unid} ${JSON.stringify(delta(r.u, r.matched))} M${r.matched.mag}${r.matched.magType} ${r.matched.auth}`);
-      for (const { c, d } of r.negs) console.log(`   C ${c.unid} ${JSON.stringify(d)} M${c.mag}${c.magType} ${c.auth}`);
+      console.log(
+        `\nU ${r.u.id} ${r.u.time} M${r.u.mag}${r.u.magType} ${r.u.lat},${r.u.lon} d${r.u.depth_km}  service=${r.S}  matched=${r.matched ? 'yes' : 'NO'}`,
+      );
+      if (r.matched)
+        console.log(
+          `   S ${r.matched.unid} ${JSON.stringify(delta(r.u, r.matched))} M${r.matched.mag}${r.matched.magType} ${r.matched.auth}`,
+        );
+      for (const { c, d } of r.negs)
+        console.log(`   C ${c.unid} ${JSON.stringify(d)} M${c.mag}${c.magType} ${c.auth}`);
     }
   }
 }

@@ -41,7 +41,9 @@ function stats(csv) {
     }
     return m;
   };
-  const times = csv.lines.map((l) => `${field(c, l, 'acq_date')}T${field(c, l, 'acq_time').padStart(4, '0')}`).sort();
+  const times = csv.lines
+    .map((l) => `${field(c, l, 'acq_date')}T${field(c, l, 'acq_time').padStart(4, '0')}`)
+    .sort();
   return {
     rows: csv.lines.length,
     columns: c,
@@ -66,7 +68,12 @@ async function sliceFile(key, prefix) {
   const inBox = (l) => {
     const lat = Number(field(c, l, 'latitude'));
     const lon = Number(field(c, l, 'longitude'));
-    return lon >= SLICE_BBOX.west && lon <= SLICE_BBOX.east && lat >= SLICE_BBOX.south && lat <= SLICE_BBOX.north;
+    return (
+      lon >= SLICE_BBOX.west &&
+      lon <= SLICE_BBOX.east &&
+      lat >= SLICE_BBOX.south &&
+      lat <= SLICE_BBOX.north
+    );
   };
   const slice = csv.lines.filter(inBox).slice(0, SLICE_ROWS);
   await saveFixture(SOURCE, `${prefix}-24h-slice.csv`, joinCsv(csv, slice), {
@@ -108,25 +115,53 @@ async function main() {
     notes: `TRIMMED: header + first ${keepUsa.length} of ${su.rows} rows. Version values in full file: ${JSON.stringify(su.version)} (V4 evidence).`,
   });
 
-  await saveFixture(SOURCE, 'stats-24h.json', JSON.stringify({ j1: s1, j2: s2, j1usa: { key: 'j1usa', bytes: usa.body.length, ...su } }, null, 2) + '\n', {
-    synthetic: true,
-    derived_from: 'J1/J2 Global 24h + J1 USA 24h keyless files (full, not stored)',
-    notes: 'Computed summary of the full files at capture time (row counts, version/satellite/confidence distributions). Evidence for V4 and volume estimates; not a provider payload.',
-  });
+  await saveFixture(
+    SOURCE,
+    'stats-24h.json',
+    JSON.stringify(
+      { j1: s1, j2: s2, j1usa: { key: 'j1usa', bytes: usa.body.length, ...su } },
+      null,
+      2,
+    ) + '\n',
+    {
+      synthetic: true,
+      derived_from: 'J1/J2 Global 24h + J1 USA 24h keyless files (full, not stored)',
+      notes:
+        'Computed summary of the full files at capture time (row counts, version/satellite/confidence distributions). Evidence for V4 and volume estimates; not a provider payload.',
+    },
+  );
 
   // MAP_KEY-dependent endpoints with an invalid key (V3).
-  await captureUrl(SOURCE, 'area-invalid-mapkey.txt', `${F}/api/area/csv/${BAD_KEY}/VIIRS_NOAA20_NRT/world/1`, {
-    notes: 'Area API with an invalid MAP_KEY.',
-  });
-  await captureUrl(SOURCE, 'data-availability-invalid-mapkey.txt', `${F}/api/data_availability/csv/${BAD_KEY}/ALL`, {
-    notes: 'data_availability with an invalid MAP_KEY (V3: schema of a successful response not observable without a key).',
-  });
-  await captureUrl(SOURCE, 'mapkey-status-invalid.html', `${F}/mapserver/mapkey_status/?MAP_KEY=${BAD_KEY}`, {
-    notes: 'mapkey_status with an invalid key: HTTP 403 text/html one-line message (also returned when the limit is exceeded — indistinguishable).',
-  });
+  await captureUrl(
+    SOURCE,
+    'area-invalid-mapkey.txt',
+    `${F}/api/area/csv/${BAD_KEY}/VIIRS_NOAA20_NRT/world/1`,
+    {
+      notes: 'Area API with an invalid MAP_KEY.',
+    },
+  );
+  await captureUrl(
+    SOURCE,
+    'data-availability-invalid-mapkey.txt',
+    `${F}/api/data_availability/csv/${BAD_KEY}/ALL`,
+    {
+      notes:
+        'data_availability with an invalid MAP_KEY (V3: schema of a successful response not observable without a key).',
+    },
+  );
+  await captureUrl(
+    SOURCE,
+    'mapkey-status-invalid.html',
+    `${F}/mapserver/mapkey_status/?MAP_KEY=${BAD_KEY}`,
+    {
+      notes:
+        'mapkey_status with an invalid key: HTTP 403 text/html one-line message (also returned when the limit is exceeded — indistinguishable).',
+    },
+  );
   await captureUrl(SOURCE, 'missing-data.json', `${F}/api/missing_data/?action=fetch_data`, {
     headers: { 'X-Requested-With': 'XMLHttpRequest' },
-    notes: 'Keyless missing-data table as fetched by the /api/missing_data/ page itself: JSON {success, html, rowCount} where html is <tr> rows (date, satellite/sensor) for SP and NRT. Undocumented internal endpoint.',
+    notes:
+      'Keyless missing-data table as fetched by the /api/missing_data/ page itself: JSON {success, html, rowCount} where html is <tr> rows (date, satellite/sensor) for SP and NRT. Undocumented internal endpoint.',
   });
 }
 

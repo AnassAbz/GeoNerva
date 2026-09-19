@@ -17,8 +17,18 @@ const END = '2026-09-19';
 const KM_PER_DEG = 111.195; // mean great-circle km per degree (R = 6371.0088)
 const PLACES = [
   { name: 'Marrakech', lat: 31.63416, lon: -7.99994, gdacsCountries: ['Morocco'] },
-  { name: 'Vancouver', lat: 49.24966, lon: -123.11934, gdacsCountries: ['Canada', 'United States'] },
-  { name: 'Los Angeles', lat: 34.05223, lon: -118.24368, gdacsCountries: ['United States', 'Mexico'] },
+  {
+    name: 'Vancouver',
+    lat: 49.24966,
+    lon: -123.11934,
+    gdacsCountries: ['Canada', 'United States'],
+  },
+  {
+    name: 'Los Angeles',
+    lat: 34.05223,
+    lon: -118.24368,
+    gdacsCountries: ['United States', 'Mexico'],
+  },
   { name: 'Tokyo', lat: 35.6895, lon: 139.69171, gdacsCountries: ['Japan'] },
   { name: 'Reykjavík', lat: 64.13548, lon: -21.89541, gdacsCountries: ['Iceland'] },
 ]; // coordinates: GeoNames cities15000 (2026-09-19)
@@ -33,12 +43,16 @@ async function get(url, opts) {
 }
 
 async function usgsCount(p, km, minmag) {
-  const r = await get(`https://earthquake.usgs.gov/fdsnws/event/1/count?format=geojson&starttime=${START}&endtime=${END}&latitude=${p.lat}&longitude=${p.lon}&maxradiuskm=${km}&minmagnitude=${minmag}`);
+  const r = await get(
+    `https://earthquake.usgs.gov/fdsnws/event/1/count?format=geojson&starttime=${START}&endtime=${END}&latitude=${p.lat}&longitude=${p.lon}&maxradiuskm=${km}&minmagnitude=${minmag}`,
+  );
   return JSON.parse(r.body.toString()).count;
 }
 async function emscCount(p, km, minmag) {
   const deg = (km / KM_PER_DEG).toFixed(3);
-  const r = await get(`https://www.seismicportal.eu/fdsnws/event/1/count?starttime=${START}T00:00:00&endtime=${END}T00:00:00&lat=${p.lat}&lon=${p.lon}&maxradius=${deg}&minmag=${minmag}`);
+  const r = await get(
+    `https://www.seismicportal.eu/fdsnws/event/1/count?starttime=${START}T00:00:00&endtime=${END}T00:00:00&lat=${p.lat}&lon=${p.lon}&maxradius=${deg}&minmag=${minmag}`,
+  );
   const m = /<Events>\s*(\d+)\s*<\/Events>/.exec(r.body.toString());
   if (!m) throw new Error(`EMSC count parse: ${r.status} ${r.body.toString().slice(0, 200)}`);
   return Number(m[1]);
@@ -68,7 +82,14 @@ async function firms7d(url) {
       if (haversineKm(p.lat, p.lon, lat, lon) <= 150) counts[p.name]++;
     }
   }
-  return { url, bytes: r.body.length, rows, acq_dates: [...dates].sort(), last_modified: r.headers['last-modified'], counts };
+  return {
+    url,
+    bytes: r.body.length,
+    rows,
+    acq_dates: [...dates].sort(),
+    last_modified: r.headers['last-modified'],
+    counts,
+  };
 }
 
 async function gdacsWindow(country, from, to, acc, depth = 0) {
@@ -93,8 +114,10 @@ async function main() {
   const out = { generated_at: new Date().toISOString(), period: [START, END], places: [] };
   for (const p of PLACES) {
     const row = { ...p, usgs: {}, emsc: {} };
-    for (const km of [150, 300]) for (const mm of [2.5, 4.5]) row.usgs[`r${km}_m${mm}`] = await usgsCount(p, km, mm);
-    for (const km of [150, 300]) for (const mm of [2.5, 4.5]) row.emsc[`r${km}_m${mm}`] = await emscCount(p, km, mm);
+    for (const km of [150, 300])
+      for (const mm of [2.5, 4.5]) row.usgs[`r${km}_m${mm}`] = await usgsCount(p, km, mm);
+    for (const km of [150, 300])
+      for (const mm of [2.5, 4.5]) row.emsc[`r${km}_m${mm}`] = await emscCount(p, km, mm);
     out.places.push(row);
     console.log(p.name, JSON.stringify(row.usgs), JSON.stringify(row.emsc));
   }
@@ -105,7 +128,9 @@ async function main() {
     const acc = { events: new Map(), truncatedWindows: [] };
     for (let y = 2021; y < 2026; y++) await gdacsWindow(c, `${y}-09-19`, `${y + 1}-09-18`, acc);
     byCountry.set(c, acc);
-    console.log(`GDACS ${c}: ${acc.events.size} events (truncated windows: ${acc.truncatedWindows.length})`);
+    console.log(
+      `GDACS ${c}: ${acc.events.size} events (truncated windows: ${acc.truncatedWindows.length})`,
+    );
   }
   for (const row of out.places) {
     const seen = new Map();
@@ -116,7 +141,14 @@ async function main() {
       for (const [k, f] of acc.events) {
         const [lon, lat] = f.geometry.coordinates;
         const d = haversineKm(row.lat, row.lon, lat, lon);
-        if (d <= 300) seen.set(k, { type: f.properties.eventtype, level: f.properties.alertlevel, name: f.properties.name, from: f.properties.fromdate, km: Math.round(d) });
+        if (d <= 300)
+          seen.set(k, {
+            type: f.properties.eventtype,
+            level: f.properties.alertlevel,
+            name: f.properties.name,
+            from: f.properties.fromdate,
+            km: Math.round(d),
+          });
       }
     }
     const ev = [...seen.values()];
@@ -131,16 +163,26 @@ async function main() {
   }
 
   if (!skipFirms) {
-    const j1 = await firms7d('https://firms.modaps.eosdis.nasa.gov/data/active_fire/noaa-20-viirs-c2/csv/J1_VIIRS_C2_Global_7d.csv');
-    const j2 = await firms7d('https://firms.modaps.eosdis.nasa.gov/data/active_fire/noaa-21-viirs-c2/csv/J2_VIIRS_C2_Global_7d.csv');
+    const j1 = await firms7d(
+      'https://firms.modaps.eosdis.nasa.gov/data/active_fire/noaa-20-viirs-c2/csv/J1_VIIRS_C2_Global_7d.csv',
+    );
+    const j2 = await firms7d(
+      'https://firms.modaps.eosdis.nasa.gov/data/active_fire/noaa-21-viirs-c2/csv/J2_VIIRS_C2_Global_7d.csv',
+    );
     out.firms_7d = { j1: { ...j1 }, j2: { ...j2 } };
-    for (const row of out.places) row.firms_7d_r150 = { noaa20: j1.counts[row.name], noaa21: j2.counts[row.name], total: j1.counts[row.name] + j2.counts[row.name] };
+    for (const row of out.places)
+      row.firms_7d_r150 = {
+        noaa20: j1.counts[row.name],
+        noaa21: j2.counts[row.name],
+        total: j1.counts[row.name] + j2.counts[row.name],
+      };
     console.log('FIRMS', JSON.stringify(out.places.map((r) => [r.name, r.firms_7d_r150])));
   }
   out.requests = requests;
   await saveFixture('coverage', 'demo-coverage.json', JSON.stringify(out, null, 2) + '\n', {
     synthetic: true,
-    derived_from: 'USGS FDSN count, EMSC FDSN count, GDACS SEARCH (by country), FIRMS keyless Global 7d CSVs — live 2026-09-19',
+    derived_from:
+      'USGS FDSN count, EMSC FDSN count, GDACS SEARCH (by country), FIRMS keyless Global 7d CSVs — live 2026-09-19',
     notes: `Demo-place coverage summary (Q5), computed by demo-coverage.mjs; ${requests} requests.`,
   });
   console.log('requests', requests);

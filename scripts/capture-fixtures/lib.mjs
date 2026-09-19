@@ -60,7 +60,15 @@ export async function politeFetch(url, { timeoutMs = 60_000, headers = {}, metho
     };
   } catch (err) {
     if (err?.name === 'AbortError') {
-      return { status: 0, contentType: null, headers: {}, body: Buffer.alloc(0), url, timedOut: true, elapsedMs: Date.now() - started };
+      return {
+        status: 0,
+        contentType: null,
+        headers: {},
+        body: Buffer.alloc(0),
+        url,
+        timedOut: true,
+        elapsedMs: Date.now() - started,
+      };
     }
     throw err;
   } finally {
@@ -71,7 +79,8 @@ export async function politeFetch(url, { timeoutMs = 60_000, headers = {}, metho
 
 export async function fetchJson(url, opts) {
   const r = await politeFetch(url, opts);
-  if (r.status !== 200) throw new Error(`HTTP ${r.status} for ${url}: ${r.body.toString('utf8').slice(0, 200)}`);
+  if (r.status !== 200)
+    throw new Error(`HTTP ${r.status} for ${url}: ${r.body.toString('utf8').slice(0, 200)}`);
   return JSON.parse(r.body.toString('utf8'));
 }
 
@@ -80,7 +89,9 @@ export const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 /** Redact API keys embedded in URLs (FIRMS MAP_KEY path segment or query). */
 export function redactUrl(url) {
   return url
-    .replace(/(\/api\/[a-z_]+\/csv\/)([^/]+)(\/)/i, (m, a, key, c) => (key === 'INVALIDKEY000' ? m : `${a}<MAP_KEY>${c}`))
+    .replace(/(\/api\/[a-z_]+\/csv\/)([^/]+)(\/)/i, (m, a, key, c) =>
+      key === 'INVALIDKEY000' ? m : `${a}<MAP_KEY>${c}`,
+    )
     .replace(/(MAP_KEY=)([^&]+)/i, (m, a, key) => (key === 'INVALIDKEY000' ? m : `${a}<MAP_KEY>`));
 }
 
@@ -133,7 +144,12 @@ export async function saveFixture(source, file, body, meta = {}) {
 }
 
 /** Fetch a URL and store the response verbatim as a fixture. */
-export async function captureUrl(source, file, url, { notes = '', timeoutMs, headers, transform } = {}) {
+export async function captureUrl(
+  source,
+  file,
+  url,
+  { notes = '', timeoutMs, headers, transform } = {},
+) {
   const r = await politeFetch(url, { timeoutMs, headers });
   let body = r.body;
   let extraNotes = '';
@@ -146,7 +162,9 @@ export async function captureUrl(source, file, url, { notes = '', timeoutMs, hea
     url,
     http_status: r.timedOut ? null : r.status,
     content_type: r.contentType,
-    notes: [notes, extraNotes, r.timedOut ? `TIMED OUT after ${r.elapsedMs} ms (body empty)` : ''].filter(Boolean).join(' '),
+    notes: [notes, extraNotes, r.timedOut ? `TIMED OUT after ${r.elapsedMs} ms (body empty)` : '']
+      .filter(Boolean)
+      .join(' '),
   });
   return { ...r, entry };
 }
@@ -157,7 +175,9 @@ export function haversineKm(lat1, lon1, lat2, lon2) {
   const toRad = (d) => (d * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
@@ -246,7 +266,12 @@ export function splitTopLevelArray(text, key) {
     } else if (c === '}' || c === ']') depth--;
     else if (depth === 0 && elStart < 0 && !/\s/.test(c)) elStart = i;
   }
-  return { prefix: text.slice(0, arrStart + 1), elements, suffix: text.slice(i), separator: separator ?? ',' };
+  return {
+    prefix: text.slice(0, arrStart + 1),
+    elements,
+    suffix: text.slice(i),
+    separator: separator ?? ',',
+  };
 }
 
 /** Rebuild a document from splitTopLevelArray parts keeping only the given raw elements. */

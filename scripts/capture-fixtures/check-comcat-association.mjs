@@ -11,25 +11,35 @@
 import { fetchJson, haversineKm, politeFetch } from './lib.mjs';
 
 const MAX_EVENTS = Number(process.argv[2] ?? 25);
-const feed = await fetchJson('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_month.geojson');
-const multi = feed.features.filter((f) => f.properties.ids.split(',').filter(Boolean).length >= 3).slice(0, MAX_EVENTS);
-console.log(`4.5_month: ${feed.features.length} events, ${multi.length} with >= 3 associated ids (capped at ${MAX_EVENTS})`);
+const feed = await fetchJson(
+  'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_month.geojson',
+);
+const multi = feed.features
+  .filter((f) => f.properties.ids.split(',').filter(Boolean).length >= 3)
+  .slice(0, MAX_EVENTS);
+console.log(
+  `4.5_month: ${feed.features.length} events, ${multi.length} with >= 3 associated ids (capped at ${MAX_EVENTS})`,
+);
 
 let maxDt = 0;
 let maxKm = 0;
 const rows = [];
 for (const f of multi) {
-  const r = await politeFetch(`https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&eventid=${f.id}`);
+  const r = await politeFetch(
+    `https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&eventid=${f.id}`,
+  );
   if (r.status !== 200) {
     console.log(`  ${f.id}: HTTP ${r.status}`);
     continue;
   }
-  const origins = (JSON.parse(r.body.toString('utf8')).properties.products.origin ?? []).map((p) => ({
-    src: p.source,
-    t: Date.parse(p.properties.eventtime),
-    lat: Number(p.properties.latitude),
-    lon: Number(p.properties.longitude),
-  }));
+  const origins = (JSON.parse(r.body.toString('utf8')).properties.products.origin ?? []).map(
+    (p) => ({
+      src: p.source,
+      t: Date.parse(p.properties.eventtime),
+      lat: Number(p.properties.latitude),
+      lon: Number(p.properties.longitude),
+    }),
+  );
   if (origins.length < 2) continue;
   let dt = 0;
   let km = 0;
@@ -40,7 +50,12 @@ for (const f of multi) {
     }
   maxDt = Math.max(maxDt, dt);
   maxKm = Math.max(maxKm, km);
-  rows.push({ id: f.id, sources: origins.map((o) => o.src).join('+'), dt_s: +dt.toFixed(1), dist_km: +km.toFixed(1) });
+  rows.push({
+    id: f.id,
+    sources: origins.map((o) => o.src).join('+'),
+    dt_s: +dt.toFixed(1),
+    dist_km: +km.toFixed(1),
+  });
   console.log(`  ${f.id} ${rows.at(-1).sources} ${rows.at(-1).dt_s}s ${rows.at(-1).dist_km}km`);
 }
 const med = (a) => a.sort((x, y) => x - y)[Math.floor(a.length / 2)];

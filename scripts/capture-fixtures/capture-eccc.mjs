@@ -25,11 +25,14 @@ async function poll(label) {
 function idParts(id) {
   // Observed shape: <digits><YYYYMMDDhhmm>_<feature_id>, e.g. 636507912014517831202609190507_fea1-869
   const m = /^(\d+?)(\d{12})_(.+)$/.exec(id);
-  return m ? { prefix: m[1], stamp: m[2], suffix: m[3] } : { prefix: null, stamp: null, suffix: null };
+  return m
+    ? { prefix: m[1], stamp: m[2], suffix: m[3] }
+    : { prefix: null, stamp: null, suffix: null };
 }
 
 async function analyze(a, b) {
-  const load = async (l) => JSON.parse(await readFile(join(FIXTURE_ROOT, SOURCE, `weather-alerts-${l}.json`), 'utf8'));
+  const load = async (l) =>
+    JSON.parse(await readFile(join(FIXTURE_ROOT, SOURCE, `weather-alerts-${l}.json`), 'utf8'));
   const A = await load(a);
   const B = await load(b);
   const idsA = new Set(A.features.map((f) => f.id));
@@ -37,7 +40,8 @@ async function analyze(a, b) {
   const same = [...idsA].filter((x) => idsB.has(x));
   const onlyA = [...idsA].filter((x) => !idsB.has(x));
   const onlyB = [...idsB].filter((x) => !idsA.has(x));
-  const key = (f) => `${f.properties.feature_id}|${f.properties.alert_code}|${f.properties.validity_datetime}`;
+  const key = (f) =>
+    `${f.properties.feature_id}|${f.properties.alert_code}|${f.properties.validity_datetime}`;
   const byId = (fc) => new Map(fc.features.map((f) => [f.id, f]));
   const mA = byId(A);
   const mB = byId(B);
@@ -45,16 +49,24 @@ async function analyze(a, b) {
   for (const id of same) {
     const pa = mA.get(id).properties;
     const pb = mB.get(id).properties;
-    const diff = Object.keys({ ...pa, ...pb }).filter((k) => JSON.stringify(pa[k]) !== JSON.stringify(pb[k]));
+    const diff = Object.keys({ ...pa, ...pb }).filter(
+      (k) => JSON.stringify(pa[k]) !== JSON.stringify(pb[k]),
+    );
     if (diff.length) changedProps.push({ id, changed: diff });
   }
   // Is the `id` composite and does feature_id repeat within one poll?
-  const featureIdDupA = A.features.length - new Set(A.features.map((f) => f.properties.feature_id)).size;
+  const featureIdDupA =
+    A.features.length - new Set(A.features.map((f) => f.properties.feature_id)).size;
   const idPrefixes = new Set(A.features.map((f) => idParts(f.id).prefix + idParts(f.id).stamp));
-  const suffixEqualsFeatureId = A.features.every((f) => idParts(f.id).suffix === f.properties.feature_id);
+  const suffixEqualsFeatureId = A.features.every(
+    (f) => idParts(f.id).suffix === f.properties.feature_id,
+  );
   const propKeys = [...new Set(A.features.flatMap((f) => Object.keys(f.properties)))].sort();
   const summary = {
-    polls: { a: { label: a, timeStamp: A.timeStamp, count: A.features.length }, b: { label: b, timeStamp: B.timeStamp, count: B.features.length } },
+    polls: {
+      a: { label: a, timeStamp: A.timeStamp, count: A.features.length },
+      b: { label: b, timeStamp: B.timeStamp, count: B.features.length },
+    },
     ids_identical_across_polls: same.length,
     ids_only_in_a: onlyA,
     ids_only_in_b: onlyB,
@@ -65,11 +77,16 @@ async function analyze(a, b) {
     natural_key_collisions_in_a: A.features.length - new Set(A.features.map(key)).size,
     property_keys: propKeys,
   };
-  await saveFixture(SOURCE, `identity-analysis-${a}-${b}.json`, JSON.stringify(summary, null, 2) + '\n', {
-    synthetic: true,
-    derived_from: `weather-alerts-${a}.json + weather-alerts-${b}.json`,
-    notes: 'Computed by capture-eccc.mjs analyze; evidence for V1. Not a provider payload.',
-  });
+  await saveFixture(
+    SOURCE,
+    `identity-analysis-${a}-${b}.json`,
+    JSON.stringify(summary, null, 2) + '\n',
+    {
+      synthetic: true,
+      derived_from: `weather-alerts-${a}.json + weather-alerts-${b}.json`,
+      notes: 'Computed by capture-eccc.mjs analyze; evidence for V1. Not a provider payload.',
+    },
+  );
   console.log(JSON.stringify({ ...summary, property_keys: undefined }, null, 2));
 }
 

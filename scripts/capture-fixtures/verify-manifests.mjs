@@ -15,7 +15,17 @@ import { join, extname } from 'node:path';
 import { FIXTURE_ROOT, sha256 } from './lib.mjs';
 
 const MAX_TOTAL = 6 * 1024 * 1024;
-const REQUIRED = ['file', 'url', 'captured_at', 'sha256', 'http_status', 'content_type', 'notes', 'synthetic', 'derived_from'];
+const REQUIRED = [
+  'file',
+  'url',
+  'captured_at',
+  'sha256',
+  'http_status',
+  'content_type',
+  'notes',
+  'synthetic',
+  'derived_from',
+];
 const prune = process.argv.includes('--prune');
 
 function checkXml(text) {
@@ -44,7 +54,8 @@ function checkCsv(text) {
   if (!lines.length) throw new Error('CSV: empty');
   const n = lines[0].split(',').length;
   lines.forEach((l, i) => {
-    if (l.split(',').length !== n) throw new Error(`CSV: line ${i + 1} has ${l.split(',').length} cols, header ${n}`);
+    if (l.split(',').length !== n)
+      throw new Error(`CSV: line ${i + 1} has ${l.split(',').length} cols, header ${n}`);
   });
   return lines.length - 1;
 }
@@ -57,7 +68,10 @@ function parseCheck(file, buf, entry) {
     if (ext === '.json' || ext === '.geojson') {
       if (buf.length) JSON.parse(text);
     } else if (ext === '.ndjson') {
-      text.split('\n').filter(Boolean).forEach((l) => JSON.parse(l));
+      text
+        .split('\n')
+        .filter(Boolean)
+        .forEach((l) => JSON.parse(l));
     } else if (ext === '.csv') checkCsv(text);
     else if (ext === '.xml') checkXml(text);
     // .txt / .html: raw provider bodies, no structural check
@@ -86,7 +100,10 @@ const fail = (msg) => {
   console.error('FAIL', msg);
 };
 
-for (const source of (await readdir(FIXTURE_ROOT, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name).sort()) {
+for (const source of (await readdir(FIXTURE_ROOT, { withFileTypes: true }))
+  .filter((d) => d.isDirectory())
+  .map((d) => d.name)
+  .sort()) {
   const dir = join(FIXTURE_ROOT, source);
   const manifestPath = join(dir, 'MANIFEST.json');
   let manifest;
@@ -102,7 +119,9 @@ for (const source of (await readdir(FIXTURE_ROOT, { withFileTypes: true })).filt
     manifest.fixtures = manifest.fixtures.filter((f) => files.includes(f.file));
     if (manifest.fixtures.length !== before) {
       await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
-      console.log(`pruned ${before - manifest.fixtures.length} stale entries from ${source}/MANIFEST.json`);
+      console.log(
+        `pruned ${before - manifest.fixtures.length} stale entries from ${source}/MANIFEST.json`,
+      );
     }
   }
   const listed = new Set();
@@ -110,8 +129,10 @@ for (const source of (await readdir(FIXTURE_ROOT, { withFileTypes: true })).filt
   let ok = 0;
   for (const entry of manifest.fixtures) {
     listed.add(entry.file);
-    for (const k of REQUIRED) if (!(k in entry)) fail(`${source}/${entry.file}: manifest field "${k}" missing`);
-    if (entry.synthetic && !entry.derived_from) fail(`${source}/${entry.file}: synthetic without derived_from`);
+    for (const k of REQUIRED)
+      if (!(k in entry)) fail(`${source}/${entry.file}: manifest field "${k}" missing`);
+    if (entry.synthetic && !entry.derived_from)
+      fail(`${source}/${entry.file}: synthetic without derived_from`);
     let buf;
     try {
       buf = await readFile(join(dir, entry.file));
@@ -121,24 +142,36 @@ for (const source of (await readdir(FIXTURE_ROOT, { withFileTypes: true })).filt
     }
     bytes += buf.length;
     if (sha256(buf) !== entry.sha256) fail(`${source}/${entry.file}: sha256 mismatch`);
-    if (entry.bytes !== undefined && entry.bytes !== buf.length) fail(`${source}/${entry.file}: size mismatch`);
+    if (entry.bytes !== undefined && entry.bytes !== buf.length)
+      fail(`${source}/${entry.file}: size mismatch`);
     try {
       parseCheck(entry.file, buf, entry);
     } catch (e) {
       fail(`${source}/${entry.file}: ${e.message}`);
     }
     const text = buf.toString('utf8') + JSON.stringify(entry);
-    for (const re of SECRET_PATTERNS) if (re.test(text)) fail(`${source}/${entry.file}: possible secret/personal data matches ${re}`);
+    for (const re of SECRET_PATTERNS)
+      if (re.test(text))
+        fail(`${source}/${entry.file}: possible secret/personal data matches ${re}`);
     ok++;
   }
   for (const f of files) if (!listed.has(f)) fail(`${source}/${f}: file not listed in MANIFEST`);
   const synth = manifest.fixtures.filter((f) => f.synthetic).length;
-  perSource[source] = { fixtures: manifest.fixtures.length, real: manifest.fixtures.length - synth, synthetic: synth, bytes };
+  perSource[source] = {
+    fixtures: manifest.fixtures.length,
+    real: manifest.fixtures.length - synth,
+    synthetic: synth,
+    bytes,
+  };
   total += bytes;
-  console.log(`${source.padEnd(12)} ${String(ok).padStart(3)} fixtures verified (${synth} synthetic), ${(bytes / 1024).toFixed(1)} KiB`);
+  console.log(
+    `${source.padEnd(12)} ${String(ok).padStart(3)} fixtures verified (${synth} synthetic), ${(bytes / 1024).toFixed(1)} KiB`,
+  );
 }
 
-console.log(`TOTAL ${(total / 1024 / 1024).toFixed(2)} MiB (${total} bytes) across ${Object.keys(perSource).length} sources`);
+console.log(
+  `TOTAL ${(total / 1024 / 1024).toFixed(2)} MiB (${total} bytes) across ${Object.keys(perSource).length} sources`,
+);
 if (total > MAX_TOTAL) fail(`total fixture size ${total} > ${MAX_TOTAL}`);
 if (errors) {
   console.error(`${errors} error(s)`);

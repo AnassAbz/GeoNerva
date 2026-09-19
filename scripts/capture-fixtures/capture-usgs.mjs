@@ -9,7 +9,13 @@
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { FIXTURE_ROOT, captureUrl, politeFetch, saveFixture, trimFeatureCollection } from './lib.mjs';
+import {
+  FIXTURE_ROOT,
+  captureUrl,
+  politeFetch,
+  saveFixture,
+  trimFeatureCollection,
+} from './lib.mjs';
 
 const SOURCE = 'usgs';
 const FEED = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary';
@@ -23,33 +29,55 @@ const SUPERSEDED_EVENT_ID = 'us7000tiet'; // small detail doc with 2 contributin
 async function main() {
   console.log('USGS main');
   await captureUrl(SOURCE, 'all_day.geojson', `${FEED}/all_day.geojson`, {
-    notes: 'Real-time summary feed, whole (not trimmed). Also serves as t0 of the revision pair (see revision-t0/t1).',
+    notes:
+      'Real-time summary feed, whole (not trimmed). Also serves as t0 of the revision pair (see revision-t0/t1).',
   });
 
-  await captureUrl(SOURCE, 'fdsn-eventid-by-alias.geojson', `${FDSN}/query?format=geojson&eventid=${ALIAS_QUERY_ID}`, {
-    notes: `Queried by secondary alias ${ALIAS_QUERY_ID}; response id is the preferred id pr2026261000 (ids ,pt26261050,us7000tiar,pr2026261000,). Demonstrates that the queried id != returned id (ids/preferred-id change). FDSN detail format (single Feature with products).`,
-  });
+  await captureUrl(
+    SOURCE,
+    'fdsn-eventid-by-alias.geojson',
+    `${FDSN}/query?format=geojson&eventid=${ALIAS_QUERY_ID}`,
+    {
+      notes: `Queried by secondary alias ${ALIAS_QUERY_ID}; response id is the preferred id pr2026261000 (ids ,pt26261050,us7000tiar,pr2026261000,). Demonstrates that the queried id != returned id (ids/preferred-id change). FDSN detail format (single Feature with products).`,
+    },
+  );
 
-  await captureUrl(SOURCE, 'fdsn-superseded-detail.geojson', `${FDSN}/query?format=geojson&eventid=${SUPERSEDED_EVENT_ID}&includesuperseded=true`, {
-    notes: `Detail with includesuperseded=true: origin products from us and ak (AKa2026snnoxq) with different magnitudes (3.6 vs 3.5). includesuperseded only works with eventid.`,
-  });
+  await captureUrl(
+    SOURCE,
+    'fdsn-superseded-detail.geojson',
+    `${FDSN}/query?format=geojson&eventid=${SUPERSEDED_EVENT_ID}&includesuperseded=true`,
+    {
+      notes: `Detail with includesuperseded=true: origin products from us and ak (AKa2026snnoxq) with different magnitudes (3.6 vs 3.5). includesuperseded only works with eventid.`,
+    },
+  );
 
   await captureUrl(
     SOURCE,
     'fdsn-includedeleted-only.geojson',
     `${FDSN}/query?format=geojson&includedeleted=only&starttime=2026-09-12&endtime=2026-09-19`,
-    { notes: 'Deleted events (status "deleted", types null, place may be null) for a fixed 7-day window. Summary feeds silently drop these.' },
+    {
+      notes:
+        'Deleted events (status "deleted", types null, place may be null) for a fixed 7-day window. Summary feeds silently drop these.',
+    },
   );
 
-  await captureUrl(SOURCE, 'fdsn-eventid-deleted-409.txt', `${FDSN}/query?format=geojson&eventid=${DELETED_EVENT_ID}`, {
-    notes: `Querying a deleted event by eventid (${DELETED_EVENT_ID}); documented to return HTTP 409.`,
-  });
+  await captureUrl(
+    SOURCE,
+    'fdsn-eventid-deleted-409.txt',
+    `${FDSN}/query?format=geojson&eventid=${DELETED_EVENT_ID}`,
+    {
+      notes: `Querying a deleted event by eventid (${DELETED_EVENT_ID}); documented to return HTTP 409.`,
+    },
+  );
 
   await captureUrl(
     SOURCE,
     'fdsn-mag-null-sonic-boom.geojson',
     `${FDSN}/query?format=geojson&eventtype=sonic%20boom&starttime=2024-01-01&endtime=2026-09-19`,
-    { notes: 'Contains real features with "mag":null and "magType":null (sonic booms). No mag-null feature existed in all_month on 2026-09-19.' },
+    {
+      notes:
+        'Contains real features with "mag":null and "magType":null (sonic booms). No mag-null feature existed in all_month on 2026-09-19.',
+    },
   );
 
   // tsunami=1 and PAGER alert from the 4.5_month feed, trimmed byte-exactly per feature.
@@ -70,12 +98,24 @@ async function main() {
     notes: `TRIMMED: 4.5_month feed keeping only features with non-null PAGER alert (${alert.kept}/${alert.total}; green and yellow present). metadata.count reflects the untrimmed feed.`,
   });
 
-  await captureUrl(SOURCE, 'fdsn-over-20k-400.txt', `${FDSN}/query?format=geojson&starttime=2026-01-01&endtime=2026-09-19`, {
-    notes: 'Query matching > 20,000 events returns HTTP 400 text/plain. NB: an open-ended query from 2000-01-01 returned HTTP 503 "table is full" once on 2026-09-19 instead of 400 — adapters must treat both as "split the range".',
-  });
-  await captureUrl(SOURCE, 'fdsn-count-over-limit.json', `${FDSN}/count?format=geojson&starttime=2026-01-01&endtime=2026-09-19`, {
-    notes: 'count endpoint returns 200 with {count,maxAllowed,error} when over the limit — use it for chunk planning.',
-  });
+  await captureUrl(
+    SOURCE,
+    'fdsn-over-20k-400.txt',
+    `${FDSN}/query?format=geojson&starttime=2026-01-01&endtime=2026-09-19`,
+    {
+      notes:
+        'Query matching > 20,000 events returns HTTP 400 text/plain. NB: an open-ended query from 2000-01-01 returned HTTP 503 "table is full" once on 2026-09-19 instead of 400 — adapters must treat both as "split the range".',
+    },
+  );
+  await captureUrl(
+    SOURCE,
+    'fdsn-count-over-limit.json',
+    `${FDSN}/count?format=geojson&starttime=2026-01-01&endtime=2026-09-19`,
+    {
+      notes:
+        'count endpoint returns 200 with {count,maxAllowed,error} when over the limit — use it for chunk planning.',
+    },
+  );
 }
 
 async function revisions() {
@@ -116,8 +156,13 @@ async function revisions() {
     }
   }
   const t0Trim = trimFeatureCollection(t0Text, (f) => changed.has(f.id));
-  const t1Trim = trimFeatureCollection(t1Text, (f) => changed.has(f.id) || Object.keys(reasons).includes(f.id));
-  const statusFlips = Object.values(reasons).filter((x) => x.includes('status automatic->reviewed')).length;
+  const t1Trim = trimFeatureCollection(
+    t1Text,
+    (f) => changed.has(f.id) || Object.keys(reasons).includes(f.id),
+  );
+  const statusFlips = Object.values(reasons).filter((x) =>
+    x.includes('status automatic->reviewed'),
+  ).length;
   console.log(`  changed: ${changed.size}, automatic->reviewed: ${statusFlips}`);
   console.log(reasons);
   await saveFixture(SOURCE, 'revision-t0.geojson', t0Trim.text, {

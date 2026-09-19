@@ -53,19 +53,39 @@ async function main() {
     notes: `TRIMMED: channel header + first 8 <item>s per gdacs:eventtype (${t.kept}/${t.total} items; type counts in full feed ${JSON.stringify(t.counts)}). Items are byte-exact. Full feed was ${rss.body.length} bytes.`,
   });
 
-  await captureUrl(SOURCE, 'geteventdata-eq-neic.json', `${G}/events/geteventdata?eventtype=EQ&eventid=${EQ_NEIC}`, {
-    notes: 'EQ event data with properties.sourceid = USGS id (source NEIC). sourceid is empty in list/RSS.',
-  });
-  await captureUrl(SOURCE, 'geteventdata-eq-prico.json', `${G}/events/geteventdata?eventtype=EQ&eventid=${EQ_PRICO}`, {
-    notes: 'EQ from source "PRICO RS" whose sourceid pr2026261000 is the current USGS preferred id; USGS ids also contain us7000tiar and pt26261050 (see usgs/fdsn-eventid-by-alias.geojson).',
-  });
+  await captureUrl(
+    SOURCE,
+    'geteventdata-eq-neic.json',
+    `${G}/events/geteventdata?eventtype=EQ&eventid=${EQ_NEIC}`,
+    {
+      notes:
+        'EQ event data with properties.sourceid = USGS id (source NEIC). sourceid is empty in list/RSS.',
+    },
+  );
+  await captureUrl(
+    SOURCE,
+    'geteventdata-eq-prico.json',
+    `${G}/events/geteventdata?eventtype=EQ&eventid=${EQ_PRICO}`,
+    {
+      notes:
+        'EQ from source "PRICO RS" whose sourceid pr2026261000 is the current USGS preferred id; USGS ids also contain us7000tiar and pt26261050 (see usgs/fdsn-eventid-by-alias.geojson).',
+    },
+  );
 
-  await captureUrl(SOURCE, 'getgeometry-fl-affected-global.json', `${G}/polygons/getgeometry?eventtype=FL&eventid=${FL_POLY}&episodeid=1`, {
-    notes: 'Flood geometry: Point_Centroid + Poly_Affected ("Affected area") + Poly_Global ("Global area").',
-  });
+  await captureUrl(
+    SOURCE,
+    'getgeometry-fl-affected-global.json',
+    `${G}/polygons/getgeometry?eventtype=FL&eventid=${FL_POLY}&episodeid=1`,
+    {
+      notes:
+        'Flood geometry: Point_Centroid + Poly_Affected ("Affected area") + Poly_Global ("Global area").',
+    },
+  );
 
   // Find a centroid-only flood (no Poly_Affected). Scan the current FL list.
-  const list = await politeFetch(`${G}/events/geteventlist/SEARCH?eventlist=FL&alertlevel=green;orange;red&fromDate=2026-06-01&toDate=2026-09-19&pageSize=100&pageNumber=1`);
+  const list = await politeFetch(
+    `${G}/events/geteventlist/SEARCH?eventlist=FL&alertlevel=green;orange;red&fromDate=2026-06-01&toDate=2026-09-19&pageSize=100&pageNumber=1`,
+  );
   const fl = JSON.parse(list.body.toString('utf8')).features;
   let found = null;
   let scanned = 0;
@@ -91,30 +111,84 @@ async function main() {
       notes: `Real flood geometry without Poly_Affected (classes: ${found.classes.join(',')}).`,
     });
   } else {
-    console.log(`  no centroid-only flood among ${scanned} scanned; derive-drift.mjs creates a synthetic one`);
+    console.log(
+      `  no centroid-only flood among ${scanned} scanned; derive-drift.mjs creates a synthetic one`,
+    );
   }
 
-  await captureUrl(SOURCE, 'getgeometry-tc.json', `${G}/polygons/getgeometry?eventtype=TC&eventid=${TC[0]}&episodeid=${TC[1]}`, {
-    notes: 'Tropical cyclone geometry: centroid, advisory position polygons, Poly_Green/Orange/Red per forecast time + cumulative, track LineStrings (TD/TS/HU), Poly_Cones.',
-  });
-  await captureUrl(SOURCE, 'geteventdata-tc.json', `${G}/events/geteventdata?eventtype=TC&eventid=${TC[0]}`, { notes: 'TC event data (same event as getgeometry-tc.json).' });
+  await captureUrl(
+    SOURCE,
+    'getgeometry-tc.json',
+    `${G}/polygons/getgeometry?eventtype=TC&eventid=${TC[0]}&episodeid=${TC[1]}`,
+    {
+      notes:
+        'Tropical cyclone geometry: centroid, advisory position polygons, Poly_Green/Orange/Red per forecast time + cumulative, track LineStrings (TD/TS/HU), Poly_Cones.',
+    },
+  );
+  await captureUrl(
+    SOURCE,
+    'geteventdata-tc.json',
+    `${G}/events/geteventdata?eventtype=TC&eventid=${TC[0]}`,
+    { notes: 'TC event data (same event as getgeometry-tc.json).' },
+  );
   for (const ep of TC_EPISODES.slice(1)) {
-    await captureUrl(SOURCE, `getepisodedata-tc-ep${ep}.json`, `${G}/events/getepisodedata?eventtype=TC&eventid=${TC_EPISODES[0]}&episodeid=${ep}`, {
-      notes: `SAUDEL-26 episode ${ep}. Episode 20 episodealertlevel Green, episode 21 Orange (Green->Orange change). NB: datemodified/severitydata are identical across episodes in getepisodedata — only episode fields vary.`,
-    });
+    await captureUrl(
+      SOURCE,
+      `getepisodedata-tc-ep${ep}.json`,
+      `${G}/events/getepisodedata?eventtype=TC&eventid=${TC_EPISODES[0]}&episodeid=${ep}`,
+      {
+        notes: `SAUDEL-26 episode ${ep}. Episode 20 episodealertlevel Green, episode 21 Orange (Green->Orange change). NB: datemodified/severitydata are identical across episodes in getepisodedata — only episode fields vary.`,
+      },
+    );
   }
-  await captureUrl(SOURCE, 'getgeometry-wf.json', `${G}/polygons/getgeometry?eventtype=WF&eventid=${WF[0]}&episodeid=${WF[1]}`, { notes: 'Wildfire (GWIS) geometry: centroid + Poly_area.' });
-  await captureUrl(SOURCE, 'geteventdata-wf.json', `${G}/events/geteventdata?eventtype=WF&eventid=${WF[0]}`, { notes: 'Wildfire event data.' });
-  await captureUrl(SOURCE, 'getgeometry-vo.json', `${G}/polygons/getgeometry?eventtype=VO&eventid=${VO[0]}&episodeid=${VO[1]}`, { notes: 'Volcano geometry: centroid, 30 km circle, ash cones OBS/FCST.' });
-  await captureUrl(SOURCE, 'geteventdata-vo.json', `${G}/events/geteventdata?eventtype=VO&eventid=${VO[0]}`, { notes: 'Volcano event data (Orange).' });
+  await captureUrl(
+    SOURCE,
+    'getgeometry-wf.json',
+    `${G}/polygons/getgeometry?eventtype=WF&eventid=${WF[0]}&episodeid=${WF[1]}`,
+    { notes: 'Wildfire (GWIS) geometry: centroid + Poly_area.' },
+  );
+  await captureUrl(
+    SOURCE,
+    'geteventdata-wf.json',
+    `${G}/events/geteventdata?eventtype=WF&eventid=${WF[0]}`,
+    { notes: 'Wildfire event data.' },
+  );
+  await captureUrl(
+    SOURCE,
+    'getgeometry-vo.json',
+    `${G}/polygons/getgeometry?eventtype=VO&eventid=${VO[0]}&episodeid=${VO[1]}`,
+    { notes: 'Volcano geometry: centroid, 30 km circle, ash cones OBS/FCST.' },
+  );
+  await captureUrl(
+    SOURCE,
+    'geteventdata-vo.json',
+    `${G}/events/geteventdata?eventtype=VO&eventid=${VO[0]}`,
+    { notes: 'Volcano event data (Orange).' },
+  );
 
-  await captureUrl(SOURCE, 'geteventlist-search-eq.json', `${G}/events/geteventlist/SEARCH?eventlist=EQ&alertlevel=green;orange;red&fromDate=2026-09-18&toDate=2026-09-19&pageSize=100&pageNumber=1`, {
-    notes: 'SEARCH list, fixed 2-day window. sourceid is empty in list items.',
-  });
-  await captureUrl(SOURCE, 'geteventlist-search-eq-no-alertlevel.txt', `${G}/events/geteventlist/SEARCH?eventlist=EQ&fromDate=2026-09-18&toDate=2026-09-19&pageSize=100&pageNumber=1`, {
-    notes: 'EQ SEARCH without alertlevel — previously observed to return HTTP 204 (empty but suspicious).',
-  });
-  await captureUrl(SOURCE, 'swagger.json', 'https://www.gdacs.org/gdacsapi/swagger/v1/swagger.json', { notes: 'API description, for schema pinning.' });
+  await captureUrl(
+    SOURCE,
+    'geteventlist-search-eq.json',
+    `${G}/events/geteventlist/SEARCH?eventlist=EQ&alertlevel=green;orange;red&fromDate=2026-09-18&toDate=2026-09-19&pageSize=100&pageNumber=1`,
+    {
+      notes: 'SEARCH list, fixed 2-day window. sourceid is empty in list items.',
+    },
+  );
+  await captureUrl(
+    SOURCE,
+    'geteventlist-search-eq-no-alertlevel.txt',
+    `${G}/events/geteventlist/SEARCH?eventlist=EQ&fromDate=2026-09-18&toDate=2026-09-19&pageSize=100&pageNumber=1`,
+    {
+      notes:
+        'EQ SEARCH without alertlevel — previously observed to return HTTP 204 (empty but suspicious).',
+    },
+  );
+  await captureUrl(
+    SOURCE,
+    'swagger.json',
+    'https://www.gdacs.org/gdacsapi/swagger/v1/swagger.json',
+    { notes: 'API description, for schema pinning.' },
+  );
   await v2();
 }
 
@@ -122,15 +196,32 @@ async function main() {
 async function v2() {
   const since = new Date(Date.now() - 6 * 3600e3).toISOString().slice(0, 19);
   const all = 'eventlist=EQ;TC;FL;VO;DR;WF&alertlevel=green;orange;red&pageSize=100';
-  await captureUrl(SOURCE, 'geteventlist-latest-no-alertlevel.json', `${G}/events/geteventlist/latest?datemodified=${since}`, {
-    notes: 'V2: latest?datemodified=now-6h WITHOUT eventlist/alertlevel: only a handful of events (Green events are excluded by default, like the SEARCH 204 case).',
-  });
-  await captureUrl(SOURCE, 'geteventlist-latest-p1.json', `${G}/events/geteventlist/latest?${all}&datemodified=${since}&pageNumber=1`, {
-    notes: 'V2: latest with all event types + alertlevel=green;orange;red, datemodified=now-6h, page 1 (max 100, ordered by todate desc per swagger).',
-  });
-  await captureUrl(SOURCE, 'geteventlist-latest-p2.json', `${G}/events/geteventlist/latest?${all}&datemodified=${since}&pageNumber=2`, {
-    notes: 'V2: page 2 of the same query (404 when past the last page).',
-  });
+  await captureUrl(
+    SOURCE,
+    'geteventlist-latest-no-alertlevel.json',
+    `${G}/events/geteventlist/latest?datemodified=${since}`,
+    {
+      notes:
+        'V2: latest?datemodified=now-6h WITHOUT eventlist/alertlevel: only a handful of events (Green events are excluded by default, like the SEARCH 204 case).',
+    },
+  );
+  await captureUrl(
+    SOURCE,
+    'geteventlist-latest-p1.json',
+    `${G}/events/geteventlist/latest?${all}&datemodified=${since}&pageNumber=1`,
+    {
+      notes:
+        'V2: latest with all event types + alertlevel=green;orange;red, datemodified=now-6h, page 1 (max 100, ordered by todate desc per swagger).',
+    },
+  );
+  await captureUrl(
+    SOURCE,
+    'geteventlist-latest-p2.json',
+    `${G}/events/geteventlist/latest?${all}&datemodified=${since}&pageNumber=2`,
+    {
+      notes: 'V2: page 2 of the same query (404 when past the last page).',
+    },
+  );
 }
 
 const cmd = process.argv[2];

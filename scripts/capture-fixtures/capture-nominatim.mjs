@@ -10,12 +10,22 @@ const N = 'https://nominatim.openstreetmap.org/search';
 
 async function main() {
   console.log('Nominatim main (2 requests)');
-  await captureUrl(SOURCE, 'search-marrakech.json', `${N}?q=Marrakech&format=jsonv2&limit=5&addressdetails=1`, {
-    notes: 'Free-text search, format=jsonv2, limit=5, addressdetails=1.',
-  });
-  await captureUrl(SOURCE, 'search-empty.json', `${N}?q=zzqxv%20nonexistent%20placename%2012345&format=jsonv2&limit=5`, {
-    notes: 'Search with no match: HTTP 200 with an empty JSON array.',
-  });
+  await captureUrl(
+    SOURCE,
+    'search-marrakech.json',
+    `${N}?q=Marrakech&format=jsonv2&limit=5&addressdetails=1`,
+    {
+      notes: 'Free-text search, format=jsonv2, limit=5, addressdetails=1.',
+    },
+  );
+  await captureUrl(
+    SOURCE,
+    'search-empty.json',
+    `${N}?q=zzqxv%20nonexistent%20placename%2012345&format=jsonv2&limit=5`,
+    {
+      notes: 'Search with no match: HTTP 200 with an empty JSON array.',
+    },
+  );
 }
 
 const cmd = process.argv[2];

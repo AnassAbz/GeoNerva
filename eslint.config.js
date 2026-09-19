@@ -126,7 +126,8 @@ export default tseslint.config(
     },
     linterOptions: { reportUnusedDisableDirectives: 'error' },
     rules: {
-      eqeqeq: ['error', 'always'],
+      // `x == null` is the idiomatic null-or-undefined check and is allowed.
+      eqeqeq: ['error', 'always', { null: 'ignore' }],
       'no-console': 'error',
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
