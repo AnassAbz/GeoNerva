@@ -131,7 +131,7 @@ RECOMMENDED NEXT STEP
 
 ## 3. Phases
 
-### P0 — Source fixtures & verification
+### P0 — Source fixtures & verification ✅ COMPLETE (2026-09-19)
 - **Goal:** Close verification items V1–V9 and capture the real fixtures every adapter and test depends on.
 - **Dependencies:** none (parallel with P1).
 - **Agent owner:** Source Research.
@@ -203,7 +203,7 @@ RECOMMENDED NEXT STEP
   2. Adapter contract + batch verdict logic.
   3. Pipeline: lease → fetch → parse → normalize → persist (one txn, `ingested_at` stamping) → post-commit hooks (no-op registry for now).
   4. USGS adapter: summary feed, FDSN `updatedafter` reconcile, `includedeleted` reconcile, alias merge handling.
-  5. Worker: `start` (croner, jitter, breakers, heartbeat), `run --source`, `backfill usgs` (count-guided chunking).
+  5. Worker: `start` (croner, jitter, breakers, heartbeat), `run --source`, `backfill usgs` (count-guided chunking). **[P0]** Treat HTTP **503 "table is full"** on a large FDSN query as "split the range", exactly like 400; `count` answers 200 with an `error` field when over the limit.
 - **Tests:** contract tests on USGS fixtures incl. drift; integration idempotency, revision and alias merge; scheduler unit tests with a fake clock; HTTP client tests (redirect to another host, private IP, oversize).
 - **Acceptance criteria:** G3. `worker start` ingests live USGS locally for 1 h with no errors.
 - **Expected commits:** `feat(http): add hardened outbound client`, `feat(sources): define adapter contract`, `feat(pipeline): add ingestion run lifecycle`, `feat(ingestion): add USGS earthquake adapter`, `feat(worker): add scheduler and CLI`, `feat(worker): add USGS backfill`.
@@ -266,7 +266,7 @@ RECOMMENDED NEXT STEP
 - **Files/packages:** `packages/briefing/**`, `apps/web/app/api/**`, `apps/web/lib/server/**`.
 - **Tasks:**
   1. Snapshot builder (parallel family queries); diff wiring; deterministic templates.
-  2. Geocoding (GeoNames import script + Nominatim adapter with queue/cache).
+  2. Geocoding (GeoNames import script + Nominatim adapter with queue/cache). **[P0]** `cities15000` is **34,146 rows / 19 columns**, and type-ahead must index `alternatenames`: the primary name is "Marrakesh" and "Marrakech" exists only as an alternate.
   3. Rate limiting; problem+json errors; cache headers; canonical URL normalization.
   4. Worker-side materialization for curated places.
   5. OpenAPI document generated from Zod.
@@ -284,7 +284,7 @@ RECOMMENDED NEXT STEP
   - **9a:**
     - design tokens (dark, accessible palette), typography
     - components: situation strip, change item, hazard card with states, source chip, evidence drawer/bottom sheet, relevance "Why?" popover, nearby table, history mini-chart
-    - map wrapper (MapLibre v6, layers per family, legend, keyboard toggles, WebGL2 fallback)
+    - map wrapper (MapLibre v6, layers per family, legend, keyboard toggles, WebGL2 fallback). **[P0]** Pin `@vis.gl/react-maplibre@^8.1.3`: v6 support landed in 8.1.2 and the peer range (`maplibre-gl >=4`) will not warn about older wrappers
     - pages against mock read models
   - **9b:** wire to the API; loading and error states; replay banner (`as_of`); `/data-status`; `/methodology` rendered from exported configs; landing.
 - **Tests:** component tests; Playwright flows in `TESTING.md` §5; axe; visual regression for key states (optional).
