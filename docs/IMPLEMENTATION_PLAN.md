@@ -120,7 +120,7 @@ RECOMMENDED NEXT STEP
 | Gate | After | Must be true |
 |---|---|---|
 | G0 | this document | Architecture docs approved by product owner; open questions answered or defaulted |
-| G1 | P1 | CI green on an empty workspace; `docker compose up` + `pnpm db:migrate` works on a clean machine |
+| G1 | P1 | CI green on the scaffolded workspace; `pnpm db:up` + `pnpm db:check` (PostgreSQL + PostGIS + pg_trgm available) works on a clean machine. (`pnpm db:migrate` arrives with the migrator in P2, which packages/db owns) |
 | G2 ★ | P2 | Schema + domain + read models frozen; as-of invariants I2/I3 pass; storage estimate measured |
 | G3 | P3 | Vertical slice: USGS fixture → DB → as-of query; live USGS run in dev; idempotency proven |
 | G4 | P4 | All P0 sources ingest in dev for ≥ 24 h; health derivation correct; drift drills pass |

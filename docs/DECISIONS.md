@@ -31,6 +31,8 @@ Index:
 | 023 | Evidence as typed references | Accepted |
 | 024 | Tooling | Accepted |
 | 025 | Runtime/toolchain versions: Node 24 LTS, TypeScript 6.0, pnpm 12 | Accepted |
+| 026 | Internal packages ship TypeScript source; no package build step | Accepted |
+| 027 | Lint/tooling version constraints and supply-chain defaults | Accepted |
 
 > **2026-09-19, product-owner review:** Architecture approved (gate G0 passed). ADR-012 model/budget is resolved: `AI_MODE=disabled` in production for v1, and no paid AI at launch. ADR-018 is resolved: `lean` profile on free infrastructure. Licence is Apache-2.0. The deployment is non-commercial.
 
@@ -281,3 +283,28 @@ Turborepo is not adopted until build times justify it.
   - **TypeScript 6.0.x**.
   - **pnpm 12** pinned via the `packageManager` field (corepack).
 - **Trade-offs:** No TS 7 compile-speed gains yet. Revisit when typescript-eslint supports TS 7, via an ADR that supersedes this one.
+
+## ADR-026 — Internal packages ship TypeScript source; no package build step
+- **Date:** 2026-09-19 (Phase P1)
+- **Context:** A monorepo of 14 internal packages. Building each to `dist/` adds watch processes, stale-build bugs and declaration-map complexity. Node 24 strips erasable TypeScript types natively. TypeScript 6 supports `erasableSyntaxOnly` and `allowImportingTsExtensions`.
+- **Chosen:**
+  - Every internal package exports `./src/index.ts`. Relative imports use explicit `.ts` extensions.
+  - `erasableSyntaxOnly: true` forbids enums, namespaces and parameter properties (use `as const` objects and unions).
+  - The **worker runs directly with `node src/main.ts`**. Next.js transpiles workspace packages it imports (`transpilePackages`).
+  - Vitest and tsc (`noEmit`) consume the sources as-is.
+- **Verified in P1:** `node apps/worker/src/main.ts check-config` imports `@geonerva/config` across the pnpm symlink and runs with no loader or build.
+- **Trade-offs:**
+  - Packages cannot be published to npm as-is (not a goal).
+  - Only erasable syntax is allowed, which is a stylistic constraint and enforced by the compiler.
+  - Worker container images ship source plus production `node_modules`.
+
+## ADR-027 — Lint/tooling version constraints and supply-chain defaults
+- **Date:** 2026-09-19 (Phase P1)
+- **Context:** `eslint-config-next` 16.3 depends on plugins (`eslint-plugin-react`, `-import`, `-jsx-a11y`) whose peer ranges stop at ESLint 9. pnpm 12 blocks dependency install scripts by default and supports a minimum release age.
+- **Chosen:**
+  - ESLint **9.39.x** with typescript-eslint `strictTypeChecked` + `stylisticTypeChecked`.
+  - `minimumReleaseAge: 1440` (a version must be public for ≥ 1 day before install); versions younger than that are not pinned (older patch versions are pinned instead of adding exemptions).
+  - Install scripts are denied unless listed in `allowBuilds` with a justification.
+  - Third-party GitHub Actions are pinned by commit SHA.
+  - Markdown documentation is excluded from Prettier (wide hand-aligned tables; the docs are prose).
+- **Revisit:** Move to ESLint 10 when Next's plugin set supports it.
