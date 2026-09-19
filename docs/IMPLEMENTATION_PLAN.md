@@ -70,7 +70,7 @@ The **orchestrator** (lead architect) owns architecture, sequencing, integration
 | **Ingestion** | Adapter framework, adapters, HTTP client, pipeline, worker CLI/scheduler, backfills | `packages/sources/**` (one sub-agent per adapter folder in P4), `packages/http/**`, `packages/pipeline/**`, `apps/worker/**` | domain, db (API only) |
 | **Correlation/Geo** | Geodesy, EQ correlation, fire clustering, relevance | `packages/geo/**`, `packages/correlation/**`, `packages/relevance/**` | domain, fixtures |
 | **Baseline/Change** | Mc, percentiles, fire trend, change diff, importance, templates for change copy | `packages/baselines/**`, `packages/changes/**` | domain, geo |
-| **API** | Briefing service, templates, route handlers, validation, caching, rate limits | `packages/briefing/**`, `apps/web/app/api/**`, `apps/web/lib/server/**` | all packages |
+| **API** | Briefing service, templates, geocoding, route handlers, validation, caching, rate limits | `packages/briefing/**`, `packages/geocoding/**`, `apps/web/app/api/**`, `apps/web/lib/server/**` | all packages |
 | **Frontend** | Design system, pages, map, accessibility, responsive layouts | `apps/web/**` except `app/api/**` and `lib/server/**` | domain read-models |
 | **Runtime AI** (P1) | Packet builder, prompts, validator, Anthropic client, eval set | `packages/ai/**` | briefing, domain |
 | **Security Reviewer** | Independent review; no feature code | `docs/SECURITY.md`, review reports in `docs/reviews/security-*.md` | everything |
@@ -326,6 +326,21 @@ RECOMMENDED NEXT STEP
 
 ### P1.x — Post-launch (order from `PRODUCT.md` §4.2)
 Replay UI + reconstructed scenarios → Runtime AI (Interpreter + Skeptic, eval set first) → ECCC GeoMet → NWS → watch places / since-last-visit → share permalinks → fire seasonal baseline → EQ felt-intensity → Protomaps fallback / MVT / push subscribers. Each follows the same phase template and gates.
+
+## 3a. Carried-forward security requirements (from docs/reviews/security-p1.md)
+
+These are **exit criteria** of the named phases. A phase gate cannot pass while its items are open.
+
+| Finding | Requirement | Phase |
+|---|---|---|
+| F-6 | Integration tests use a dedicated `DATABASE_URL_TEST`. Any test that writes must refuse to run against a non-local host unless `GEONERVA_ALLOW_REMOTE_TEST_DB=1`, and must use an isolated schema or database | P2 (before the first writing integration test) |
+| F-7 | Production database URLs require TLS (`sslmode=require` or stronger); the config refuses a non-TLS URL when `NODE_ENV=production` | P2 (db client), verified in P10 |
+| F-12 | Production processes must set `NODE_ENV=production` explicitly. Deployment manifests set it, and the worker/web start-up logs it | P3 (worker), P10 |
+| F-8 | Web configuration is loaded only in server-only modules (`server-only` import); secrets never reach RSC props or client components (a test asserts it) | P8 |
+| F-5 | A strict Content-Security-Policy (`default-src 'self'`, a script policy compatible with CDN-cached HTML, i.e. hashes or `strict-dynamic`, no `unsafe-inline` for scripts). It must land before any provider text is rendered | P9a (before P9b) |
+| F-16 | `MAP_STYLE_URL` is parsed into an origin and validated before use in CSP or fetches | P9a |
+| F-15 | Enable GitHub private vulnerability reporting, and publish a fallback security contact and a Code of Conduct contact | Before the repository is made public (P10) |
+| F-17 | Upgrade to a supported ESLint major once Next's plugins allow it; make `pnpm audit` blocking for high/critical | P11 |
 
 ## 4. Product-owner decisions (resolved 2026-09-19)
 
