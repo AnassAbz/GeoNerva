@@ -39,32 +39,36 @@ export interface AcquireLeaseOptions {
 
 export type AcquireLeaseResult =
   | { readonly acquired: true; readonly runId: string; readonly expiredRunId: string | null }
-  | { readonly acquired: false; readonly heldByRunId: string; readonly heldSince: Date };
+  | {
+      readonly acquired: false;
+      /** `null` when the holder finished between our attempt and the read that looked for it. */
+      readonly heldByRunId: string | null;
+      readonly heldSince: Date | null;
+    };
 
-const UNIQUE_VIOLATION = '23505';
-
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    (error as { code?: unknown }).code === UNIQUE_VIOLATION
-  );
-}
-
-async function insertRunningRun(
+/**
+ * Attempts the lease insert. Returns `null` when the lease is already held.
+ *
+ * `ON CONFLICT DO NOTHING` rather than catching the unique violation: inside a transaction a
+ * raised error aborts it, so every later statement fails with 25P02 and the caller sees a
+ * confusing failure instead of "the lease is taken" (S-17). Not raising keeps this callable from
+ * a pool and from a transaction alike.
+ */
+async function tryInsertRunningRun(
   db: Kysely<DB>,
   options: AcquireLeaseOptions,
   startedAt: Date,
-): Promise<string> {
+): Promise<string | null> {
   const runId = randomUUID();
-  await sql`
+  const result = await sql<{ id: string }>`
     INSERT INTO geonerva.ingestion_runs
       (id, source_id, product_id, trigger, started_at, status, worker_version)
     VALUES (${runId}::uuid, ${options.sourceId}, ${options.productId ?? null}, ${options.trigger},
             ${startedAt}, 'RUNNING', ${options.workerVersion ?? null})
+    ON CONFLICT DO NOTHING
+    RETURNING id::text AS id
   `.execute(db);
-  return runId;
+  return result.rows[0]?.id ?? null;
 }
 
 /**
@@ -80,12 +84,8 @@ export async function acquireRunLease(
   const startedAt = options.startedAt ?? new Date();
   const staleAfterMs = options.staleAfterMs ?? DEFAULT_LEASE_STALE_AFTER_MS;
 
-  try {
-    const runId = await insertRunningRun(db, options, startedAt);
-    return { acquired: true, runId, expiredRunId: null };
-  } catch (error) {
-    if (!isUniqueViolation(error)) throw error;
-  }
+  const runId = await tryInsertRunningRun(db, options, startedAt);
+  if (runId !== null) return { acquired: true, runId, expiredRunId: null };
 
   // Someone holds the lease. Expire it only if it is older than the stale threshold; the
   // UPDATE is itself the concurrency control, because only one transaction can win it.
@@ -117,14 +117,18 @@ export async function acquireRunLease(
     const row = holder.rows[0];
     if (row === undefined) {
       // The holder finished between our insert and this read; try once more.
-      const runId = await insertRunningRun(db, options, startedAt);
-      return { acquired: true, runId, expiredRunId: null };
+      const retried = await tryInsertRunningRun(db, options, startedAt);
+      if (retried !== null) return { acquired: true, runId: retried, expiredRunId: null };
+      return { acquired: false, heldByRunId: null, heldSince: null };
     }
     return { acquired: false, heldByRunId: row.id, heldSince: row.started_at };
   }
 
-  const runId = await insertRunningRun(db, options, startedAt);
-  return { acquired: true, runId, expiredRunId };
+  // The stale lease is ours now; take it. If another worker expired the same lease and inserted
+  // first, we simply report it as held rather than raising.
+  const afterExpiry = await tryInsertRunningRun(db, options, startedAt);
+  if (afterExpiry === null) return { acquired: false, heldByRunId: null, heldSince: null };
+  return { acquired: true, runId: afterExpiry, expiredRunId };
 }
 
 export interface FinishRunInput {
@@ -158,6 +162,10 @@ export async function finishRun(db: Kysely<DB>, input: FinishRunInput): Promise<
     UPDATE geonerva.ingestion_runs
     SET status = ${input.status},
         finished_at = ${input.finishedAt ?? new Date()},
+        -- DOMAIN_MODEL section 2: ingested_at is one stamp per batch, taken immediately before
+        -- the commit, so finishRun must be the last statement of the ingestion transaction.
+        -- clock_timestamp() rather than now() is what makes it the real end of the batch instead
+        -- of the moment the transaction opened (S-16).
         committed_at = clock_timestamp(),
         http_status = ${input.httpStatus ?? null},
         bytes_received = ${input.bytesReceived ?? null},

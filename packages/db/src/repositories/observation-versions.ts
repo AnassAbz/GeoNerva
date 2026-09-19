@@ -17,6 +17,8 @@
  * "now" fast path safe to read (ARCHITECTURE §5).
  */
 
+import { createHash } from 'node:crypto';
+
 import { sql, type Kysely, type Transaction } from 'kysely';
 
 import {
@@ -211,7 +213,12 @@ export async function insertTombstone(
     readonly status: 'DELETED' | 'MISSING_FROM_SOURCE';
     readonly ingestedAt: Date;
     readonly ingestionRunId?: string | null;
-    readonly contentSha256: Buffer;
+    /**
+     * The provider content behind the tombstone, when there is any (USGS publishes a deleted
+     * record). Optional: the stored hash is always derived from it *and* the status, so it never
+     * collides with the head (S-8).
+     */
+    readonly contentSha256?: Buffer;
   },
 ): Promise<InsertVersionResult> {
   const previous = await sql<{
@@ -235,13 +242,16 @@ export async function insertTombstone(
     source_url: string | null;
     derived_from: unknown;
     raw_record_id: string | null;
+    lifecycle_status: string;
+    latest_content_sha256: Buffer;
   }>`
     SELECT v.hazard_type, v.observed_at, v.valid_from, v.valid_to, v.source_updated_at,
            v.severity_scheme, v.severity_value, v.provider_status, v.contributor,
            v.magnitude, v.magnitude_type, v.depth_km,
            ST_Y(v.centroid::geometry) AS lat, ST_X(v.centroid::geometry) AS lon,
            v.geometry_kind, v.attributes, v.title, v.source_url, v.derived_from,
-           v.raw_record_id::text AS raw_record_id
+           v.raw_record_id::text AS raw_record_id, v.lifecycle_status,
+           h.latest_content_sha256
     FROM geonerva.source_record_heads h
     JOIN geonerva.observation_versions v ON v.id = h.latest_version_id
     WHERE h.source_record_id = ${input.sourceRecordId}::bigint
@@ -254,6 +264,15 @@ export async function insertTombstone(
       'cannot tombstone a record that has no versions',
     );
   }
+
+  // The hash a tombstone stores is `sha256(status || content)`. Two consequences, both wanted:
+  // tombstoning a record always differs from its live head, so the write happens; and tombstoning
+  // the same record twice produces the same hash, so it stays idempotent instead of piling up
+  // identical versions (S-8).
+  const tombstoneHash = createHash('sha256')
+    .update(input.status)
+    .update(input.contentSha256 ?? row.latest_content_sha256)
+    .digest();
 
   return insertVersionIfChanged(trx, {
     sourceRecordId: input.sourceRecordId,
@@ -278,7 +297,7 @@ export async function insertTombstone(
     title: row.title,
     sourceUrl: row.source_url,
     derivedFrom: row.derived_from,
-    contentSha256: input.contentSha256,
+    contentSha256: tombstoneHash,
     rawRecordId: row.raw_record_id,
   });
 }
