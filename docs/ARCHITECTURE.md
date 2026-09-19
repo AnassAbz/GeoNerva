@@ -655,21 +655,36 @@ The packet contains the place label, rounded coordinates, and distances. It neve
 
 The brief assumes Supabase Free (500 MB) can host a global, multi-hazard, replayable archive. It cannot: FIRMS alone produces roughly **146k detections/day** (NOAA-20 + NOAA-21). Retention is therefore a **profile** (`RETENTION_PROFILE`), and the replay horizon is derived from it and exposed via the API.
 
-> **Volume correction [P0 2026-09-19].** An earlier figure of ~230k/day came from row counts of the keyless "24 h" files. P0 measured that those files actually span **≈ 42 h** of acquisition times (128k rows for NOAA-20 over 42 h), so the real rate is **≈ 73k rows/day/satellite**. The estimates below are still estimates; P2 replaces them with measured table and index sizes.
+> **Volume correction [P0 2026-09-19].** An earlier figure of ~230k/day came from row counts of the keyless "24 h" files. P0 measured that those files actually span **≈ 42 h** of acquisition times (128k rows for NOAA-20 over 42 h), so the real rate is **≈ 73k rows/day/satellite**.
 
-**Estimated steady state, lean profile** (measured in P2; estimates, not facts):
+**Measured steady state, lean profile [P2 2026-09-19].** These are real `pg_total_relation_size`
+figures from `pnpm --filter @geonerva/db estimate-storage`, which loads a representative volume
+into a throwaway database on the same PostgreSQL 17 / PostGIS 3.4 image as CI, not estimates:
 
-| Table | Estimate |
-|---|---|
-| fire_detections (72 h, ~440k rows) | ~90 MB |
-| EQ versions: USGS M ≥ 4.5 since 2000 (~190k) + EMSC M ≥ 3.0 since 2021 + recent all-magnitude 90 d | ~150–200 MB |
-| GDACS + geometries | ~20 MB |
-| fire_cluster_versions (30 d), fire_daily_cells (0.5°, 400 d) | ~40 MB |
-| places (GeoNames cities15000) | ~10 MB |
-| runs, snapshots, caches | ~20 MB |
+| Table | Rows | Total | Heap | Indexes |
+|---|---|---|---|---|
+| `observation_versions` (250k EQ + 5k GDACS + 5k spare) | 260,000 | **148.3 MB** | 86.7 MB | 61.6 MB |
+| `fire_detections`, per daily partition (146k/day) | 146,000 | **47.8 MB** | 23.3 MB | 24.4 MB |
+| `fire_detections`, 72 h retention (3 partitions) | 438,000 | **143.3 MB** | 69.9 MB | 73.3 MB |
+| `source_records` | 260,000 | **42.3 MB** | 20.5 MB | 21.8 MB |
+| everything else at this point (empty caches, seeds, migrations) | — | ~1.4 MB | — | — |
+| **Measured total** | | **335.3 MB (67 % of the 500 MB budget)** | | |
+
+Not yet included, because P2 does not populate them: `places` (GeoNames `cities15000`, 34,146
+rows), `fire_cluster_versions` and `fire_daily_cells` at steady state, snapshots and caches.
+Budgeting ~40 MB for those puts the lean profile at **roughly 375 MB of 500 MB**.
+
+Two things the measurement makes obvious: indexes are ~45 % of the cost on both big tables, and
+the earthquake catalogue — not fire — is the largest single consumer. If the EMSC backfill is
+widened, that is where the budget goes.
 | **Total** | **~330–380 MB of 500 MB** |
 
-This is tight but feasible. If measurement exceeds 450 MB, the lean profile reduces the EMSC backfill to M ≥ 3.5 or narrows fire retention to 48 h. **Standard profile** (≥ 8 GB, e.g. Supabase Pro at ~US$25/month or self-hosted Postgres on the worker VM) keeps 30 d detections, 5 y fire cells and 2 y small-EQ history. The choice is an open product-owner question (see `IMPLEMENTATION_PLAN.md` §Open questions).
+This fits, with roughly 125 MB of headroom for growth and bloat. If a later measurement passes
+450 MB, the lean profile narrows the EMSC backfill (M ≥ 3.5, or fewer years) before it touches
+fire retention, because the earthquake catalogue is the bigger consumer and the fire window is
+what the replay horizon is built on. **Standard profile** (≥ 8 GB: Supabase Pro at ~US$25/month or
+self-hosted Postgres on the worker VM) keeps 30 d detections, 5 y fire cells and 2 y small-EQ
+history. The owner chose the lean profile for v1 (Q2).
 
 Retention jobs run nightly in the worker:
 - `DROP PARTITION` for detections

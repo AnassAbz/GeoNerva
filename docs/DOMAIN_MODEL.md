@@ -64,7 +64,12 @@ GeometryKind
   CENTROID_ONLY  THREAT_AREA
 
 LifecycleStatus (per observation version)
-  ACTIVE  UPDATED  ENDED  CANCELLED  EXPIRED  DELETED
+  ACTIVE  UPDATED  ENDED  CANCELLED  EXPIRED
+  DELETED              # the provider explicitly said the record is gone (USGS includedeleted)
+  MISSING_FROM_SOURCE  # the record silently disappeared and the provider offers no deletion
+                       # query, so absence over two consecutive reconciles is the only signal
+                       # (EMSC; ADR-030). Both are tombstones and are excluded from reads by
+                       # default, but only DELETED is a provider statement.
 
 SourceHealthStatus
   FRESH        # polls succeed and data is as current as this source normally is
@@ -147,7 +152,7 @@ The GeoNerva identity of "one thing a provider talks about":
 - USGS: one ComCat event. Keyed internally; **aliases** = every member of `ids` ever seen. Upsert rule: if an incoming feature's `ids` intersect exactly one record's aliases → same record; add new aliases. If they intersect **two** records → ComCat has associated two events we had as separate → **record merge**: the younger record is marked `merged_into`, its versions stay, and correlation is re-run for the survivor.
 - EMSC: `unid`. `lastupdate` changes create versions; websocket/FDSN deletions create tombstones.
 - GDACS: `(eventtype, eventid)`. Episodes are versions.
-- ECCC GeoMet: key determined in Phase 0 (V1 in `DATA_SOURCES.md`).
+- ECCC GeoMet (P1): the feature **`id`**, shaped `<alert-thread digits><YYYYMMDDhhmm>_<feature_id>` (verified in P0, V1). `feature_id` alone is **not** unique within a single poll, so it cannot be the key. `publication_datetime` maps to `source_updated_at`, `status_en` (`issued` → `continued` → `ended`) is part of the version, and a feature that disappears from the collection means "no longer active", not a deletion.
 - FIRMS: not a SourceRecord (see FireDetection).
 
 ### 4.7 HazardObservation (= ObservationVersion)
