@@ -100,8 +100,7 @@ function vincentyDistanceMeters(from: LatLon, to: LatLon): number {
       (1 - C) *
         f *
         sinAlpha *
-        (sigma +
-          C * sinSigma * (cos2SigmaM + C * cosSigma * (-1 + 2 * cos2SigmaM ** 2)));
+        (sigma + C * sinSigma * (cos2SigmaM + C * cosSigma * (-1 + 2 * cos2SigmaM ** 2)));
     if (Math.abs(lambda - previous) < 1e-12) break;
   }
 

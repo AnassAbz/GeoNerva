@@ -98,7 +98,10 @@ export interface ConnectionPolicyOptions {
  * Validates a connection string against the TLS policy (F-7). Throws `DatabaseUrlError` when it
  * is refused; returns nothing when it is acceptable.
  */
-export function assertConnectionUrlPolicy(url: string, options: ConnectionPolicyOptions = {}): void {
+export function assertConnectionUrlPolicy(
+  url: string,
+  options: ConnectionPolicyOptions = {},
+): void {
   const variableName = options.variableName ?? 'DATABASE_URL';
   const parsed = parse(url, variableName);
   const isProduction = options.nodeEnv === 'production';

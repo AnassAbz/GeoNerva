@@ -230,7 +230,7 @@ export interface ClusterVersionInput {
   readonly maxConfidence: ConfidenceClass | null;
   readonly productIds: readonly number[];
   /** GeoJSON polygon of the buffered hull, or `null` when it could not be built. */
-  readonly hullGeoJson: unknown | null;
+  readonly hullGeoJson: unknown;
   readonly centroid: { readonly lat: number; readonly lon: number };
   readonly contentSha256: Buffer;
   readonly status: 'ACTIVE' | 'COOLING' | 'INACTIVE' | 'MERGED';
@@ -343,11 +343,7 @@ export async function mergeClusters(
 }
 
 /** Records a day on which FIRMS reported no satellite data, so trends can exclude it. */
-export async function recordMissingDataDay(
-  db: Db,
-  productId: number,
-  day: Date,
-): Promise<void> {
+export async function recordMissingDataDay(db: Db, productId: number, day: Date): Promise<void> {
   await sql`
     INSERT INTO geonerva.fire_missing_data_days (product_id, day)
     VALUES (${productId}, ${day.toISOString().slice(0, 10)}::date)

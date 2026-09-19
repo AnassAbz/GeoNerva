@@ -588,7 +588,7 @@ describe('raw payload storage (DOMAIN_MODEL §4.5)', () => {
 describe('fire detections (DOMAIN_MODEL §4.9)', () => {
   const acquiredAt = new Date('2026-09-18T12:34:00.000Z');
 
-  async function detections(count: number, productId: number) {
+  function detections(count: number, productId: number) {
     return Array.from({ length: count }, (_, index) => ({
       productId,
       acquiredAt,
@@ -609,14 +609,14 @@ describe('fire detections (DOMAIN_MODEL §4.9)', () => {
 
   it('inserts a batch and creates the daily partition it needs', async () => {
     const product = await findProductByCode(db, 'firms', 'VIIRS_NOAA20_NRT');
-    const result = await bulkInsertDetections(db, await detections(50, product?.id ?? 1));
+    const result = await bulkInsertDetections(db, detections(50, product?.id ?? 1));
     expect(result.inserted).toBe(50);
     expect(result.partitionsCreated).toContain('fire_detections_20260918');
   });
 
   it('is idempotent: the overlapping half of the next poll inserts nothing (I8)', async () => {
     const product = await findProductByCode(db, 'firms', 'VIIRS_NOAA20_NRT');
-    const batch = await detections(30, product?.id ?? 1);
+    const batch = detections(30, product?.id ?? 1);
     await bulkInsertDetections(db, batch);
     const second = await bulkInsertDetections(db, batch);
     expect(second.inserted).toBe(0);
@@ -647,7 +647,7 @@ describe('fire detections (DOMAIN_MODEL §4.9)', () => {
 
   it('computes the geography column from the coordinates', async () => {
     const product = await findProductByCode(db, 'firms', 'VIIRS_NOAA20_NRT');
-    await bulkInsertDetections(db, await detections(1, product?.id ?? 1));
+    await bulkInsertDetections(db, detections(1, product?.id ?? 1));
     const stored = await sql<{ lat: number; lon: number }>`
       SELECT ST_Y(geog::geometry) AS lat, ST_X(geog::geometry) AS lon
       FROM geonerva.fire_detections LIMIT 1

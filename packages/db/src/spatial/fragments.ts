@@ -43,11 +43,7 @@ export function geometryPoint(point: LatLon): RawBuilder<string> {
  * **metres** of the point, measured on the spheroid. This is the indexed predicate — it uses the
  * GiST index on the geography column, which `ST_Distance(...) < r` would not.
  */
-export function withinRadius(
-  column: string,
-  point: LatLon,
-  radiusM: number,
-): RawBuilder<boolean> {
+export function withinRadius(column: string, point: LatLon, radiusM: number): RawBuilder<boolean> {
   return sql`ST_DWithin(${sql.ref(column)}, ${geographyPoint(point)}, ${radiusM})`;
 }
 

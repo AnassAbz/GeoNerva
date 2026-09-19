@@ -262,7 +262,9 @@ export async function observationsNow(
     ? sql`v.lifecycle_status <> ALL(${sql.val(TOMBSTONE_STATUSES)}::text[])`
     : sql`TRUE`;
   const observedSinceFilter =
-    options.observedSince === undefined ? sql`TRUE` : sql`v.observed_at >= ${options.observedSince}`;
+    options.observedSince === undefined
+      ? sql`TRUE`
+      : sql`v.observed_at >= ${options.observedSince}`;
   const ordering =
     options.orderByDistance === true && options.near !== undefined
       ? sql`distance_m ASC NULLS LAST, v.observed_at DESC`
@@ -544,7 +546,7 @@ export interface SourceHealthAsOf extends SourceHealth {
 
 function policyOf(raw: unknown, fallback?: FreshnessPolicy): FreshnessPolicy {
   if (raw !== null && typeof raw === 'object' && 'freshness' in raw) {
-    const parsed = freshnessPolicySchema.safeParse((raw as { freshness: unknown }).freshness);
+    const parsed = freshnessPolicySchema.safeParse(raw.freshness);
     if (parsed.success) return parsed.data;
   }
   if (fallback !== undefined) return fallback;

@@ -17,39 +17,51 @@ const LOCAL = 'postgresql://geonerva:geonerva@127.0.0.1:54320/geonerva';
 
 describe('F-7: production database URLs must require TLS', () => {
   it('refuses a production URL with no sslmode', () => {
-    expect(() => assertConnectionUrlPolicy(REMOTE, { nodeEnv: 'production' })).toThrow(
-      DatabaseUrlError,
-    );
+    expect(() => {
+      assertConnectionUrlPolicy(REMOTE, { nodeEnv: 'production' });
+    }).toThrow(DatabaseUrlError);
   });
 
   it.each(['disable', 'allow', 'prefer'])('refuses sslmode=%s in production', (mode) => {
-    expect(() =>
-      assertConnectionUrlPolicy(`${REMOTE}?sslmode=${mode}`, { nodeEnv: 'production' }),
-    ).toThrow(DatabaseUrlError);
+    expect(() => {
+      assertConnectionUrlPolicy(`${REMOTE}?sslmode=${mode}`, { nodeEnv: 'production' });
+    }).toThrow(DatabaseUrlError);
   });
 
   it.each(['require', 'verify-ca', 'verify-full'])('accepts sslmode=%s in production', (mode) => {
-    expect(() =>
-      assertConnectionUrlPolicy(`${REMOTE}?sslmode=${mode}`, { nodeEnv: 'production' }),
-    ).not.toThrow();
+    expect(() => {
+      assertConnectionUrlPolicy(`${REMOTE}?sslmode=${mode}`, { nodeEnv: 'production' });
+    }).not.toThrow();
   });
 
   it('allows a loopback host without TLS, even in production', () => {
-    expect(() => assertConnectionUrlPolicy(LOCAL, { nodeEnv: 'production' })).not.toThrow();
+    expect(() => {
+      assertConnectionUrlPolicy(LOCAL, { nodeEnv: 'production' });
+    }).not.toThrow();
   });
 
   it('does not require TLS outside production', () => {
-    expect(() => assertConnectionUrlPolicy(REMOTE, { nodeEnv: 'development' })).not.toThrow();
-    expect(() => assertConnectionUrlPolicy(REMOTE, {})).not.toThrow();
+    expect(() => {
+      assertConnectionUrlPolicy(REMOTE, { nodeEnv: 'development' });
+    }).not.toThrow();
+    expect(() => {
+      assertConnectionUrlPolicy(REMOTE, {});
+    }).not.toThrow();
   });
 
   it('refuses an sslmode value it does not recognize, in any environment', () => {
-    expect(() => assertConnectionUrlPolicy(`${REMOTE}?sslmode=maybe`)).toThrow(DatabaseUrlError);
+    expect(() => {
+      assertConnectionUrlPolicy(`${REMOTE}?sslmode=maybe`);
+    }).toThrow(DatabaseUrlError);
   });
 
   it('refuses a non-postgres scheme and a URL with no host', () => {
-    expect(() => assertConnectionUrlPolicy('https://example.org/db')).toThrow(DatabaseUrlError);
-    expect(() => assertConnectionUrlPolicy('not a url')).toThrow(DatabaseUrlError);
+    expect(() => {
+      assertConnectionUrlPolicy('https://example.org/db');
+    }).toThrow(DatabaseUrlError);
+    expect(() => {
+      assertConnectionUrlPolicy('not a url');
+    }).toThrow(DatabaseUrlError);
   });
 
   it('never echoes the connection string or its password in the error', () => {

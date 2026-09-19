@@ -152,7 +152,11 @@ export async function seedObservation(
       geometries: options.geometries,
     });
 
-    return { ...result, sourceRecordId: identity.sourceRecordId, mergedRecordIds: identity.mergedRecordIds };
+    return {
+      ...result,
+      sourceRecordId: identity.sourceRecordId,
+      mergedRecordIds: identity.mergedRecordIds,
+    };
   });
 }
 

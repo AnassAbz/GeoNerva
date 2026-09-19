@@ -53,7 +53,8 @@ export type TestEnv = Readonly<Record<string, string | undefined>>;
  */
 export function resolveTestDatabaseUrl(env: TestEnv): string {
   const configured = env[TEST_DATABASE_URL_VAR]?.trim();
-  const url = configured === undefined || configured === '' ? DEFAULT_TEST_DATABASE_URL : configured;
+  const url =
+    configured === undefined || configured === '' ? DEFAULT_TEST_DATABASE_URL : configured;
 
   const host = hostOf(url, TEST_DATABASE_URL_VAR);
   const database = databaseNameOf(url, TEST_DATABASE_URL_VAR);
@@ -109,7 +110,9 @@ export async function ensureTestDatabase(url: string): Promise<{ created: boolea
 
     // `CREATE DATABASE` cannot be parameterized, so the identifier is quoted by the server's own
     // quoting function rather than interpolated by hand.
-    const quoted = await admin.query<{ name: string }>('SELECT quote_ident($1) AS name', [database]);
+    const quoted = await admin.query<{ name: string }>('SELECT quote_ident($1) AS name', [
+      database,
+    ]);
     const identifier = quoted.rows[0]?.name;
     if (identifier === undefined) throw new Error('could not quote the database name');
     await admin.query(`CREATE DATABASE ${identifier}`);

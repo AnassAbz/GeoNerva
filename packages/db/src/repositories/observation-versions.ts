@@ -17,7 +17,7 @@
  * "now" fast path safe to read (ARCHITECTURE §5).
  */
 
-import { sql, type Transaction } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 
 import {
   isObservedAtAcceptable,
@@ -33,7 +33,7 @@ import type { DB } from '../generated/database.ts';
 
 /** A geometry attached to a version, with its role. */
 export interface VersionGeometryInput {
-  readonly role: GeometryRole | string;
+  readonly role: GeometryRole;
   readonly seq: number;
   /** GeoJSON geometry, as the adapter normalized it. */
   readonly geoJson: unknown;
@@ -133,7 +133,7 @@ export async function insertVersionIfChanged(
   `.execute(trx);
 
   const current = head.rows[0];
-  if (current !== undefined && current.latest_content_sha256.equals(input.contentSha256)) {
+  if (current?.latest_content_sha256.equals(input.contentSha256) === true) {
     return {
       inserted: false,
       versionId: current.latest_version_id,
@@ -295,12 +295,11 @@ export interface VersionRow {
 
 /** Every version of a record, oldest first: the audit trail behind the event timeline. */
 export async function listVersions(
-  trx: Transaction<DB> | import('kysely').Kysely<DB>,
+  trx: Transaction<DB> | Kysely<DB>,
   sourceRecordId: string,
   options: { asOf?: Date } = {},
 ): Promise<VersionRow[]> {
-  const asOfFilter =
-    options.asOf === undefined ? sql`TRUE` : sql`v.ingested_at <= ${options.asOf}`;
+  const asOfFilter = options.asOf === undefined ? sql`TRUE` : sql`v.ingested_at <= ${options.asOf}`;
   const result = await sql<{
     id: string;
     source_record_id: string;

@@ -196,7 +196,10 @@ export async function migrationStatus(
      ) AS exists`,
   );
 
-  const applied = tableExists.rows[0]?.exists === true ? await readApplied(client) : new Map();
+  const applied =
+    tableExists.rows[0]?.exists === true
+      ? await readApplied(client)
+      : new Map<string, AppliedMigration>();
   const entries: MigrationStatusEntry[] = [];
 
   for (const migration of migrations) {

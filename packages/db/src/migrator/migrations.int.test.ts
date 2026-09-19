@@ -378,14 +378,6 @@ describe('seeds', () => {
     const result = await sql<{ code: string }>`
       SELECT code FROM geonerva.source_products WHERE source_id = 'gdacs' ORDER BY code
     `.execute(db);
-    expect(result.rows.map((row) => row.code)).toStrictEqual([
-      'DR',
-      'EQ',
-      'FL',
-      'TC',
-      'VO',
-      'WF',
-    ]);
+    expect(result.rows.map((row) => row.code)).toStrictEqual(['DR', 'EQ', 'FL', 'TC', 'VO', 'WF']);
   });
 });
-

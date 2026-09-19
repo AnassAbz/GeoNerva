@@ -234,7 +234,7 @@ export interface CanonicalStateInput {
   readonly engineVersion: string;
   readonly observedAt: Date;
   readonly centroid: { readonly lat: number; readonly lon: number };
-  readonly footprintGeoJson?: unknown | null;
+  readonly footprintGeoJson?: unknown;
   readonly isActive: boolean;
   readonly magnitude?: number | null;
   readonly severityScheme?: string | null;
@@ -251,10 +251,7 @@ export interface CanonicalStateInput {
  * This table is a cache: it is rebuilt whenever a linked record gets a version, and it is never
  * consulted for a replay. Deleting it would slow the map down and change nothing else.
  */
-export async function upsertCanonicalEventState(
-  db: Db,
-  input: CanonicalStateInput,
-): Promise<void> {
+export async function upsertCanonicalEventState(db: Db, input: CanonicalStateInput): Promise<void> {
   const footprint =
     input.footprintGeoJson === undefined || input.footprintGeoJson === null
       ? sql`NULL`

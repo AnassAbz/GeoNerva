@@ -258,9 +258,10 @@ export async function buildClusterHull(
   bufferMeters: number = VIIRS_HALF_PIXEL_M,
 ): Promise<ClusterHullResult> {
   const hullExpression = bufferedConvexHull(sql`d.geog`, bufferMeters);
+  // Aggregates over an empty cluster return NULL, so both geometry columns are nullable.
   const result = await sql<{
     hull: string | null;
-    centroid: string;
+    centroid: string | null;
     n: string;
   }>`
     SELECT ${expressionAsGeoJson(hullExpression)} AS hull,
@@ -271,7 +272,10 @@ export async function buildClusterHull(
   `.execute(db);
 
   const row = result.rows[0];
-  if (row === undefined || row.centroid === null) {
+  if (row === undefined) {
+    throw new Error(`cluster ${clusterId}: aggregate returned no row`);
+  }
+  if (row.centroid === null) {
     throw new Error(`cluster ${clusterId} has no detections`);
   }
   return {

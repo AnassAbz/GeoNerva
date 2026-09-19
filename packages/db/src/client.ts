@@ -120,10 +120,7 @@ export function createDatabase(options: CreatePoolOptions): DatabaseHandle {
 }
 
 /** Options for the ingestion worker: session connection, prepared statements, longer statements. */
-export function workerPoolOptions(
-  connectionString: string,
-  nodeEnv?: string,
-): CreatePoolOptions {
+export function workerPoolOptions(connectionString: string, nodeEnv?: string): CreatePoolOptions {
   return {
     connectionString,
     nodeEnv,
