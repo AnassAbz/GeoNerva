@@ -1,0 +1,65 @@
+{
+  "source": "eccc",
+  "fixtures": [
+    {
+      "file": "identity-analysis-a-b.json",
+      "url": null,
+      "captured_at": "2026-09-19T20:54:11.133Z",
+      "sha256": "078ddb074d42f61b08403f69046a97acdf695645a17d5f492dfadd4661854767",
+      "bytes": 1056,
+      "http_status": null,
+      "content_type": null,
+      "notes": "Computed by capture-eccc.mjs analyze; evidence for V1. Not a provider payload.",
+      "synthetic": true,
+      "derived_from": "weather-alerts-a.json + weather-alerts-b.json"
+    },
+    {
+      "file": "identity-analysis-a-c.json",
+      "url": null,
+      "captured_at": "2026-09-19T21:43:22.044Z",
+      "sha256": "86fff855a63b2fb40dd11426252d6478a61e85fde0d93727233adad206b245c0",
+      "bytes": 1295,
+      "http_status": null,
+      "content_type": null,
+      "notes": "Computed by capture-eccc.mjs analyze; evidence for V1. Not a provider payload.",
+      "synthetic": true,
+      "derived_from": "weather-alerts-a.json + weather-alerts-c.json"
+    },
+    {
+      "file": "weather-alerts-a.json",
+      "url": "https://api.weather.gc.ca/collections/weather-alerts/items?f=json&limit=1000",
+      "captured_at": "2026-09-19T20:51:40.877Z",
+      "sha256": "bf12b3be07e6138b741348c366447a1d29cd4ac6cb5a844930a5287dc7b60491",
+      "bytes": 298991,
+      "http_status": 200,
+      "content_type": "application/json",
+      "notes": "Full GeoMet weather-alerts collection (limit=1000, so un-paginated). Poll \"a\" for V1 identity analysis.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "weather-alerts-b.json",
+      "url": "https://api.weather.gc.ca/collections/weather-alerts/items?f=json&limit=1000",
+      "captured_at": "2026-09-19T20:54:11.116Z",
+      "sha256": "5ef67baa8360ed052a9f675b498155a5e6b09d5b07bbd73bc44e18cfb626c66d",
+      "bytes": 298991,
+      "http_status": 200,
+      "content_type": "application/json",
+      "notes": "Full GeoMet weather-alerts collection (limit=1000, so un-paginated). Poll \"b\" for V1 identity analysis.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "weather-alerts-c.json",
+      "url": "https://api.weather.gc.ca/collections/weather-alerts/items?f=json&limit=1000",
+      "captured_at": "2026-09-19T21:43:21.946Z",
+      "sha256": "c7dfa1496a1b4a0c3ed773cf31a37501a41f4b6ad9c2c3b8d52e2920c34e29d5",
+      "bytes": 298900,
+      "http_status": 200,
+      "content_type": "application/json",
+      "notes": "Full GeoMet weather-alerts collection (limit=1000, so un-paginated). Poll \"c\" for V1 identity analysis.",
+      "synthetic": false,
+      "derived_from": null
+    }
+  ]
+}

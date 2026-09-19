@@ -1,0 +1,1636 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:geo="http://www.w3.org/2003/01/geo/wgs84_pos#" xmlns:gdacs="http://www.gdacs.org" xmlns:glide="http://glidenumber.net" xmlns:georss="http://www.georss.org/georss" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>GDACS RSS information</title>
+    <link>https://www.gdacs.org/</link>
+    <copyright>public domain</copyright>
+    <description>Near real-time notification about natural disaster with a potential humanitarian impact</description>
+    <managingEditor>stefano.paris@ext.ec.europa.eu</managingEditor>
+    <!--Records number 388-->
+    <!--Start 9/19/2026 11:05:01 PM-->
+    <!--=Start 9/19/2026 11:05:01 PM-->
+    <webMaster>stefano.paris@ext.ec.europa.eu</webMaster>
+    <pubDate>Sat, 19 Sep 2026 21:05:01 GMT</pubDate>
+    <atom:link href="https://www.gdacs.org/xml/rss.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Green flood alert in Thailand</title>
+      <description>On 05/10/2026, a flood started in Thailand, lasting until 07/10/2026 (last update). The flood caused 0 deaths and 0 displaced .</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/fl/dfo2026_1104169.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=FL&amp;eventid=1104169</link>
+      <pubDate>Fri, 18 Sep 2026 06:16:34 GMT</pubDate>
+      <gdacs:dateadded>Fri, 18 Sep 2026 06:16:34 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Fri, 18 Sep 2026 06:16:34 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Mon, 05 Oct 2026 01:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Wed, 07 Oct 2026 01:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>FL1</dc:subject>
+      <guid isPermaLink="false">FL1104169</guid>
+      <geo:Point>
+        <geo:lat>17.1053568</geo:lat>
+        <geo:long>98.9953943</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>94.9953943 102.9953943 13.1053568 21.1053568</gdacs:bbox>
+      <georss:point>17.1053568 98.9953943</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/FL/1104169/cap_1104169.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/FL.png</gdacs:icon>
+      <gdacs:version>1</gdacs:version>
+      <gdacs:eventtype>FL</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1104169</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="" value="0">Magnitude 0 </gdacs:severity>
+      <gdacs:population unit="Population Affected" value="0">0 deaths </gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>THA</gdacs:iso3>
+      <gdacs:country>Thailand</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/FL/1104169/rss_1104169.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green notification for tropical cyclone SIX-26. Population affected by Category 1 (120 km/h) wind speeds or higher is 0  (0 in Tropical Storm).</title>
+      <description>From 19/09/2026 to 19/09/2026, a Tropical Depression (maximum wind speed of 83 km/h) SIX-26 was active in Atlantic. The cyclone affects these countries: [unknown] (vulnerability [unknown]). Estimated population affected by category 1 (120 km/h) wind speeds or higher is 0  (0 in tropical storm).</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/tc/1001323/1001323_2_tn.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=TC&amp;eventid=1001323</link>
+      <pubDate>Sat, 19 Sep 2026 15:06:02 GMT</pubDate>
+      <gdacs:dateadded>Sat, 19 Sep 2026 15:06:02 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 20:50:56 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Sat, 19 Sep 2026 15:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Sat, 19 Sep 2026 21:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>TC1</dc:subject>
+      <guid isPermaLink="false">TC1001323</guid>
+      <geo:Point>
+        <geo:lat>32.9</geo:lat>
+        <geo:long>-33.4</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-45.8200560977979 -19.8200560977979 19.844801347183 45.844801347183</gdacs:bbox>
+      <georss:point>32.9 -33.4</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/TC/1001323/cap_1001323.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/TC.png</gdacs:icon>
+      <gdacs:version>2</gdacs:version>
+      <gdacs:eventtype>TC</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname>SIX-26</gdacs:eventname>
+      <gdacs:eventid>1001323</gdacs:eventid>
+      <gdacs:episodeid>2</gdacs:episodeid>
+      <gdacs:calculationtype>tropicalcycloneonly</gdacs:calculationtype>
+      <gdacs:severity unit="km/h" value="83.3328">Tropical Depression (maximum wind speed of 83 km/h)</gdacs:severity>
+      <gdacs:population unit="Pop74" value="0">Population affected by Category 1 (120 km/h) wind speeds or higher is 0 (0 in Tropical Storm)</gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3 />
+      <gdacs:country />
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/TC/1001323/rss_1001323.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green forest fire notification in Vanuatu</title>
+      <description>On 19/09/2026, a forest fire started in Vanuatu,  until 19/09/2026.</description>
+      <enclosure type="image/png" length="1" url="" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=WF&amp;eventid=1032229</link>
+      <pubDate>Sat, 19 Sep 2026 19:01:34 GMT</pubDate>
+      <gdacs:dateadded>Sat, 19 Sep 2026 19:01:34 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 19:01:32 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Sat, 19 Sep 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Sat, 19 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>WF1</dc:subject>
+      <guid isPermaLink="false">WF1032229</guid>
+      <geo:Point>
+        <geo:lat>-16.252861549718087</geo:lat>
+        <geo:long>168.14557314459898</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>164.145573144599 172.145573144599 -20.2528615497181 -12.2528615497181</gdacs:bbox>
+      <georss:point>-16.252861549718087 168.14557314459898</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/WF/1032229/cap_1032229.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/WF.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>WF</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1032229</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="ha" value="5695">Green impact for forestfire in 5695 ha</gdacs:severity>
+      <gdacs:population unit="" value="0">0 people affected in the area</gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>VUT</gdacs:iso3>
+      <gdacs:country>Vanuatu</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/WF/1032229/rss_1032229.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green earthquake (Magnitude 5.5M, Depth:94.054km) in Kermadec Islands Region 18/09/2026 23:18 UTC, [unknown].</title>
+      <description>On 9/18/2026 11:18:28 PM, an earthquake occurred in Kermadec Islands Region potentially affecting [unknown]. The earthquake had Magnitude 5.5M, Depth:94.054km.</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/eq/eq1734773_1.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=EQ&amp;eventid=1566905</link>
+      <pubDate>Fri, 18 Sep 2026 23:36:52 GMT</pubDate>
+      <gdacs:dateadded>Fri, 18 Sep 2026 23:36:52 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 01:24:24 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Fri, 18 Sep 2026 23:18:28 GMT</gdacs:fromdate>
+      <gdacs:todate>Fri, 18 Sep 2026 23:18:28 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>EQ1</dc:subject>
+      <guid isPermaLink="false">EQ1566905</guid>
+      <geo:Point>
+        <geo:lat>-27.8581</geo:lat>
+        <geo:long>-177.2286</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-181.2286 -173.2286 -31.8581 -23.8581</gdacs:bbox>
+      <georss:point>-27.8581 -177.2286</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/EQ/1566905/cap_1566905.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/EQ.png</gdacs:icon>
+      <gdacs:version>1</gdacs:version>
+      <gdacs:eventtype>EQ</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>0</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1566905</gdacs:eventid>
+      <gdacs:episodeid>1734773</gdacs:episodeid>
+      <gdacs:calculationtype>earthquakeonly</gdacs:calculationtype>
+      <gdacs:severity unit="M" value="5.5">Magnitude 5.5M, Depth:94.1km</gdacs:severity>
+      <gdacs:population unit="in MMI -" value="0" />
+      <gdacs:vulnerability value="1.3145341380124" />
+      <gdacs:iso3 />
+      <gdacs:country>Kermadec Islands Region</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/EQ/1566905/rss_1566905.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green forest fire notification in Angola</title>
+      <description>On 18/09/2026, a forest fire started in Angola,  until 18/09/2026.</description>
+      <enclosure type="image/png" length="1" url="" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=WF&amp;eventid=1032179</link>
+      <pubDate>Sat, 19 Sep 2026 19:01:41 GMT</pubDate>
+      <gdacs:dateadded>Sat, 19 Sep 2026 19:01:41 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 19:01:41 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Fri, 18 Sep 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Fri, 18 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>WF1</dc:subject>
+      <guid isPermaLink="false">WF1032179</guid>
+      <geo:Point>
+        <geo:lat>-16.046209200296598</geo:lat>
+        <geo:long>18.527512894263214</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>14.5275128942632 22.5275128942632 -20.0462092002966 -12.0462092002966</gdacs:bbox>
+      <georss:point>-16.046209200296598 18.527512894263214</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/WF/1032179/cap_1032179.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/WF.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>WF</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1032179</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="ha" value="8197">Green impact for forestfire in 8197 ha</gdacs:severity>
+      <gdacs:population unit="" value="0">0 people affected in the area</gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>AGO</gdacs:iso3>
+      <gdacs:country>Angola</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/WF/1032179/rss_1032179.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green forest fire notification in Zambia</title>
+      <description>On 18/09/2026, a forest fire started in Zambia,  until 19/09/2026.</description>
+      <enclosure type="image/png" length="1" url="" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=WF&amp;eventid=1032230</link>
+      <pubDate>Sat, 19 Sep 2026 19:01:49 GMT</pubDate>
+      <gdacs:dateadded>Sat, 19 Sep 2026 19:01:49 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 19:01:48 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Fri, 18 Sep 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Sat, 19 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>WF1</dc:subject>
+      <guid isPermaLink="false">WF1032230</guid>
+      <geo:Point>
+        <geo:lat>-15.680031048379798</geo:lat>
+        <geo:long>25.729279175824576</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>21.7292791758246 29.7292791758246 -19.6800310483798 -11.6800310483798</gdacs:bbox>
+      <georss:point>-15.680031048379798 25.729279175824576</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/WF/1032230/cap_1032230.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/WF.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>WF</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1032230</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="ha" value="5356">Green impact for forestfire in 5356 ha</gdacs:severity>
+      <gdacs:population unit="" value="1">1 people affected in the area</gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>ZMB</gdacs:iso3>
+      <gdacs:country>Zambia</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/WF/1032230/rss_1032230.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green earthquake (Magnitude 6.5M, Depth:98km) in Fox Islands, Aleutian Islands 17/09/2026 14:19 UTC, [unknown].</title>
+      <description>On 9/17/2026 2:19:52 PM, an earthquake occurred in Fox Islands, Aleutian Islands potentially affecting [unknown]. The earthquake had Magnitude 6.5M, Depth:98km.</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/eq/eq1734668_1.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=EQ&amp;eventid=1566678</link>
+      <pubDate>Thu, 17 Sep 2026 14:25:14 GMT</pubDate>
+      <gdacs:dateadded>Thu, 17 Sep 2026 14:25:14 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 02:03:43 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Thu, 17 Sep 2026 14:19:52 GMT</gdacs:fromdate>
+      <gdacs:todate>Thu, 17 Sep 2026 14:19:52 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>EQ1</dc:subject>
+      <guid isPermaLink="false">EQ1566678</guid>
+      <geo:Point>
+        <geo:lat>52.8594</geo:lat>
+        <geo:long>-171.3756</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-175.3756 -167.3756 48.8594 56.8594</gdacs:bbox>
+      <georss:point>52.8594 -171.3756</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/EQ/1566678/cap_1566678.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/EQ.png</gdacs:icon>
+      <gdacs:version>1</gdacs:version>
+      <gdacs:eventtype>EQ</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>0</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1566678</gdacs:eventid>
+      <gdacs:episodeid>1734668</gdacs:episodeid>
+      <gdacs:calculationtype>tsunami</gdacs:calculationtype>
+      <gdacs:severity unit="M" value="6.5">Magnitude 6.5M, Depth:98km</gdacs:severity>
+      <gdacs:population unit="in MMI -" value="0" />
+      <gdacs:vulnerability value="1.3145341380124" />
+      <gdacs:iso3 />
+      <gdacs:country>Fox Islands, Aleutian Islands</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/EQ/1566678/rss_1566678.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green flood alert in Honduras</title>
+      <description>On 17/09/2026, a flood started in Honduras, lasting until 19/09/2026 (last update). The flood caused 0 deaths and 1 displaced .</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/fl/dfo2026_1104173.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=FL&amp;eventid=1104173</link>
+      <pubDate>Sat, 19 Sep 2026 09:46:19 GMT</pubDate>
+      <gdacs:dateadded>Sat, 19 Sep 2026 09:46:19 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 09:46:19 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Thu, 17 Sep 2026 01:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Sat, 19 Sep 2026 01:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>FL1</dc:subject>
+      <guid isPermaLink="false">FL1104173</guid>
+      <geo:Point>
+        <geo:lat>15.0960559</geo:lat>
+        <geo:long>-88.3673692</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-92.3673692 -84.3673692 11.0960559 19.0960559</gdacs:bbox>
+      <georss:point>15.0960559 -88.3673692</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/FL/1104173/cap_1104173.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/FL.png</gdacs:icon>
+      <gdacs:version>1</gdacs:version>
+      <gdacs:eventtype>FL</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1104173</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="" value="0">Magnitude 0 </gdacs:severity>
+      <gdacs:population unit="Population Affected" value="0">0 deaths and 1 displaced </gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>HND</gdacs:iso3>
+      <gdacs:country>Honduras</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/FL/1104173/rss_1104173.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green forest fire notification in Brazil</title>
+      <description>On 17/09/2026, a forest fire started in Brazil,  until 19/09/2026.</description>
+      <enclosure type="image/png" length="1" url="" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=WF&amp;eventid=1032217</link>
+      <pubDate>Sat, 19 Sep 2026 03:01:15 GMT</pubDate>
+      <gdacs:dateadded>Sat, 19 Sep 2026 03:01:15 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 19:02:03 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Sat, 19 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>WF1</dc:subject>
+      <guid isPermaLink="false">WF1032217</guid>
+      <geo:Point>
+        <geo:lat>-11.304103598782293</geo:lat>
+        <geo:long>-43.380408987926181</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-47.3804089879262 -39.3804089879262 -15.3041035987823 -7.30410359878229</gdacs:bbox>
+      <georss:point>-11.304103598782293 -43.380408987926181</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/WF/1032217/cap_1032217.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/WF.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>WF</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1032217</gdacs:eventid>
+      <gdacs:episodeid>3</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="ha" value="5953">Green impact for forestfire in 5953 ha</gdacs:severity>
+      <gdacs:population unit="" value="0">0 people affected in the area</gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>BRA</gdacs:iso3>
+      <gdacs:country>Brazil</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/WF/1032217/rss_1032217.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green forest fire notification in Namibia</title>
+      <description>On 17/09/2026, a forest fire started in Namibia,  until 19/09/2026.</description>
+      <enclosure type="image/png" length="1" url="" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=WF&amp;eventid=1032231</link>
+      <pubDate>Sat, 19 Sep 2026 19:02:42 GMT</pubDate>
+      <gdacs:dateadded>Sat, 19 Sep 2026 19:02:42 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 19:02:40 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Sat, 19 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>WF1</dc:subject>
+      <guid isPermaLink="false">WF1032231</guid>
+      <geo:Point>
+        <geo:lat>-20.217067016102927</geo:lat>
+        <geo:long>15.180375483434815</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>11.1803754834348 19.1803754834348 -24.2170670161029 -16.2170670161029</gdacs:bbox>
+      <georss:point>-20.217067016102927 15.180375483434815</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/WF/1032231/cap_1032231.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/WF.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>WF</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1032231</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="ha" value="6524">Green impact for forestfire in 6524 ha</gdacs:severity>
+      <gdacs:population unit="" value="17">17 people affected in the area</gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>NAM</gdacs:iso3>
+      <gdacs:country>Namibia</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/WF/1032231/rss_1032231.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green forest fire notification in Angola</title>
+      <description>On 17/09/2026, a forest fire started in Angola,  until 19/09/2026.</description>
+      <enclosure type="image/png" length="1" url="" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=WF&amp;eventid=1032180</link>
+      <pubDate>Sat, 19 Sep 2026 03:01:40 GMT</pubDate>
+      <gdacs:dateadded>Sat, 19 Sep 2026 03:01:40 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 19:02:21 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Sat, 19 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>WF1</dc:subject>
+      <guid isPermaLink="false">WF1032180</guid>
+      <geo:Point>
+        <geo:lat>-16.358096781862347</geo:lat>
+        <geo:long>19.827329225703561</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>15.8273292257036 23.8273292257036 -20.3580967818623 -12.3580967818623</gdacs:bbox>
+      <georss:point>-16.358096781862347 19.827329225703561</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/WF/1032180/cap_1032180.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/WF.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>WF</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1032180</gdacs:eventid>
+      <gdacs:episodeid>4</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="ha" value="7101">Green impact for forestfire in 7101 ha</gdacs:severity>
+      <gdacs:population unit="" value="0">0 people affected in the area</gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>AGO</gdacs:iso3>
+      <gdacs:country>Angola</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/WF/1032180/rss_1032180.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green forest fire notification in Brazil</title>
+      <description>On 17/09/2026, a forest fire started in Brazil,  until 18/09/2026.</description>
+      <enclosure type="image/png" length="1" url="" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=WF&amp;eventid=1032111</link>
+      <pubDate>Thu, 17 Sep 2026 15:01:16 GMT</pubDate>
+      <gdacs:dateadded>Thu, 17 Sep 2026 15:01:16 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 19:01:58 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Fri, 18 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>WF1</dc:subject>
+      <guid isPermaLink="false">WF1032111</guid>
+      <geo:Point>
+        <geo:lat>-12.46519659446569</geo:lat>
+        <geo:long>-50.833832857671041</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-54.833832857671 -46.833832857671 -16.4651965944657 -8.46519659446569</gdacs:bbox>
+      <georss:point>-12.46519659446569 -50.833832857671041</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/WF/1032111/cap_1032111.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/WF.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>WF</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1032111</gdacs:eventid>
+      <gdacs:episodeid>4</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="ha" value="12727">Green impact for forestfire in 12727 ha</gdacs:severity>
+      <gdacs:population unit="" value="3">3 people affected in the area</gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>BRA</gdacs:iso3>
+      <gdacs:country>Brazil</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/WF/1032111/rss_1032111.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green forest fire notification in Australia</title>
+      <description>On 17/09/2026, a forest fire started in Australia,  until 18/09/2026.</description>
+      <enclosure type="image/png" length="1" url="" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=WF&amp;eventid=1032177</link>
+      <pubDate>Sat, 19 Sep 2026 19:02:33 GMT</pubDate>
+      <gdacs:dateadded>Sat, 19 Sep 2026 19:02:33 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 19:02:32 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Fri, 18 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>WF1</dc:subject>
+      <guid isPermaLink="false">WF1032177</guid>
+      <geo:Point>
+        <geo:lat>-17.169958521254291</geo:lat>
+        <geo:long>122.83737624074944</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>118.837376240749 126.837376240749 -21.1699585212543 -13.1699585212543</gdacs:bbox>
+      <georss:point>-17.169958521254291 122.83737624074944</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/WF/1032177/cap_1032177.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/WF.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>WF</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1032177</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="ha" value="5358">Green impact for forestfire in 5358 ha</gdacs:severity>
+      <gdacs:population unit="" value="0">0 people affected in the area</gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>AUS</gdacs:iso3>
+      <gdacs:country>Australia</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/WF/1032177/rss_1032177.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green flood alert in Indonesia</title>
+      <description>On 16/09/2026, a flood started in Indonesia, lasting until 18/09/2026 (last update). The flood caused 0 deaths and 0 displaced .</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/fl/dfo2026_1104168.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=FL&amp;eventid=1104168</link>
+      <pubDate>Fri, 18 Sep 2026 06:16:20 GMT</pubDate>
+      <gdacs:dateadded>Fri, 18 Sep 2026 06:16:20 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Fri, 18 Sep 2026 06:16:20 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Wed, 16 Sep 2026 01:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Fri, 18 Sep 2026 01:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>FL1</dc:subject>
+      <guid isPermaLink="false">FL1104168</guid>
+      <geo:Point>
+        <geo:lat>4.3685491</geo:lat>
+        <geo:long>97.0253024</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>93.0253024 101.0253024 0.3685491 8.3685491</gdacs:bbox>
+      <georss:point>4.3685491 97.0253024</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/FL/1104168/cap_1104168.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/FL.png</gdacs:icon>
+      <gdacs:version>1</gdacs:version>
+      <gdacs:eventtype>FL</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1104168</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="" value="0">Magnitude 0 </gdacs:severity>
+      <gdacs:population unit="Population Affected" value="0">0 deaths </gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>IDN</gdacs:iso3>
+      <gdacs:country>Indonesia</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/FL/1104168/rss_1104168.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green flood alert in Somalia</title>
+      <description>On 16/09/2026, a flood started in Somalia, lasting until 18/09/2026 (last update). The flood caused 0 deaths and 0 displaced .</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/fl/dfo2026_1104170.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=FL&amp;eventid=1104170</link>
+      <pubDate>Fri, 18 Sep 2026 11:46:23 GMT</pubDate>
+      <gdacs:dateadded>Fri, 18 Sep 2026 11:46:23 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Fri, 18 Sep 2026 11:46:23 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Wed, 16 Sep 2026 01:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Fri, 18 Sep 2026 01:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>FL1</dc:subject>
+      <guid isPermaLink="false">FL1104170</guid>
+      <geo:Point>
+        <geo:lat>2.0268073</geo:lat>
+        <geo:long>45.3012042</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>41.3012042 49.3012042 -1.9731927 6.0268073</gdacs:bbox>
+      <georss:point>2.0268073 45.3012042</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/FL/1104170/cap_1104170.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/FL.png</gdacs:icon>
+      <gdacs:version>1</gdacs:version>
+      <gdacs:eventtype>FL</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1104170</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="" value="0">Magnitude 0 </gdacs:severity>
+      <gdacs:population unit="Population Affected" value="0">0 deaths </gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>SOM</gdacs:iso3>
+      <gdacs:country>Somalia</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/FL/1104170/rss_1104170.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green notification for tropical cyclone DUJUAN-26. Population affected by Category 1 (120 km/h) wind speeds or higher is 0  (0 in Tropical Storm).</title>
+      <description>From 15/09/2026 to 19/09/2026, a Hurricane/Typhoon &gt; 74 mph (maximum wind speed of 130 km/h) DUJUAN-26 was active in NWPacific. The cyclone affects these countries: Japan (vulnerability Low). Estimated population affected by category 1 (120 km/h) wind speeds or higher is 0  (0 in tropical storm).</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/tc/1001322/1001322_18_tn.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=TC&amp;eventid=1001322</link>
+      <pubDate>Tue, 15 Sep 2026 14:22:03 GMT</pubDate>
+      <gdacs:dateadded>Tue, 15 Sep 2026 14:22:03 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 20:08:22 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Tue, 15 Sep 2026 12:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Sat, 19 Sep 2026 18:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>1</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>TC1</dc:subject>
+      <guid isPermaLink="false">TC1001322</guid>
+      <geo:Point>
+        <geo:lat>28.5</geo:lat>
+        <geo:long>137.7</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>132.681302431068 158.681302431068 17.9424655986058 43.9424655986058</gdacs:bbox>
+      <georss:point>28.5 137.7</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/TC/1001322/cap_1001322.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/TC.png</gdacs:icon>
+      <gdacs:version>18</gdacs:version>
+      <gdacs:eventtype>TC</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname>DUJUAN-26</gdacs:eventname>
+      <gdacs:eventid>1001322</gdacs:eventid>
+      <gdacs:episodeid>18</gdacs:episodeid>
+      <gdacs:calculationtype>tropicalcyclonewithstormsurge</gdacs:calculationtype>
+      <gdacs:severity unit="km/h" value="129.6288">Hurricane/Typhoon &gt; 74 mph (maximum wind speed of 130 km/h)</gdacs:severity>
+      <gdacs:population unit="Pop74" value="3541">Population affected by Category 1 (120 km/h) wind speeds or higher is 3541 </gdacs:population>
+      <gdacs:vulnerability value="1">Low</gdacs:vulnerability>
+      <gdacs:iso3>JPN</gdacs:iso3>
+      <gdacs:country>Japan</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/TC/1001322/rss_1001322.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green flood alert in Senegal</title>
+      <description>On 15/09/2026, a flood started in Senegal, lasting until 16/09/2026 (last update). The flood caused 0 deaths and 0 displaced .</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/fl/dfo2026_1104161.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=FL&amp;eventid=1104161</link>
+      <pubDate>Wed, 16 Sep 2026 08:04:47 GMT</pubDate>
+      <gdacs:dateadded>Wed, 16 Sep 2026 08:04:47 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Wed, 16 Sep 2026 08:04:47 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Tue, 15 Sep 2026 01:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Wed, 16 Sep 2026 01:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>FL1</dc:subject>
+      <guid isPermaLink="false">FL1104161</guid>
+      <geo:Point>
+        <geo:lat>14.7603583</geo:lat>
+        <geo:long>-17.468149</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-21.468149 -13.468149 10.7603583 18.7603583</gdacs:bbox>
+      <georss:point>14.7603583 -17.468149</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/FL/1104161/cap_1104161.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/FL.png</gdacs:icon>
+      <gdacs:version>1</gdacs:version>
+      <gdacs:eventtype>FL</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1104161</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="" value="0">Magnitude 0 </gdacs:severity>
+      <gdacs:population unit="Population Affected" value="0">0 deaths </gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>SEN</gdacs:iso3>
+      <gdacs:country>Senegal</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/FL/1104161/rss_1104161.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green flood alert in Democratic Republic of Congo</title>
+      <description>On 15/09/2026, a flood started in Democratic Republic of Congo, lasting until 17/09/2026 (last update). The flood caused 0 deaths and 0 displaced .</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/fl/dfo2026_1104166.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=FL&amp;eventid=1104166</link>
+      <pubDate>Thu, 17 Sep 2026 10:34:34 GMT</pubDate>
+      <gdacs:dateadded>Thu, 17 Sep 2026 10:34:34 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Thu, 17 Sep 2026 10:34:34 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Tue, 15 Sep 2026 01:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Thu, 17 Sep 2026 01:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>FL1</dc:subject>
+      <guid isPermaLink="false">FL1104166</guid>
+      <geo:Point>
+        <geo:lat>-2.5097629</geo:lat>
+        <geo:long>28.8436511</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>24.8436511 32.8436511 -6.5097629 1.4902371</gdacs:bbox>
+      <georss:point>-2.5097629 28.8436511</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/FL/1104166/cap_1104166.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/FL.png</gdacs:icon>
+      <gdacs:version>1</gdacs:version>
+      <gdacs:eventtype>FL</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1104166</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="" value="0">Magnitude 0 </gdacs:severity>
+      <gdacs:population unit="Population Affected" value="0">0 deaths </gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>COD</gdacs:iso3>
+      <gdacs:country>Democratic Republic of Congo</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/FL/1104166/rss_1104166.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green flood alert in Ecuador</title>
+      <description>On 15/09/2026, a flood started in Ecuador, lasting until 17/09/2026 (last update). The flood caused 0 deaths and 0 displaced .</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/fl/dfo2026_1104167.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=FL&amp;eventid=1104167</link>
+      <pubDate>Thu, 17 Sep 2026 10:54:34 GMT</pubDate>
+      <gdacs:dateadded>Thu, 17 Sep 2026 10:54:34 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Thu, 17 Sep 2026 10:54:34 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Tue, 15 Sep 2026 01:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Thu, 17 Sep 2026 01:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>FL1</dc:subject>
+      <guid isPermaLink="false">FL1104167</guid>
+      <geo:Point>
+        <geo:lat>-3.2996519</geo:lat>
+        <geo:long>-79.8072625</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-83.8072625 -75.8072625 -7.2996519 0.7003481</gdacs:bbox>
+      <georss:point>-3.2996519 -79.8072625</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/FL/1104167/cap_1104167.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/FL.png</gdacs:icon>
+      <gdacs:version>1</gdacs:version>
+      <gdacs:eventtype>FL</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1104167</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="" value="0">Magnitude 0 </gdacs:severity>
+      <gdacs:population unit="Population Affected" value="0">0 deaths </gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>ECU</gdacs:iso3>
+      <gdacs:country>Ecuador</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/FL/1104167/rss_1104167.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green flood alert in Sri Lanka</title>
+      <description>On 14/09/2026, a flood started in Sri Lanka, lasting until 16/09/2026 (last update). The flood caused 0 deaths and 25 displaced .</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/fl/dfo2026_1104160.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=FL&amp;eventid=1104160</link>
+      <pubDate>Wed, 16 Sep 2026 05:56:43 GMT</pubDate>
+      <gdacs:dateadded>Wed, 16 Sep 2026 05:56:43 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Wed, 16 Sep 2026 05:56:43 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Mon, 14 Sep 2026 01:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Wed, 16 Sep 2026 01:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>FL1</dc:subject>
+      <guid isPermaLink="false">FL1104160</guid>
+      <geo:Point>
+        <geo:lat>7.214308</geo:lat>
+        <geo:long>80.6400801</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>76.6400801 84.6400801 3.214308 11.214308</gdacs:bbox>
+      <georss:point>7.214308 80.6400801</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/FL/1104160/cap_1104160.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/FL.png</gdacs:icon>
+      <gdacs:version>1</gdacs:version>
+      <gdacs:eventtype>FL</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname />
+      <gdacs:eventid>1104160</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="" value="0">Magnitude 0 </gdacs:severity>
+      <gdacs:population unit="Population Affected" value="0">0 deaths and 25 displaced </gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>LKA</gdacs:iso3>
+      <gdacs:country>Sri Lanka</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/FL/1104160/rss_1104160.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green notification for tropical cyclone FIFTEEN-E-26. Population affected by Category 1 (120 km/h) wind speeds or higher is 0  (0 in Tropical Storm).</title>
+      <description>From 13/09/2026 to 16/09/2026, a Tropical Depression (maximum wind speed of 56 km/h) FIFTEEN-E-26 was active in EastPacific. The cyclone affects these countries: [unknown] (vulnerability [unknown]). Estimated population affected by category 1 (120 km/h) wind speeds or higher is 0  (0 in tropical storm).</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/tc/1001321/1001321_10_tn.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=TC&amp;eventid=1001321</link>
+      <pubDate>Sun, 13 Sep 2026 20:58:31 GMT</pubDate>
+      <gdacs:dateadded>Sun, 13 Sep 2026 20:58:31 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Wed, 16 Sep 2026 23:06:28 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Sun, 13 Sep 2026 21:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Wed, 16 Sep 2026 03:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>0</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>TC1</dc:subject>
+      <guid isPermaLink="false">TC1001321</guid>
+      <geo:Point>
+        <geo:lat>15.5</geo:lat>
+        <geo:long>-125.8</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-138.8 -112.8 2.5 28.5</gdacs:bbox>
+      <georss:point>15.5 -125.8</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/TC/1001321/cap_1001321.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/TC.png</gdacs:icon>
+      <gdacs:version>10</gdacs:version>
+      <gdacs:eventtype>TC</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname>FIFTEEN-E-26</gdacs:eventname>
+      <gdacs:eventid>1001321</gdacs:eventid>
+      <gdacs:episodeid>10</gdacs:episodeid>
+      <gdacs:calculationtype>tropicalcycloneonly</gdacs:calculationtype>
+      <gdacs:severity unit="km/h" value="55.5552">Tropical Depression (maximum wind speed of 46 km/h)</gdacs:severity>
+      <gdacs:population unit="Pop74" value="0">Population affected by Category 1 (120 km/h) wind speeds or higher is 0 (0 in Tropical Storm)</gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3 />
+      <gdacs:country />
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/TC/1001321/rss_1001321.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Green notification for tropical cyclone NORBERT-26. Population affected by Category 1 (120 km/h) wind speeds or higher is 0  (0 in Tropical Storm).</title>
+      <description>From 09/09/2026 to 15/09/2026, a Tropical Depression (maximum wind speed of 102 km/h) NORBERT-26 was active in CentralPacific. The cyclone affects these countries: [unknown] (vulnerability [unknown]). Estimated population affected by category 1 (120 km/h) wind speeds or higher is 0  (0 in tropical storm).</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/tc/1001320/1001320_24_tn.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=TC&amp;eventid=1001320</link>
+      <pubDate>Wed, 09 Sep 2026 21:06:56 GMT</pubDate>
+      <gdacs:dateadded>Wed, 09 Sep 2026 21:06:56 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Wed, 16 Sep 2026 09:20:50 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>false</gdacs:iscurrent>
+      <gdacs:fromdate>Wed, 09 Sep 2026 21:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Tue, 15 Sep 2026 15:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>1</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>TC1</dc:subject>
+      <guid isPermaLink="false">TC1001320</guid>
+      <geo:Point>
+        <geo:lat>20.5</geo:lat>
+        <geo:long>-143.1</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-143.959312633585 -117.959312633585 5.12230537344637 31.1223053734464</gdacs:bbox>
+      <georss:point>20.5 -143.1</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/TC/1001320/cap_1001320.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/TC.png</gdacs:icon>
+      <gdacs:version>24</gdacs:version>
+      <gdacs:eventtype>TC</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname>NORBERT-26</gdacs:eventname>
+      <gdacs:eventid>1001320</gdacs:eventid>
+      <gdacs:episodeid>24</gdacs:episodeid>
+      <gdacs:calculationtype>tropicalcyclonewithstormsurge</gdacs:calculationtype>
+      <gdacs:severity unit="km/h" value="101.8512">Tropical Depression (maximum wind speed of 56 km/h)</gdacs:severity>
+      <gdacs:population unit="Pop74" value="0">Population affected by Category 1 (120 km/h) wind speeds or higher is 0 (0 in Tropical Storm)</gdacs:population>
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3 />
+      <gdacs:country />
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/TC/1001320/rss_1001320.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Drought is on going in Central African Republic, Cameroon, Niger, Nigeria, Chad</title>
+      <description>The  Drought notification level is Green.</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/dr/dr1027567_1.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=DR&amp;eventid=1027567</link>
+      <pubDate>Mon, 14 Sep 2026 14:38:38 GMT</pubDate>
+      <gdacs:dateadded>Mon, 14 Sep 2026 14:38:38 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 05:57:27 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>true</gdacs:iscurrent>
+      <gdacs:fromdate>Sun, 21 Jun 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>13</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>DR1</dc:subject>
+      <guid isPermaLink="false">DR1027567</guid>
+      <geo:Point>
+        <geo:lat>9.924</geo:lat>
+        <geo:long>15.933</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>11.933 19.933 5.924 13.924</gdacs:bbox>
+      <georss:point>9.924 15.933</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/DR/1027567/cap_1027567.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/DR.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>DR</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname>Central Sahel-2026</gdacs:eventname>
+      <gdacs:eventid>1027567</gdacs:eventid>
+      <gdacs:episodeid>1</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="km2" value="168576">Minor impact for agricultural drought in 168576 km2</gdacs:severity>
+      <gdacs:population unit="" value="0" />
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>CAF</gdacs:iso3>
+      <gdacs:country>Central African Republic, Cameroon, Niger, Nigeria, Chad</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/DR/1027567/rss_1027567.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Drought is on going in Democratic Republic of Congo, Kenya, Tanzania, Uganda</title>
+      <description>The  Drought notification level is Orange.</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/dr/dr1027465_5.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=DR&amp;eventid=1027465</link>
+      <pubDate>Wed, 29 Jul 2026 12:47:44 GMT</pubDate>
+      <gdacs:dateadded>Wed, 29 Jul 2026 12:47:44 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 05:57:24 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>false</gdacs:iscurrent>
+      <gdacs:fromdate>Thu, 21 May 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>17</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>DR2</dc:subject>
+      <guid isPermaLink="false">DR1027465</guid>
+      <geo:Point>
+        <geo:lat>0.938</geo:lat>
+        <geo:long>33.813</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>29.813 37.813 -3.062 4.938</gdacs:bbox>
+      <georss:point>0.938 33.813</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/DR/1027465/cap_1027465.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Orange/DR.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>DR</gdacs:eventtype>
+      <gdacs:alertlevel>Orange</gdacs:alertlevel>
+      <gdacs:alertscore>2</gdacs:alertscore>
+      <gdacs:episodealertlevel>Orange</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>2</gdacs:episodealertscore>
+      <gdacs:eventname>Uganda, Kenya-2026</gdacs:eventname>
+      <gdacs:eventid>1027465</gdacs:eventid>
+      <gdacs:episodeid>5</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="km2" value="196893">Medium impact for agricultural drought in 196893 km2</gdacs:severity>
+      <gdacs:population unit="" value="0" />
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>COD</gdacs:iso3>
+      <gdacs:country>Democratic Republic of Congo, Kenya, Tanzania, Uganda</gdacs:country>
+      <gdacs:glide>DR-2026-000143-COD</gdacs:glide>
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/DR/1027465/rss_1027465.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Drought is on going in China, Kyrgyzstan, Kazakhstan, Mongolia, Russia</title>
+      <description>The  Drought notification level is Green.</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/dr/dr1027491_7.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=DR&amp;eventid=1027491</link>
+      <pubDate>Tue, 14 Jul 2026 14:07:56 GMT</pubDate>
+      <gdacs:dateadded>Tue, 14 Jul 2026 14:07:56 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 05:57:22 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>false</gdacs:iscurrent>
+      <gdacs:fromdate>Fri, 01 May 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>20</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>DR1</dc:subject>
+      <guid isPermaLink="false">DR1027491</guid>
+      <geo:Point>
+        <geo:lat>48.077</geo:lat>
+        <geo:long>82.572</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>78.572 86.572 44.077 52.077</gdacs:bbox>
+      <georss:point>48.077 82.572</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/DR/1027491/cap_1027491.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/DR.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>DR</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname>Kazakhstan, China, Siberia (Russia)-2026</gdacs:eventname>
+      <gdacs:eventid>1027491</gdacs:eventid>
+      <gdacs:episodeid>7</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="km2" value="1081074">Minor impact for agricultural drought in 1081074 km2</gdacs:severity>
+      <gdacs:population unit="" value="0" />
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>CHN</gdacs:iso3>
+      <gdacs:country>China, Kyrgyzstan, Kazakhstan, Mongolia, Russia</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/DR/1027491/rss_1027491.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Drought is on going in The Bahamas, Belize, Cuba, Dominican Republic, Guatemala, Honduras, Haiti, Mexico, Nicaragua, El Salvador</title>
+      <description>The  Drought notification level is Orange.</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/dr/dr1027449_8.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=DR&amp;eventid=1027449</link>
+      <pubDate>Fri, 03 Jul 2026 12:57:40 GMT</pubDate>
+      <gdacs:dateadded>Fri, 03 Jul 2026 12:57:40 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 05:57:18 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>false</gdacs:iscurrent>
+      <gdacs:fromdate>Tue, 21 Apr 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>21</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>DR2</dc:subject>
+      <guid isPermaLink="false">DR1027449</guid>
+      <geo:Point>
+        <geo:lat>15.778</geo:lat>
+        <geo:long>-90.382</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-94.382 -86.382 11.778 19.778</gdacs:bbox>
+      <georss:point>15.778 -90.382</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/DR/1027449/cap_1027449.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Orange/DR.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>DR</gdacs:eventtype>
+      <gdacs:alertlevel>Orange</gdacs:alertlevel>
+      <gdacs:alertscore>2</gdacs:alertscore>
+      <gdacs:episodealertlevel>Orange</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>2</gdacs:episodealertscore>
+      <gdacs:eventname>Central America-2026</gdacs:eventname>
+      <gdacs:eventid>1027449</gdacs:eventid>
+      <gdacs:episodeid>8</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="km2" value="615664">Medium impact for agricultural drought in 615664 km2</gdacs:severity>
+      <gdacs:population unit="" value="0" />
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>BHS</gdacs:iso3>
+      <gdacs:country>The Bahamas, Belize, Cuba, Dominican Republic, Guatemala, Honduras, Haiti, Mexico, Nicaragua, El Salvador</gdacs:country>
+      <gdacs:glide>DR-2026-000153-BLZ</gdacs:glide>
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/DR/1027449/rss_1027449.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Drought is on going in Eritrea, Ethiopia, Kenya, Somalia</title>
+      <description>The  Drought notification level is Orange.</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/dr/dr1027450_8.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=DR&amp;eventid=1027450</link>
+      <pubDate>Fri, 03 Jul 2026 12:57:44 GMT</pubDate>
+      <gdacs:dateadded>Fri, 03 Jul 2026 12:57:44 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 05:57:21 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>false</gdacs:iscurrent>
+      <gdacs:fromdate>Tue, 21 Apr 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>21</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>DR2</dc:subject>
+      <guid isPermaLink="false">DR1027450</guid>
+      <geo:Point>
+        <geo:lat>11.015</geo:lat>
+        <geo:long>39.528</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>35.528 43.528 7.015 15.015</gdacs:bbox>
+      <georss:point>11.015 39.528</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/DR/1027450/cap_1027450.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Orange/DR.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>DR</gdacs:eventtype>
+      <gdacs:alertlevel>Orange</gdacs:alertlevel>
+      <gdacs:alertscore>2</gdacs:alertscore>
+      <gdacs:episodealertlevel>Orange</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>2</gdacs:episodealertscore>
+      <gdacs:eventname>East Africa-2026</gdacs:eventname>
+      <gdacs:eventid>1027450</gdacs:eventid>
+      <gdacs:episodeid>8</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="km2" value="509495">Medium impact for agricultural drought in 509495 km2</gdacs:severity>
+      <gdacs:population unit="" value="0" />
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>ERI</gdacs:iso3>
+      <gdacs:country>Eritrea, Ethiopia, Kenya, Somalia</gdacs:country>
+      <gdacs:glide>DR-2026-000117-ETH</gdacs:glide>
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/DR/1027450/rss_1027450.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Drought is on going in Brazil, Colombia, Costa Rica, , Guyana, Panama, Suriname, Venezuela</title>
+      <description>The  Drought notification level is Green.</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/dr/dr1023877_8.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=DR&amp;eventid=1023877</link>
+      <pubDate>Fri, 03 Jul 2026 12:57:35 GMT</pubDate>
+      <gdacs:dateadded>Fri, 03 Jul 2026 12:57:35 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 05:57:17 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>false</gdacs:iscurrent>
+      <gdacs:fromdate>Sat, 21 Feb 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>30</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>DR1</dc:subject>
+      <guid isPermaLink="false">DR1023877</guid>
+      <geo:Point>
+        <geo:lat>7.273</geo:lat>
+        <geo:long>-67.747</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-71.747 -63.747 3.273 11.273</gdacs:bbox>
+      <georss:point>7.273 -67.747</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/DR/1023877/cap_1023877.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/DR.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>DR</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname>Northern South America, Panama Isthmus-2026</gdacs:eventname>
+      <gdacs:eventid>1023877</gdacs:eventid>
+      <gdacs:episodeid>8</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="km2" value="965470">Minor impact for agricultural drought in 965470 km2</gdacs:severity>
+      <gdacs:population unit="" value="0" />
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>BRA</gdacs:iso3>
+      <gdacs:country>Brazil, Colombia, Costa Rica, , Guyana, Panama, Suriname, Venezuela</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/DR/1023877/rss_1023877.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Drought is on going in India</title>
+      <description>The  Drought notification level is Green.</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/dr/dr1027575_2.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=DR&amp;eventid=1027575</link>
+      <pubDate>Mon, 31 Aug 2026 08:22:42 GMT</pubDate>
+      <gdacs:dateadded>Mon, 31 Aug 2026 08:22:42 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 05:57:25 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>false</gdacs:iscurrent>
+      <gdacs:fromdate>Wed, 21 Jan 2026 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>34</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>DR1</dc:subject>
+      <guid isPermaLink="false">DR1027575</guid>
+      <geo:Point>
+        <geo:lat>11.937</geo:lat>
+        <geo:long>76.525</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>72.525 80.525 7.937 15.937</gdacs:bbox>
+      <georss:point>11.937 76.525</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/DR/1027575/cap_1027575.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/DR.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>DR</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname>India-2026</gdacs:eventname>
+      <gdacs:eventid>1027575</gdacs:eventid>
+      <gdacs:episodeid>2</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="km2" value="249089">Minor impact for agricultural drought in 249089 km2</gdacs:severity>
+      <gdacs:population unit="" value="0" />
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>IND</gdacs:iso3>
+      <gdacs:country>India</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/DR/1027575/rss_1027575.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+    <item>
+      <title>Drought is on going in United States</title>
+      <description>The  Drought notification level is Green.</description>
+      <enclosure type="image/png" length="1" url="https://www.gdacs.org/contentdata/resources/imgtemp/gdacs/dr/dr1018546_14.png" />
+      <gdacs:temporary>false</gdacs:temporary>
+      <link>https://www.gdacs.org/report.aspx?eventtype=DR&amp;eventid=1018546</link>
+      <pubDate>Thu, 30 Apr 2026 13:07:44 GMT</pubDate>
+      <gdacs:dateadded>Thu, 30 Apr 2026 13:07:44 GMT</gdacs:dateadded>
+      <gdacs:datemodified>Sat, 19 Sep 2026 05:57:09 GMT</gdacs:datemodified>
+      <gdacs:iscurrent>false</gdacs:iscurrent>
+      <gdacs:fromdate>Sun, 21 Dec 2025 00:00:00 GMT</gdacs:fromdate>
+      <gdacs:todate>Thu, 17 Sep 2026 00:00:00 GMT</gdacs:todate>
+      <gdacs:durationinweek>39</gdacs:durationinweek>
+      <gdacs:year>2026</gdacs:year>
+      <dc:subject>DR1</dc:subject>
+      <guid isPermaLink="false">DR1018546</guid>
+      <geo:Point>
+        <geo:lat>42.679</geo:lat>
+        <geo:long>-105.66</geo:long>
+      </geo:Point>
+      <!--gdacs:bbox format = lonmin lonmax latmin latmax-->
+      <gdacs:bbox>-109.66 -101.66 38.679 46.679</gdacs:bbox>
+      <georss:point>42.679 -105.66</georss:point>
+      <gdacs:cap>https://www.gdacs.org/contentdata/resources/DR/1018546/cap_1018546.xml</gdacs:cap>
+      <gdacs:icon>https://www.gdacs.org/Images/gdacs_icons/alerts/Green/DR.png</gdacs:icon>
+      <gdacs:version>0</gdacs:version>
+      <gdacs:eventtype>DR</gdacs:eventtype>
+      <gdacs:alertlevel>Green</gdacs:alertlevel>
+      <gdacs:alertscore>1</gdacs:alertscore>
+      <gdacs:episodealertlevel>Green</gdacs:episodealertlevel>
+      <gdacs:episodealertscore>1</gdacs:episodealertscore>
+      <gdacs:eventname>Central-Western USA-2026</gdacs:eventname>
+      <gdacs:eventid>1018546</gdacs:eventid>
+      <gdacs:episodeid>14</gdacs:episodeid>
+      <gdacs:calculationtype />
+      <gdacs:severity unit="km2" value="327307">Minor impact for agricultural drought in 327307 km2</gdacs:severity>
+      <gdacs:population unit="" value="0" />
+      <gdacs:vulnerability value="0" />
+      <gdacs:iso3>USA</gdacs:iso3>
+      <gdacs:country>United States</gdacs:country>
+      <gdacs:glide />
+      <gdacs:mapimage />
+      <gdacs:maplink />
+      <gdacs:gtsimage />
+      <gdacs:gtslink />
+      <gdacs:resources>
+        <gdacs:resource id="event_rss" version="0" source="EC-JRC" url="https://www.gdacs.org//datareport/resources/DR/1018546/rss_1018546.xml" type="rss">
+          <gdacs:title>Event in rss format</gdacs:title>
+          <gdacs:description>Joint Research Center of the European Commission</gdacs:description>
+          <gdacs:acknowledgements>Copyright notice: European Union (CC BY 4.0), reuse is allowed, provided appropriate credit to GDACS is given.</gdacs:acknowledgements>
+          <gdacs:accesslevel>Public</gdacs:accesslevel>
+        </gdacs:resource>
+      </gdacs:resources>
+    </item>
+  </channel>
+</rss><!--End 9/19/2026 11:05:51 PM-->

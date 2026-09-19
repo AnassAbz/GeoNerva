@@ -1,0 +1,41 @@
+{
+  "source": "nominatim",
+  "fixtures": [
+    {
+      "file": "error-429.html",
+      "url": null,
+      "captured_at": "2026-09-19T00:00:00.000Z",
+      "sha256": "d5f5fdeb76cf382d580278dc744a95b715b279798094b54df18915daf9476426",
+      "bytes": 155,
+      "http_status": 429,
+      "content_type": "text/html",
+      "notes": "SYNTHETIC: HTTP 429 body shape (nginx default). Not captured live — provoking throttling would violate the Nominatim usage policy. Expect: back off, serve cache, never retry-storm.",
+      "synthetic": true,
+      "derived_from": "n/a (generic nginx 429 page)"
+    },
+    {
+      "file": "search-empty.json",
+      "url": "https://nominatim.openstreetmap.org/search?q=zzqxv%20nonexistent%20placename%2012345&format=jsonv2&limit=5",
+      "captured_at": "2026-09-19T21:15:58.029Z",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "bytes": 2,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "Search with no match: HTTP 200 with an empty JSON array.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
+      "file": "search-marrakech.json",
+      "url": "https://nominatim.openstreetmap.org/search?q=Marrakech&format=jsonv2&limit=5&addressdetails=1",
+      "captured_at": "2026-09-19T21:15:56.128Z",
+      "sha256": "aeb8b2c49b4c8149130883635b46fbc1eefbb8055ccaa876f0b0c10b206b01ee",
+      "bytes": 2799,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "Free-text search, format=jsonv2, limit=5, addressdetails=1.",
+      "synthetic": false,
+      "derived_from": null
+    }
+  ]
+}

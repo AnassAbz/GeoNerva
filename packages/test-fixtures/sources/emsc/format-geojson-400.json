@@ -1,0 +1,1 @@
+{"detail":"Error 400: Request was not properly specified: unknown format requested\n\nRequest:\nhttp://ws2/query?format=geojson&limit=1\n\nRequest Submitted:\n2026-09-19T20:57:15.951\n\nService version: v 2.2\nfdsnws-event: v 1.2.1\n"}
