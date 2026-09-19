@@ -112,9 +112,8 @@ pipeline, config ◄── apps/worker
 
 Rules (enforced by `.dependency-cruiser.cjs` and `eslint.config.js`):
 1. Pure engines never import `db`, `http`, `sources`, Next.js, or any IO/process module, and do not use `fetch` or `process`.
-2. `apps/web` never reaches `sources` or `pipeline`, even transitively. Its only route to an external host is `geocoding` (ADR-028). Web server code does not call `fetch`.
-3. Only `db` contains SQL. Only `http`, `sources`, `pipeline` and `geocoding` import the outbound HTTP client.
-3. Only `db` contains SQL.
+2. `apps/web` never reaches `sources` or `pipeline`, even transitively. Its only route to an external host is `geocoding` (ADR-028). No code in `apps/web` calls `fetch` except a single same-origin API-client module.
+3. Only `db` contains SQL and imports a Postgres client. Only `http`, `sources`, `pipeline` and `geocoding` import the outbound HTTP client, and only `http` may import raw network modules (`node:https`, `undici`, …).
 4. Only `sources` knows provider field names. Everything after `normalize` is provider-agnostic, and UI code branches on capabilities and hazard types, never on source IDs.
 
 ## 4. Ingestion

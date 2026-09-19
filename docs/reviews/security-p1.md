@@ -339,3 +339,139 @@ I did not run `pnpm test:integration` or `pnpm test:e2e`. They are not needed fo
 - I could not check the action SHAs against upstream tags: `git ls-remote` failed in the review sandbox with an SSL error. Verify them before the first push, for example with `gh api repos/actions/checkout/git/ref/tags/v7.0.1`.
 - The repository has no remote, so CI has never run. The gitleaks default rules might flag test fixture strings (for example `postgresql://worker:s3cr3t-pass@…`); if so, add a narrow `.gitleaksignore` rather than disabling the scan. `gitleaks-action` needs a `GITLEAKS_LICENSE` secret if the repo is owned by a GitHub organization.
 - Next.js inlining behaviour was verified on 16.3.5 only.
+
+## Re-review (fix verification)
+
+- **Date:** 2026-09-19
+- **Scope:** `git diff d1cda7c..HEAD` (`b100100`, `2b47180`, `c0b2728`, `550ad67`; `08e2869` is this report).
+- **Method:** I re-ran all project checks. I then tried to bypass each new rule: 39 in-memory ESLint cases, run with `ESLint.lintText` against the real config; temporary depcruise probe files; two `next build` probes with canary environment values; the worker CLI with 5 URL shapes; and the 128-case config fuzz. Every probe was deleted and `.next` was rebuilt clean afterwards.
+
+### Status per finding
+
+| ID | Orig. sev | Status | Evidence / residual |
+|---|---|---|---|
+| F-1 | HIGH | **FIXED** (lint level) | Flagged: dot, bracket, optional chain (`process.env?.NEXT_PUBLIC_X`), alias (`const e = process.env; e['NEXT_PUBLIC_X']`), destructuring, template, helper-style prefix literals (`'NEXT_PUBLIC_' + name`), in every file type including `.jsx/.mjs/.cjs`, and in the worker. The `next.config` `env:` key is flagged. The allowlist regex (`(?!…)`) works in esquery (checked with a non-empty allowlist: exact names allowed, `…_SECRET` suffix and other names denied). Residuals are listed as N-3 below. |
+| F-2 | MEDIUM | **FIXED** | Details below. |
+| F-3 | MEDIUM | **PARTIALLY FIXED** (the remainder is LOW) | Flagged: JSX prop, `createElement` prop (including shorthand `{ dangerouslySetInnerHTML }`), `innerHTML`/`outerHTML` (dot and bracket), `insertAdjacentHTML`, `document.write`, `createContextualFragment`. `.jsx/.mjs/.cjs` in apps/web are now linted, and sinks inside `packages/*` are flagged too. Not flagged: see N-2. |
+| F-4 | MEDIUM | **PARTIALLY FIXED** (MEDIUM remains) | Details below. |
+| F-5 | MEDIUM | DEFERRED, recorded | IMPLEMENTATION_PLAN §3a, P9a before P9b. |
+| F-6 | MEDIUM | DEFERRED, recorded | §3a, P2. The `GEONERVA_ALLOW_REMOTE_TEST_DB=1` escape hatch is acceptable because it is explicit. |
+| F-7 | MEDIUM | DEFERRED, recorded | §3a, P2/P10. |
+| F-8 | MEDIUM | DEFERRED, recorded | §3a, P8. See the extra evidence below. |
+| F-9 | LOW | **FIXED** (minor LOW residual) | Every item named in F-9 is now caught: `node:fs` (including dynamic `import('node:fs')`), `fs/promises`, `tls`, `worker_threads`, `module` (so `createRequire`), `process` import, global `fetch`/`process` in pure engines, `pg-pool`, `postgres`, `@supabase` (with pnpm `+` encoding). Residual: see N-8. |
+| F-10 | LOW | **FIXED** | `not-to-unresolvable` fires on an unknown import. The `@/` alias is removed and `next-env.d.ts` is excluded. Acceptable residual: `import(variable)` is invisible to static analysis. |
+| F-11 | LOW | **FIXED** (heuristic) | Rejected: 32 spaces, `changeme`×4, 11 distinct characters×3, `Password…`. Accepted: `openssl rand -hex 32` and `-base64 32`. Sequential strings with 12 or more distinct characters still pass. That is acceptable for a heuristic. Errors still never echo values: the 128-case fuzz found 0 leaks. |
+| F-12 | LOW | DEFERRED, recorded | §3a, P3/P10. |
+| F-13 | LOW | **FIXED** | `persist-credentials: false` on all 4 checkouts. `.github/dependabot.yml` covers npm, github-actions and docker-compose. Residual: see N-7. |
+| F-14 | LOW | **FIXED** | The digest is pinned in compose and CI, and both are identical. I could not check the digest against the registry because there is no network. |
+| F-15, F-16, F-17 | LOW | DEFERRED, recorded | §3a. |
+
+**F-2 evidence:**
+- `postgresql://geonerva:Sup3r/Secret#pw@db.example.com:5432/geonerva` now fails with a value-free `ConfigError` (exit 1).
+- `mysql://…` and `postgresql:///db?host=/socket` are rejected. The socket form without a host is rejected by design.
+- A percent-encoded password and `?sslmode=require` pass, and only the hostname is printed.
+- `check-config` now builds the summary before printing "valid".
+- `main.ts` has a top-level catch through `describeUnexpectedError`, which prints only the name and code; its unit test covers this.
+- Residual: `main` is synchronous today. When P3 adds async commands, the top-level handler must `await` them and also register `unhandledRejection`/`uncaughtException` handlers. Otherwise the default Node printer, which dumps `input`, comes back.
+
+**F-4 evidence:**
+- The depcruise part works: `web → briefing(re-export) → pipeline` fires `web-is-read-only` through the `reachable` chain. `web → packages/http` and `worker → packages/http` fire `outbound-http-importers`. `briefing → geocoding` and `briefing → pipeline` fire `briefing-allowed-internal-deps`.
+- The lint part has real gaps: see N-1.
+
+**F-8 extra evidence:** A `'use client'` page reading `process.env[k]` with a computed server-only name (`PROBE_SERVER_ONLY`) rendered that value into the **prerendered HTML** (`.next/server/app/zzprobe.html`), because client components also run on the server during SSR. The §3a F-8 requirement should say explicitly that client components must never read `process.env`. For example, add an ESLint rule banning `process` in files that start with `'use client'`, using a `Program:has(ExpressionStatement[directive='use client']) MemberExpression[object.name='process']` selector.
+
+### Residual and new findings
+
+| Sev | ID | Location | Summary | Acceptable as a lint-level residual? |
+|---|---|---|---|---|
+| MEDIUM | N-1 (F-4 residual) | `eslint.config.js:117-130` | `fetch` is allowed in all web **server** code. | **No: real gap** |
+| MEDIUM | N-9 (new) | `.dependency-cruiser.cjs` | Raw network modules are not confined to `packages/http`. | **No: real gap** |
+| LOW | N-2 (F-3 residual) | `eslint.config.js:25-55` | Natural HTML-sink forms are still unflagged. | Partly |
+| LOW | N-3 (F-1 residual) | `eslint.config.js:131-144` | Other bundle-inlining channels are open, and there is no build-output backstop. | Partly |
+| LOW | N-4 | `docs/ARCHITECTURE.md` §3 rules, ADR-028 | Rules are numbered "3." twice, and two claims are stronger than what is enforced. | n/a (doc) |
+| LOW | N-5 (later: Runtime AI phase) | `.dependency-cruiser.cjs:158`, ARCHITECTURE §3 | Once `packages/ai` holds the Anthropic client, the web app can reach the model client transitively. | n/a |
+| LOW | N-6 (unverified) | `packages/config/src/env.test.ts:6`, `apps/worker/src/cli/check-config.test.ts:14` | gitleaks will probably flag the new hex test secret. | n/a |
+| LOW | N-7 | `ci.yml:46` | The CI service image digest is not maintained by Dependabot. | n/a |
+| LOW | N-8 (F-9 residual) | `.dependency-cruiser.cjs:9-36`, `eslint.config.js:147-156` | A few I/O modules are still missing from the pure-engine and DB lists. | Partly |
+
+**N-1 — `fetch` in web server code (MEDIUM).** The "browser code" exemption is by path: all of `apps/web/**` except `app/api/**` and `lib/server/**` (`.ts/.js/.mjs` only). App Router files are **server** code by default. The following are unflagged (verified):
+- a Server Component `app/**/page.jsx` calling `fetch('https://earthquake.usgs.gov/…')`;
+- `app/feed/route.mjs` (a route handler outside `app/api`);
+- `apps/web/proxy.mjs`;
+- server actions;
+- `lib/server/**/*.tsx`.
+
+This contradicts ARCHITECTURE §3 rule 2 ("Web server code does not call `fetch`") and ADR-028's intent. It reopens the unhardened provider/SSRF path from F-4.
+
+Fix: ban `fetch` in all of `apps/web` and exempt exactly one client module, for example `apps/web/lib/client/api.ts`. That module accepts only relative `/api/v1/...` paths and is guarded by a unit test. Also add `no-restricted-properties` for `globalThis.fetch`, `window.fetch` and `self.fetch` repo-wide, which today bypass `no-restricted-globals` (verified, including `globalThis['fetch']` and `const { fetch: f } = globalThis`).
+
+**N-9 — raw network modules are not confined to `packages/http` (MEDIUM, new).** `outbound-http-importers` guards only imports of `@geonerva/http`. `packages/sources` (verified), pipeline, geocoding, worker, briefing and web can all import `node:https`, `node:http`, `node:net`, `node:tls`, `node:http2`, `node:dgram` or `undici`, and so bypass the host allowlist, private-IP blocking, size caps and redirect policy (M1, M2). A normal import like `import https from 'node:https'` in an adapter is not obfuscation.
+
+Fix: add a depcruise rule. `from: { pathNot: '^packages/http/|^scripts/' }`, `to: { path: '^(node:)?(http|https|http2|net|tls|dgram)$' }` plus `npmModule(['undici', 'axios', 'got', 'node-fetch', 'ws'])`.
+
+**N-2 — remaining HTML sinks (LOW).** These are unflagged (verified):
+- JSX `<iframe srcDoc={…}>` and `el.srcdoc = …` (a full HTML document, not escaped by React);
+- `el.setHTMLUnsafe(h)`;
+- `Object.assign(el, { innerHTML: h })`;
+- `window.document.write(h)`;
+- `el.setAttribute('onclick' | 'srcdoc', h)`;
+- `eval` and `new Function` in untyped `.jsx/.mjs` files. `no-eval` and `no-new-func` are not enabled, and `@typescript-eslint/no-implied-eval` covers only type-checked files and not `eval` itself.
+
+Fix: add selectors for `Property[key.name=/^(innerHTML|outerHTML|srcdoc)$/]`, `JSXAttribute[name.name='srcDoc']`, `MemberExpression[property.name=/^(srcdoc|setHTMLUnsafe)$/]` and `CallExpression[callee.property.name='setAttribute'][arguments.0.value=/^(on|srcdoc$)/i]`. Relax the `document.write` selector so it no longer requires `callee.object.name='document'`. Enable `no-eval`, `no-new-func` and `no-script-url`.
+
+These are acceptable, deliberate-obfuscation residuals for a lint control: computed keys such as `{ [k]: … }` and `el['inner' + 'HTML']`, `Reflect.set(el, 'innerHTML', …)`, JSX prop spreading (`<div {...props}>`), and `eslint-disable` comments (code review is the backstop). React escaping plus the P9a CSP (F-5) remain the primary controls.
+
+**N-3 — other inlining channels, no backstop (LOW).** Unflagged (verified in lint; `compiler.define` confirmed in Next 16.3.5's config schema as "Replaces variables in your code during compile time"):
+- `next.config` `compiler.define`;
+- a webpack `DefinePlugin`;
+- `config.env = {...}` by assignment.
+
+Prefix-splitting (`'NEXT_' + 'PUBLIC_X'` held in a `const`, or `` `NEXT_${'PUBLIC'}_X` ``) is also not flagged, and I verified that **Turbopack constant-folds and inlines** those into `.next/static/chunks/*.js`. So "computed access is never inlined" is false. `Reflect.get(process.env, …)` was not inlined. Prefix-splitting takes deliberate obfuscation, so it is an acceptable lint residual.
+
+Fix:
+- ban `Property[key.name=/^(env|define|defineServer)$/]` and `AssignmentExpression > MemberExpression[property.name='env']` in `next.config.*`, and ban `DefinePlugin` there;
+- add a non-lint backstop: a CI step that builds with canary values for every server secret (`DATABASE_URL`, `RATE_LIMIT_SECRET`, …) and fails if any canary appears under `apps/web/.next/static` or in prerendered HTML. That catches every form, including the obfuscated ones.
+
+**N-4 — documentation drift (LOW).**
+- ARCHITECTURE §3 "Rules" now has two items numbered 3, and "Only `db` contains SQL" appears twice.
+- Rule 2 ("Web server code does not call `fetch`") and ADR-028 ("browser code in `apps/web`") describe a stricter control than the path-based config enforces (N-1).
+- Rule 3 ("Only … import the outbound HTTP client") is true, but it is silent on raw network modules (N-9).
+
+Fix the numbering, and make the claims match the rules once N-1 and N-9 land.
+
+**N-5 — web → ai → model client (LOW, later phase).** ARCHITECTURE §3 lets `apps/web` depend on `ai`, and `packages/ai` is where the Anthropic client will live. SECURITY.md §5 says "web never calls the model". Nothing will enforce that.
+
+Fix when the Runtime AI phase starts: add a `reachable: true` rule from `^apps/web/` to the Anthropic SDK npm module and to the client module in `packages/ai`, or split `ai` into a web-safe validator and a worker-only client.
+
+**N-6 — probable gitleaks false positive (LOW, unverified).** The test constant `SECRET = '9f86d081…0a08'` is SHA-256("test"), with 64 hex characters next to the keyword `SECRET`. It is the kind of string gitleaks' `generic-api-key` rule reports, so the first CI run of the `security` job is likely to fail.
+
+Fix: add `// gitleaks:allow` on those lines, or a `.gitleaksignore` with the fingerprints, rather than weakening the scan. gitleaks was not available locally to confirm.
+
+**N-7 — CI digest drift (LOW).** Dependabot's `docker-compose` ecosystem updates `infra/docker-compose.yml`, but no ecosystem updates `services.postgis.image` in `ci.yml`. The two digests will diverge, and CI will keep testing an old, unpatched image.
+
+Fix: add a unit or CI check that both digests are equal, or note in `dependabot.yml` that the CI digest is bumped manually together with compose. I also could not confirm that Dependabot supports the pnpm 12 lockfile; watch the first run.
+
+**N-8 — pure-engine I/O residuals (LOW).** Missing from the lists:
+- `node:sqlite` (a real database API in Node 24);
+- `node:vm`, `node:inspector` and `node:v8`;
+- DB packages `pg-native`, `pg-cursor`, `pg-query-stream` and `@neondatabase/serverless`. `npmModule(['pg'])` does not match `pg-*`; add `pg-[a-z-]+`.
+
+`globalThis.process` and `Reflect.get(globalThis, 'process')` in pure engines are not flagged. That is acceptable as obfuscation, but `no-restricted-properties` for `globalThis.process` is cheap to add.
+
+### Checks run (re-review)
+
+```text
+pnpm typecheck   → all packages Done
+pnpm lint        → exit 0
+pnpm depcruise   → ✔ no dependency violations found (32 modules, 14 dependencies cruised)
+pnpm test:unit   → Test Files 5 passed (5); Tests 43 passed (43)
+pnpm build       → ✓ (probe builds + final clean rebuild)
+```
+
+### Verdict
+
+- F-1, F-2, F-9, F-10, F-11, F-13 and F-14 are closed.
+- F-3 and F-4 are partially fixed.
+- **N-1 and N-9 (MEDIUM) are real gaps in the outbound-network boundary. Fix both before P3 (adapters) and P8 (web server code) start.**
+- The LOW residuals can be batched.
+- No CRITICAL or HIGH findings remain open.
