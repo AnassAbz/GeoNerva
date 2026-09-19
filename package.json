@@ -1,0 +1,43 @@
+{
+  "name": "geonerva",
+  "private": true,
+  "description": "Open-source, explainable, location-specific natural-hazard intelligence.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@12.4.2",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @geonerva/web dev",
+    "build": "pnpm --filter @geonerva/web build",
+    "typecheck": "tsc -p tsconfig.json && pnpm -r --parallel typecheck",
+    "lint": "eslint --max-warnings=0 .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "depcruise": "depcruise apps packages --config .dependency-cruiser.cjs",
+    "test": "pnpm test:unit",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "pnpm --filter @geonerva/web test:e2e",
+    "db:up": "docker compose -f infra/docker-compose.yml up -d --wait db",
+    "db:down": "docker compose -f infra/docker-compose.yml down",
+    "db:check": "node scripts/db-check.ts",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm depcruise && pnpm test:unit"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "24.13.5",
+    "@types/pg": "8.23.1",
+    "dependency-cruiser": "18.3.1",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.5",
+    "fast-check": "4.10.1",
+    "globals": "16.4.0",
+    "pg": "8.23.0",
+    "prettier": "3.9.8",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.1"
+  }
+}

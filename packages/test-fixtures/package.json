@@ -1,0 +1,14 @@
+{
+  "name": "@geonerva/test-fixtures",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Captured provider payloads, builders and scenario datasets for tests.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

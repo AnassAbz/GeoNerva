@@ -1,0 +1,14 @@
+{
+  "name": "@geonerva/changes",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pure snapshot diff producing ChangeSignals with importance and prominence.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

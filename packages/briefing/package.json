@@ -1,0 +1,14 @@
+{
+  "name": "@geonerva/briefing",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Application services: location snapshots as of a time, briefings, evidence manifests, deterministic copy.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@geonerva/relevance",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pure hazard-specific relevance models and data-confidence rules.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

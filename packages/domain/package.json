@@ -1,0 +1,14 @@
+{
+  "name": "@geonerva/domain",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Domain types, enums, Zod schemas, invariants, evidence-id codec and read-model contracts. No IO.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

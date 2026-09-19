@@ -1,0 +1,14 @@
+{
+  "name": "@geonerva/pipeline",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Ingestion orchestration: run leases, persistence, post-commit correlation, clustering and materialization.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

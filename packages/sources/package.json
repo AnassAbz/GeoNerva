@@ -1,0 +1,14 @@
+{
+  "name": "@geonerva/sources",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Provider adapters (fetch, parse, normalize). The only package that knows provider field names. No database access.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

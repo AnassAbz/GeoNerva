@@ -1,0 +1,13 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Supply-chain hardening (docs/SECURITY.md M8):
+# - only allow a package version once it has been public for at least one day;
+# - dependency install scripts are denied unless explicitly reviewed and allowed here.
+minimumReleaseAge: 1440
+
+allowBuilds:
+  # napi-postinstall only re-checks the prebuilt native binding, which pnpm already
+  # installs via optionalDependencies. Not needed.
+  unrs-resolver: false

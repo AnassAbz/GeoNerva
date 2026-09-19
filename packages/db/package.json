@@ -1,0 +1,14 @@
+{
+  "name": "@geonerva/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Migrations, typed query builder, repositories, as-of query layer and spatial SQL. The only package containing SQL.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

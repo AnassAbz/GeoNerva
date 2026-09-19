@@ -1,0 +1,29 @@
+node_modules/
+.pnpm-store/
+dist/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+.turbo/
+next-env.d.ts
+
+# environment
+.env
+.env.*
+!.env.example
+
+# test artefacts
+playwright-report/
+test-results/
+blob-report/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Claude Code local state
+.claude/
