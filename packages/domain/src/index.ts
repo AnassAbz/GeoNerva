@@ -84,6 +84,7 @@ export {
   latitudeSchema,
   longitudeSchema,
   radiusMetersSchema,
+  viewportLongitudeSchema,
 } from './value-objects/geography.ts';
 export type {
   BoundingBox,

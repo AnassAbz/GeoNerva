@@ -69,11 +69,21 @@ export function crossesAntimeridian(bbox: BoundingBox): boolean {
   return bbox.west > bbox.east;
 }
 
+/**
+ * Viewport edges may sit on +180: a box whose eastern edge is the antimeridian is meaningful,
+ * even though a stored point at +180 is always normalized to −180.
+ */
+export const viewportLongitudeSchema = z
+  .number()
+  .refine((value) => Number.isFinite(value) && value >= MIN_LONGITUDE && value <= MAX_LONGITUDE, {
+    message: 'must be a longitude within [-180, 180]',
+  });
+
 export const boundingBoxSchema = z
   .object({
-    west: longitudeSchema,
+    west: viewportLongitudeSchema,
     south: latitudeSchema,
-    east: longitudeSchema,
+    east: viewportLongitudeSchema,
     north: latitudeSchema,
   })
   .refine((bbox) => bbox.south <= bbox.north, {
