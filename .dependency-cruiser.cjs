@@ -1,0 +1,122 @@
+/**
+ * Architecture rules from docs/ARCHITECTURE.md §3 ("Dependency direction").
+ * CI fails on any violation. Changing these rules requires an ADR.
+ */
+
+const PURE_ENGINES = '^packages/(domain|geo|correlation|relevance|baselines|changes)/';
+
+/** @param {string} pkg @param {string[]} allowed */
+function onlyDependsOn(pkg, allowed) {
+  const allowedPattern = allowed.length === 0 ? '(?!)' : `^packages/(${allowed.join('|')})/`;
+  return {
+    name: `${pkg}-allowed-internal-deps`,
+    comment: `packages/${pkg} may only depend on: ${allowed.join(', ') || '(no internal packages)'}`,
+    severity: 'error',
+    from: { path: `^packages/${pkg}/` },
+    to: {
+      path: '^packages/',
+      pathNot: [`^packages/${pkg}/`, allowedPattern, '^packages/test-fixtures/'],
+    },
+  };
+}
+
+/** @type {import('dependency-cruiser').IConfiguration} */
+module.exports = {
+  forbidden: [
+    {
+      name: 'no-circular',
+      severity: 'error',
+      from: {},
+      to: { circular: true },
+    },
+    {
+      name: 'no-test-fixtures-in-production-code',
+      comment: 'Fixtures may only be imported from tests.',
+      severity: 'error',
+      from: { pathNot: '(\\.test\\.ts$|\\.int\\.test\\.ts$|/e2e/|^packages/test-fixtures/)' },
+      to: { path: '^packages/test-fixtures/' },
+    },
+    {
+      name: 'pure-engines-have-no-io',
+      comment: 'Pure engines must not import database, HTTP, filesystem or framework modules.',
+      severity: 'error',
+      from: { path: PURE_ENGINES, pathNot: '\\.(int\\.)?test\\.ts$' },
+      to: {
+        // pnpm resolves to node_modules/.pnpm/<name>@<version>/…; plain installs to node_modules/<name>/…
+        path: '(node_modules/(\\.pnpm/)?(pg|kysely|next|react|react-dom|pino|croner)[@/]|^(node:)?(fs|net|http|https|child_process|dns)$)',
+      },
+    },
+    {
+      name: 'sql-only-in-db',
+      comment: 'Only packages/db (and operational scripts) may talk to Postgres directly.',
+      severity: 'error',
+      from: { pathNot: '^(packages/db/|scripts/)' },
+      to: { path: 'node_modules/(\\.pnpm/)?(pg|kysely)[@/]' },
+    },
+    {
+      name: 'web-is-read-only',
+      comment: 'The web app never fetches providers or runs ingestion (ADR-001).',
+      severity: 'error',
+      from: { path: '^apps/web/' },
+      to: { path: '^packages/(sources|pipeline|http)/' },
+    },
+    {
+      name: 'worker-does-not-import-web',
+      severity: 'error',
+      from: { path: '^apps/worker/' },
+      to: { path: '^apps/web/' },
+    },
+    {
+      name: 'packages-do-not-import-apps',
+      severity: 'error',
+      from: { path: '^packages/' },
+      to: { path: '^apps/' },
+    },
+    onlyDependsOn('domain', []),
+    onlyDependsOn('geo', ['domain']),
+    onlyDependsOn('config', []),
+    onlyDependsOn('http', ['config']),
+    onlyDependsOn('correlation', ['domain', 'geo']),
+    onlyDependsOn('relevance', ['domain', 'geo']),
+    onlyDependsOn('baselines', ['domain', 'geo']),
+    onlyDependsOn('changes', ['domain', 'geo']),
+    onlyDependsOn('sources', ['domain', 'geo', 'http', 'config']),
+    onlyDependsOn('db', ['domain', 'config']),
+    onlyDependsOn('briefing', [
+      'domain',
+      'geo',
+      'db',
+      'relevance',
+      'baselines',
+      'changes',
+      'http',
+      'config',
+    ]),
+    onlyDependsOn('pipeline', [
+      'domain',
+      'geo',
+      'sources',
+      'db',
+      'correlation',
+      'briefing',
+      'http',
+      'config',
+    ]),
+    onlyDependsOn('ai', ['domain', 'briefing', 'config']),
+  ],
+  options: {
+    doNotFollow: { path: 'node_modules' },
+    // node_modules is handled by doNotFollow; excluding it would also drop npm dependency edges.
+    exclude: { path: '(^|/)(\\.next|dist|coverage)/' },
+    tsPreCompilationDeps: true,
+    tsConfig: { fileName: 'tsconfig.base.json' },
+    enhancedResolveOptions: {
+      exportsFields: ['exports'],
+      conditionNames: ['import', 'require', 'node', 'default', 'types'],
+      extensions: ['.ts', '.tsx', '.js', '.mjs', '.cjs', '.json'],
+    },
+    reporterOptions: {
+      text: { highlightFocused: true },
+    },
+  },
+};

@@ -1,0 +1,10 @@
+pnpm-lock.yaml
+node_modules
+.next
+coverage
+playwright-report
+test-results
+packages/test-fixtures/sources
+.claude
+docs/**/*.md
+CODE_OF_CONDUCT.md
