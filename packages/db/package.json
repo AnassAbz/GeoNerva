@@ -9,6 +9,19 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "migrate": "node src/migrator/cli.ts",
+    "db:test:create": "node src/testing/create-test-database.ts",
+    "codegen": "kysely-codegen --dialect postgres --default-schema geonerva --exclude-pattern \"public.*\" --out-file src/generated/database.ts && prettier --write src/generated/database.ts",
+    "estimate-storage": "node src/estimate-storage.ts"
+  },
+  "dependencies": {
+    "@geonerva/domain": "workspace:*",
+    "kysely": "0.29.6",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1",
+    "kysely-codegen": "0.20.0"
   }
 }
