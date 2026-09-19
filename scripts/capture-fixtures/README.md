@@ -31,6 +31,7 @@ Do not run two scripts that hit the same host at the same time.
 | `derive-drift.mjs` | offline: synthetic drift fixtures (renamed/type change/missing/extra/empty/truncated/HTML-200), GDACS alias-only and centroid-only floods, timeout descriptor, Nominatim 429 | 0 |
 | `build-eq-pairs.mjs [--review]` | labelled USGS↔EMSC correlation set → `sources/correlation/eq-pairs.json` (uses `eq-pairs-hand-checks.json`) | ≈ 400, cached in `$TMPDIR/geonerva-eq-pairs-cache` |
 | `demo-coverage.mjs [--skip-firms]` | demo-place coverage (Q5) → `sources/coverage/demo-coverage.json` | ≈ 200 (≈ 100 MB FIRMS download) |
+| `check-comcat-association.mjs [maxEvents]` | V9 evidence: measures the origin-time/epicentre spread inside ComCat-associated events (prints only, writes nothing) | ≈ 10 |
 | `verify-manifests.mjs [--prune]` | re-hashes every fixture, checks manifest fields, parseability (JSON/NDJSON/CSV/XML), secrets, total size ≤ 6 MB | 0 |
 
 Order for a full refresh:
