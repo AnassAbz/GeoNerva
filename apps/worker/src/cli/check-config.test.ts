@@ -11,7 +11,7 @@ describe('describeWorkerConfig', () => {
       FIRMS_MAP_KEY: 'firms-map-key-value',
       AI_MODE: 'anthropic',
       ANTHROPIC_API_KEY: 'sk-ant-should-not-appear',
-      WORKER_TRIGGER_SECRET: 't'.repeat(40),
+      WORKER_TRIGGER_SECRET: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
     });
     const text = describeWorkerConfig(config).join('\n');
 
@@ -20,7 +20,7 @@ describe('describeWorkerConfig', () => {
     expect(text).not.toContain('worker:');
     expect(text).not.toContain('firms-map-key-value');
     expect(text).not.toContain('sk-ant-should-not-appear');
-    expect(text).not.toContain('t'.repeat(40));
+    expect(text).not.toContain('9f86d081884c7d65');
     expect(text).toContain('AI_MODE             anthropic (claude-opus-5');
   });
 

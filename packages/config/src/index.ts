@@ -10,6 +10,7 @@ export {
   DEFAULT_AI_MODEL,
   DEFAULT_MAP_STYLE_URL,
   RETENTION_PROFILES,
+  isPostgresUrl,
   loadWebConfig,
   loadWorkerConfig,
 } from './env.ts';

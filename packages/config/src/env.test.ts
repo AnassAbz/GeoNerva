@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { ConfigError, DEFAULT_MAP_STYLE_URL, loadWebConfig, loadWorkerConfig } from './env.ts';
 
-const SECRET = 'x'.repeat(32);
+// Deterministic test value with the shape of `openssl rand -hex 32`.
+const SECRET = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
 
 const validWeb = {
   DATABASE_URL: 'postgresql://web:pw@localhost:5432/geonerva',
@@ -35,7 +36,27 @@ describe('loadWebConfig', () => {
 
   it('rejects a non-postgres database URL', () => {
     expect(issuesOf(() => loadWebConfig({ ...validWeb, DATABASE_URL: 'mysql://x' }))).toEqual([
-      'DATABASE_URL: must be a postgres:// or postgresql:// connection string',
+      'DATABASE_URL: must be a valid postgres:// or postgresql:// connection URL with a host',
+    ]);
+  });
+
+  it.each([
+    ['whitespace-only', ' '.repeat(40), 'must not contain whitespace'],
+    ['low-entropy', 'ab'.repeat(20), 'looks low-entropy (fewer than 12 distinct characters)'],
+    ['placeholder', 'changeme-1234567890-abcdefghijklmn', 'looks like a placeholder value'],
+  ])('rejects a %s rate-limit secret', (_label, value, message) => {
+    expect(issuesOf(() => loadWebConfig({ ...validWeb, RATE_LIMIT_SECRET: value }))).toEqual([
+      `RATE_LIMIT_SECRET: ${message}`,
+    ]);
+  });
+
+  it.each([
+    ['unparseable URL with a raw @ in the password', 'postgresql://user:p@ss@word@/geonerva'],
+    ['missing host', 'postgresql:///geonerva'],
+    ['scheme only', 'postgres://'],
+  ])('rejects a %s', (_label, value) => {
+    expect(issuesOf(() => loadWebConfig({ ...validWeb, DATABASE_URL: value }))).toEqual([
+      'DATABASE_URL: must be a valid postgres:// or postgresql:// connection URL with a host',
     ]);
   });
 

@@ -6,6 +6,7 @@
  * (`start`, `run --source`, `backfill`) are added in phase P3.
  */
 import { checkConfig } from './cli/check-config.ts';
+import { describeUnexpectedError } from './cli/unexpected-error.ts';
 
 const USAGE = `Usage: geonerva-worker <command>
 
@@ -29,4 +30,9 @@ function main(argv: readonly string[]): number {
   }
 }
 
-process.exitCode = main(process.argv.slice(2));
+try {
+  process.exitCode = main(process.argv.slice(2));
+} catch (error) {
+  console.error(describeUnexpectedError(error));
+  process.exitCode = 70; // EX_SOFTWARE
+}

@@ -18,13 +18,38 @@ function requiredString() {
   });
 }
 
-const postgresUrl = requiredString()
-  .trim()
-  .refine((value) => /^postgres(ql)?:\/\/.+/.test(value), {
-    message: 'must be a postgres:// or postgresql:// connection string',
-  });
+/** True when the value parses as a URL with a Postgres scheme and a host. */
+export function isPostgresUrl(value: string): boolean {
+  if (!URL.canParse(value)) return false;
+  const url = new URL(value);
+  return (url.protocol === 'postgres:' || url.protocol === 'postgresql:') && url.hostname !== '';
+}
 
-const secret = requiredString().min(32, { message: 'must be at least 32 characters' });
+const postgresUrl = requiredString().trim().refine(isPostgresUrl, {
+  message: 'must be a valid postgres:// or postgresql:// connection URL with a host',
+});
+
+const MIN_SECRET_LENGTH = 32;
+const MIN_SECRET_DISTINCT_CHARACTERS = 12;
+const PLACEHOLDER_SECRET = /change[-_]?me|placeholder|example|(secret){2,}|password/i;
+
+/**
+ * Rejects weak or placeholder secrets (e.g. 32 spaces, "changeme" repeated). The limits are
+ * deliberately simple: `openssl rand -hex 32` always passes.
+ */
+const secret = requiredString()
+  .min(MIN_SECRET_LENGTH, {
+    message: `must be at least ${MIN_SECRET_LENGTH} characters`,
+    abort: true,
+  })
+  .refine((value) => !/\s/.test(value), { message: 'must not contain whitespace', abort: true })
+  .refine((value) => new Set(value).size >= MIN_SECRET_DISTINCT_CHARACTERS, {
+    message: `looks low-entropy (fewer than ${MIN_SECRET_DISTINCT_CHARACTERS} distinct characters)`,
+    abort: true,
+  })
+  .refine((value) => !PLACEHOLDER_SECRET.test(value), {
+    message: 'looks like a placeholder value',
+  });
 
 const optionalNonEmpty = z
   .string()
