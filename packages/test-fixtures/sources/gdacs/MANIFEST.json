@@ -2,6 +2,91 @@
   "source": "gdacs",
   "fixtures": [
     {
+      "file": "drift-empty-collection.json",
+      "url": null,
+      "captured_at": "2026-09-19T00:00:00.000Z",
+      "sha256": "4dbb5006f13ebb86a0f327e85b6fd65699996fd909d0c042f270f7ef1f0f1ca0",
+      "bytes": 54,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "features array emptied. Expect: EMPTY_SUSPICIOUS (not \"no events\").",
+      "synthetic": true,
+      "derived_from": "geteventlist-search-eq.json"
+    },
+    {
+      "file": "drift-extra-field.json",
+      "url": null,
+      "captured_at": "2026-09-19T00:00:00.000Z",
+      "sha256": "8f8ce92d8ac91492eed206e31aec4ad1228992bd1511755307913cb3f29e4a70",
+      "bytes": 39126,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "First features element: unknown extra field added. Expect: tolerated (no reject).",
+      "synthetic": true,
+      "derived_from": "geteventlist-search-eq.json"
+    },
+    {
+      "file": "drift-html-200.html",
+      "url": null,
+      "captured_at": "2026-09-19T00:00:00.000Z",
+      "sha256": "4235f53f3820c1d060dda2f6898989bb5739a15e9cb4ea39a3be790698ab1855",
+      "bytes": 248,
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "notes": "HTML maintenance page served with HTTP 200. Expect: content-type/parse guard -> batch FAILED.",
+      "synthetic": true,
+      "derived_from": "geteventlist-search-eq.json"
+    },
+    {
+      "file": "drift-missing-required.json",
+      "url": null,
+      "captured_at": "2026-09-19T00:00:00.000Z",
+      "sha256": "02d860f6dd956d675b2df812c16d42f53606899fdef0a20bcb04cb0a27025d8f",
+      "bytes": 39070,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "First features element: removed \"fromdate\":\"2026-09-19T20:24:42\", (required field). Expect: record rejected.",
+      "synthetic": true,
+      "derived_from": "geteventlist-search-eq.json"
+    },
+    {
+      "file": "drift-renamed-field.json",
+      "url": null,
+      "captured_at": "2026-09-19T00:00:00.000Z",
+      "sha256": "d083ad1dcddfe15c785e3f77a519544cc0bb0b704860addb95f7cfcbbe8a49e4",
+      "bytes": 39103,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "First features element: \"eventid\" renamed to \"eventId\". Expect: record rejected/unknown field reported, batch verdict per contract.",
+      "synthetic": true,
+      "derived_from": "geteventlist-search-eq.json"
+    },
+    {
+      "file": "drift-truncated.json",
+      "url": null,
+      "captured_at": "2026-09-19T00:00:00.000Z",
+      "sha256": "932ae21af967b2d8ecf6d978798d2adc5a8f2acc1f4040afa93e3c77175eea43",
+      "bytes": 23461,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "Body truncated at 60% of its length. Expect: parse failure -> batch FAILED, nothing written.",
+      "synthetic": true,
+      "derived_from": "geteventlist-search-eq.json",
+      "expect_parse_error": true
+    },
+    {
+      "file": "drift-type-change.json",
+      "url": null,
+      "captured_at": "2026-09-19T00:00:00.000Z",
+      "sha256": "838b526a5fd72771896c75f22945137aa4d64daa348cbe5d24d4ca30d15d8f39",
+      "bytes": 39097,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "First features element: \"alertlevel\":\"Green\" -> \"alertlevel\":2 (type change). Expect: schema reject of that record.",
+      "synthetic": true,
+      "derived_from": "geteventlist-search-eq.json"
+    },
+    {
       "file": "getepisodedata-tc-ep20.json",
       "url": "https://www.gdacs.org/gdacsapi/api/events/getepisodedata?eventtype=TC&eventid=1001305&episodeid=20",
       "captured_at": "2026-09-19T21:11:27.918Z",
@@ -24,6 +109,18 @@
       "notes": "SAUDEL-26 episode 21. Episode 20 episodealertlevel Green, episode 21 Orange (Green->Orange change). NB: datemodified/severitydata are identical across episodes in getepisodedata — only episode fields vary.",
       "synthetic": false,
       "derived_from": null
+    },
+    {
+      "file": "geteventdata-eq-alias-only.json",
+      "url": null,
+      "captured_at": "2026-09-19T00:00:00.000Z",
+      "sha256": "d77b937adeca0ac7da883bf0a438b440f4b5438df1b6d01916817ff8480d13ef",
+      "bytes": 5741,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "SYNTHETIC: sourceid changed from the current USGS preferred id pr2026261000 to its alias us7000tiar (USGS ids \",pt26261050,us7000tiar,pr2026261000,\", see usgs/fdsn-eventid-by-alias.geojson). All 70+ live GDACS EQs checked on 2026-09-19 used the current id, so this case was not observable live. Expect: resolves via USGS alias set, not via current id.",
+      "synthetic": true,
+      "derived_from": "geteventdata-eq-prico.json"
     },
     {
       "file": "geteventdata-eq-neic.json",
@@ -158,6 +255,18 @@
       "derived_from": null
     },
     {
+      "file": "getgeometry-fl-centroid-only.json",
+      "url": null,
+      "captured_at": "2026-09-19T00:00:00.000Z",
+      "sha256": "bd98c4e052c070a06665cd8caf9c27dcb6b76d6807ad4c1b66d50250e2edf1c9",
+      "bytes": 1392,
+      "http_status": 200,
+      "content_type": "application/json; charset=utf-8",
+      "notes": "SYNTHETIC: Poly_Affected and Poly_Global features removed, only Point_Centroid kept (no live centroid-only flood found on 2026-09-19 among 15 scanned). Expect: flood handled as centroid-only (no area claim).",
+      "synthetic": true,
+      "derived_from": "getgeometry-fl-affected-global.json"
+    },
+    {
       "file": "getgeometry-tc.json",
       "url": "https://www.gdacs.org/gdacsapi/api/polygons/getgeometry?eventtype=TC&eventid=1001323&episodeid=2",
       "captured_at": "2026-09-19T21:11:05.650Z",
@@ -216,6 +325,18 @@
       "notes": "API description, for schema pinning.",
       "synthetic": false,
       "derived_from": null
+    },
+    {
+      "file": "timeout.json",
+      "url": null,
+      "captured_at": "2026-09-19T00:00:00.000Z",
+      "sha256": "f63db16408b1660bd19a44b4182079fc3f978ce65a35e806534336d6ede04c12",
+      "bytes": 352,
+      "http_status": null,
+      "content_type": "application/json",
+      "notes": "SYNTHETIC scenario descriptor, not a provider body.",
+      "synthetic": true,
+      "derived_from": "n/a (scenario descriptor)"
     }
   ]
 }

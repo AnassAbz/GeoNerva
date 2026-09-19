@@ -1,0 +1,5 @@
+{
+  "scenario": "timeout",
+  "description": "No response body within the client timeout. Contract tests inject this via the HTTP client mock; the adapter must record the run as FAILED (timeout) and must not treat it as \"no events\".",
+  "observed": "one GDACS timeout observed on 2026-09-19 during architecture-phase checks (DATA_SOURCES.md §2.1)"
+}
