@@ -1,0 +1,18 @@
+# gitleaks configuration. Extends the bundled default rules and allowlists a small number of
+# deterministic, non-secret test fixtures.
+#
+# A path/regex allowlist is used rather than .gitleaksignore fingerprints, because fingerprints
+# pin a commit hash and break whenever history is rewritten (docs/reviews/security-p1.md R-6).
+
+title = "GeoNerva"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Configuration-validation and log-redaction test fixtures. These are credentials for nothing: they exist so tests can assert that invalid values are rejected and that secrets are never echoed."
+paths = [
+  '''packages/config/src/env\.test\.ts''',
+  '''apps/worker/src/cli/check-config\.test\.ts''',
+]
+regexes = ['''9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08''']
