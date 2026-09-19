@@ -1,0 +1,3 @@
+# Fixtures are byte-exact provider payloads verified by sha256 (MANIFEST.json).
+# Never let git normalise line endings.
+* -text
