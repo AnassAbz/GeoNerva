@@ -85,6 +85,8 @@ geonerva/
 │   ├── pipeline/               Ingestion orchestration: run lease, persist, correlate, cluster, materialize.
 │   ├── ai/                     (P1) Runtime AI: packet builder, prompts, Anthropic client, validator, fallback.
 │   ├── http/                   Hardened outbound HTTP client: host allowlist, timeouts, size caps, retries, UA.
+│   ├── geocoding/              Place search behind a provider interface (local suggestions, Nominatim, reverse).
+│   │                           The web app's only route to an external host (ADR-028).
 │   ├── config/                 Env parsing & validation (Zod), feature flags, retention profiles.
 │   └── test-fixtures/          Captured provider payloads + builders + scenario datasets.
 ├── docs/
@@ -97,19 +99,21 @@ geonerva/
 
 ```text
 domain ◄── geo
-domain, geo ◄── sources ◄── http, config
-domain ◄── db ◄── config
+domain, geo, http, config ◄── sources
+domain, geo, http, config ◄── geocoding
+domain, config ◄── db
 domain, geo ◄── correlation | relevance | baselines | changes      (pure engines; no IO)
-db, relevance, baselines, changes, geo ◄── briefing
-sources, db, correlation, briefing, http ◄── pipeline
-briefing, domain ◄── ai
-briefing, ai, config ◄── apps/web
+domain, geo, db, relevance, baselines, changes, config ◄── briefing
+domain, geo, sources, db, correlation, briefing, http, config ◄── pipeline
+domain, briefing, config ◄── ai
+briefing, geocoding, ai, config ◄── apps/web
 pipeline, config ◄── apps/worker
 ```
 
-Rules:
-1. Pure engines never import `db`, `http`, `sources` or Next.js.
-2. `apps/web` never imports `sources` or `pipeline`, so the web process cannot fetch providers.
+Rules (enforced by `.dependency-cruiser.cjs` and `eslint.config.js`):
+1. Pure engines never import `db`, `http`, `sources`, Next.js, or any IO/process module, and do not use `fetch` or `process`.
+2. `apps/web` never reaches `sources` or `pipeline`, even transitively. Its only route to an external host is `geocoding` (ADR-028). Web server code does not call `fetch`.
+3. Only `db` contains SQL. Only `http`, `sources`, `pipeline` and `geocoding` import the outbound HTTP client.
 3. Only `db` contains SQL.
 4. Only `sources` knows provider field names. Everything after `normalize` is provider-agnostic, and UI code branches on capabilities and hazard types, never on source IDs.
 

@@ -1,0 +1,14 @@
+{
+  "name": "@geonerva/geocoding",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Place search behind a provider interface: local suggestions, Nominatim on submit, reverse geocoding. The web app's only outbound call.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

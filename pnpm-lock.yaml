@@ -265,6 +265,8 @@ importers:
 
   packages/geo: {}
 
+  packages/geocoding: {}
+
   packages/http: {}
 
   packages/pipeline: {}

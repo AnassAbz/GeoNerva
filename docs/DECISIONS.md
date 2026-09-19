@@ -33,6 +33,7 @@ Index:
 | 025 | Runtime/toolchain versions: Node 24 LTS, TypeScript 6.0, pnpm 12 | Accepted |
 | 026 | Internal packages ship TypeScript source; no package build step | Accepted |
 | 027 | Lint/tooling version constraints and supply-chain defaults | Accepted |
+| 028 | Geocoding package is the web app's only outbound route | Accepted |
 
 > **2026-09-19, product-owner review:** Architecture approved (gate G0 passed). ADR-012 model/budget is resolved: `AI_MODE=disabled` in production for v1, and no paid AI at launch. ADR-018 is resolved: `lean` profile on free infrastructure. Licence is Apache-2.0. The deployment is non-commercial.
 
@@ -308,3 +309,21 @@ Turborepo is not adopted until build times justify it.
   - Third-party GitHub Actions are pinned by commit SHA.
   - Markdown documentation is excluded from Prettier (wide hand-aligned tables; the docs are prose).
 - **Revisit:** Move to ESLint 10 when Next's plugin set supports it.
+
+## ADR-028 — Geocoding is its own package and the web app's only outbound route
+- **Date:** 2026-09-19 (P1 security review, finding F-4)
+- **Context:**
+  - ARCHITECTURE §13 gives the web process exactly one external dependency: Nominatim for place search.
+  - §3 did not say which package owns it. The P1 dependency rules allowed `briefing → http`, which let the web app reach the outbound HTTP client transitively.
+  - Global `fetch` was unrestricted.
+- **Alternatives:**
+  - (a) Geocoder inside `briefing`, which requires `briefing → http` and makes every briefing service a potential network caller.
+  - (b) Geocoder inside `sources`, which puts a provider-adapter package in the web process and contradicts ADR-001.
+  - (c) A dedicated `@geonerva/geocoding` package.
+- **Chosen:** (c).
+  - `geocoding` depends on `domain, geo, http, config`.
+  - `briefing` no longer depends on `http`.
+  - Only `http`, `sources`, `pipeline` and `geocoding` may import `@geonerva/http` (`outbound-http-importers`).
+  - `apps/web` must not reach `sources`/`pipeline` even transitively (`reachable` rule).
+  - ESLint bans `fetch`/`XMLHttpRequest`/`WebSocket` outside `packages/http`, with two exceptions: browser code in `apps/web`, which calls its own same-origin API, and operational scripts.
+- **Trade-offs:** One more package. In exchange, the SSRF surface of the web process is a single, reviewable module.

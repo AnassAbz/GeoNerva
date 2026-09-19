@@ -9,10 +9,11 @@
     "types": ["node", "react", "react-dom"],
     "allowJs": false,
     "incremental": true,
-    "plugins": [{ "name": "next" }],
-    "paths": {
-      "@/*": ["./*"]
-    }
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
   "include": [
     "next-env.d.ts",
