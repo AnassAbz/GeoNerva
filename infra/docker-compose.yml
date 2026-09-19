@@ -1,0 +1,31 @@
+# Local development infrastructure.
+#   pnpm db:up     start PostGIS and wait until it is healthy
+#   pnpm db:check  verify connectivity and required extensions
+#   pnpm db:down   stop it (data persists in the named volume)
+#
+# Credentials here are for local development only and are not secrets.
+# The PostGIS major version tracks the production host (docs/DATA_SOURCES.md V8).
+
+name: geonerva
+
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_DB: geonerva
+      POSTGRES_USER: geonerva
+      POSTGRES_PASSWORD: geonerva
+    ports:
+      - '127.0.0.1:54320:5432'
+    volumes:
+      - geonerva-db:/var/lib/postgresql/data
+    # TCP check on purpose: the image's first-boot init server only listens on the unix socket,
+    # so a socket-based check reports "healthy" before the real server accepts connections.
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U geonerva -d geonerva']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  geonerva-db:
