@@ -343,6 +343,9 @@ These are **exit criteria** of the named phases. A phase gate cannot pass while 
 | F-15 | Enable GitHub private vulnerability reporting, and publish a fallback security contact and a Code of Conduct contact | Before the repository is made public (P10) |
 | F-2b | The worker installs `unhandledRejection` and `uncaughtException` handlers using the same redaction as `describeUnexpectedError`, once asynchronous commands exist | P3 |
 | N-5 | `apps/web` must not reach the Anthropic client even transitively: add a `reachable` dependency rule when `packages/ai` gains it | P1.x (Runtime AI) |
+| S-9 | Every exported fact reader takes `as_of`, or is provably not a fact reader. Add the dependency rule docs/SECURITY.md C4 claims ("the as-of module is the only fact reader") and extend the property test to assert coverage of the exported read surface, not a hand-written list. The as-of-free readers in `spatial/queries.ts` are unused today; this must land **before** any web or briefing code can reach for one | P8 (rule before the first endpoint) |
+| S-15b | `preparedStatements: false` is now applied to the Kysely dialect for the web pool. Verify against the real Supabase transaction pooler that no prepared-statement error survives | P10 |
+| C1-forward | Under RLS deny-all a misconfigured role reads **zero rows with no error**, so `healthAsOf` would return an empty list rather than "unavailable". The briefing must treat "no sources known" as UNAVAILABLE, never as "nothing is happening" (docs/SECURITY.md C1) | P8 |
 | F-17 | Upgrade to a supported ESLint major once Next's plugins allow it; make `pnpm audit` blocking for high/critical | P11 |
 
 ## 4. Product-owner decisions (resolved 2026-09-19)
