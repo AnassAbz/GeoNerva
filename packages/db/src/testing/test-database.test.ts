@@ -32,8 +32,22 @@ describe('F-6: integration tests may only reach a test database', () => {
     expect(resolveTestDatabaseUrl({ [TEST_DATABASE_URL_VAR]: LOCAL_TEST })).toBe(LOCAL_TEST);
   });
 
-  it('accepts any local database, since a loopback host is the developer’s own machine', () => {
-    const local = 'postgresql://geonerva:geonerva@localhost:54320/geonerva_scratch';
+  it('refuses a local database that is not named *_test (S-3)', () => {
+    // Loopback is not evidence that a database is disposable: the development database is on
+    // loopback, and so is any production database someone has tunnelled. These tests migrate and
+    // TRUNCATE whatever they are given, so the name has to say that losing it is acceptable.
+    for (const local of [
+      'postgresql://geonerva:geonerva@localhost:54320/geonerva',
+      'postgresql://geonerva:geonerva@127.0.0.1:54320/geonerva_scratch',
+    ]) {
+      expect(() => resolveTestDatabaseUrl({ [TEST_DATABASE_URL_VAR]: local })).toThrow(
+        UnsafeTestDatabaseError,
+      );
+    }
+  });
+
+  it('accepts a local database whose name ends in _test', () => {
+    const local = 'postgresql://geonerva:geonerva@localhost:54320/scratch_test';
     expect(resolveTestDatabaseUrl({ [TEST_DATABASE_URL_VAR]: local })).toBe(local);
   });
 

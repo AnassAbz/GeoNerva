@@ -67,17 +67,18 @@ export function resolveTestDatabaseUrl(env: TestEnv): string {
   const isLocal = isLoopbackHost(host);
   const looksLikeTestDatabase = database.endsWith('_test');
 
-  if (!isLocal && !looksLikeTestDatabase && !allowRemote) {
+  // Both conditions, not either (S-3). "Loopback" is not evidence that a database is disposable:
+  // the development database is on loopback, and so is any production database someone has
+  // port-forwarded or tunnelled. These tests migrate and TRUNCATE whatever they are pointed at,
+  // so the name has to say out loud that losing it is acceptable.
+  if (!allowRemote && !(isLocal && looksLikeTestDatabase)) {
+    const reason = isLocal
+      ? `the database name "${database}" does not end in "_test"`
+      : `the host ${host} is not loopback`;
     throw new UnsafeTestDatabaseError(
-      `refusing to run writing tests against ${host}/${database}: the host is not loopback and ` +
-        `the database name does not end in "_test". Set ${ALLOW_REMOTE_VAR}=1 to override.`,
-    );
-  }
-
-  if (!isLocal && !allowRemote) {
-    throw new UnsafeTestDatabaseError(
-      `refusing to run writing tests against the remote host ${host}. ` +
-        `Set ${ALLOW_REMOTE_VAR}=1 to override.`,
+      `refusing to run writing tests against ${host}/${database}: ${reason}. ` +
+        `Point ${TEST_DATABASE_URL_VAR} at a disposable database, or set ${ALLOW_REMOTE_VAR}=1 ` +
+        `to override deliberately.`,
     );
   }
 
@@ -147,7 +148,16 @@ async function listTables(client: pg.ClientBase): Promise<string[]> {
 export async function truncateAll(client: pg.ClientBase): Promise<void> {
   const tables = (await listTables(client)).filter((table) => !SEEDED_TABLES.has(table));
   if (tables.length === 0) return;
-  const list = tables.map((table) => `geonerva."${table}"`).join(', ');
+  // Identifiers cannot be bound as parameters, so they are quoted by the server rather than by
+  // hand: hand-quoting does not double an embedded `"` and would break on an unusual table name
+  // (S-12). The names come from the catalog, not from a caller, but the safe form costs nothing.
+  const quoted = await client.query<{ list: string }>(
+    `SELECT string_agg(format('geonerva.%I', t), ', ' ORDER BY t) AS list
+     FROM unnest($1::text[]) AS t`,
+    [tables],
+  );
+  const list = quoted.rows[0]?.list;
+  if (list === undefined || list === '') return;
   await client.query(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
 }
 
