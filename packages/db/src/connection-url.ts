@@ -20,7 +20,9 @@
  */
 
 /** Hosts that are on the machine itself, where TLS is not required. */
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0']);
+// `0.0.0.0` is deliberately absent: it means "all interfaces", not "this machine", and a URL
+// pointing at it is not evidence that the target is local (S-18).
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
 /** `sslmode` values that actually encrypt the connection. */
 const TLS_SSL_MODES = new Set(['require', 'verify-ca', 'verify-full']);
@@ -111,6 +113,20 @@ export function assertConnectionUrlPolicy(
     throw new DatabaseUrlError(variableName, `has an unknown sslmode ("${mode}")`);
   }
 
+  // node-postgres lets the connection string decide TLS, and these parameters make it decide
+  // *weakly*: `uselibpqcompat=true&sslmode=require` yields `rejectUnauthorized: false` today, and
+  // from pg v9 plain `sslmode=require` will too. GeoNerva strips TLS parameters before handing the
+  // URL to the driver (see `driverConnectionString`), so carrying them is always a mistake worth
+  // naming rather than silently ignoring (S-2).
+  for (const rejected of ['uselibpqcompat', 'ssl']) {
+    if (parsed.searchParams.has(rejected)) {
+      throw new DatabaseUrlError(
+        variableName,
+        `must not set "${rejected}": GeoNerva configures TLS on the driver, not in the URL`,
+      );
+    }
+  }
+
   if (!isProduction) return;
   if (isLoopbackHost(parsed.hostname)) return;
 
@@ -157,4 +173,29 @@ export function sslConfigFor(
     throw new DatabaseUrlError(variableName, 'must require TLS in production');
   }
   return false;
+}
+
+/** Query parameters that decide TLS. GeoNerva owns this decision, so they never reach the driver. */
+const TLS_QUERY_PARAMETERS = [
+  'sslmode',
+  'ssl',
+  'uselibpqcompat',
+  'sslrootcert',
+  'sslcert',
+  'sslkey',
+];
+
+/**
+ * The connection string to hand to node-postgres, with every TLS parameter removed (S-2).
+ *
+ * node-postgres merges the parsed connection string **over** the explicit config object, so a URL
+ * carrying `sslmode` silently discards the `ssl` object — including a pinned CA — and substitutes
+ * the driver's own interpretation. Removing the parameters makes `sslConfigFor` authoritative.
+ * The policy in `assertConnectionUrlPolicy` still reads the original URL, so `sslmode` is
+ * required in production; it just does not get to configure the socket.
+ */
+export function driverConnectionString(url: string, variableName = 'DATABASE_URL'): string {
+  const parsed = parse(url, variableName);
+  for (const parameter of TLS_QUERY_PARAMETERS) parsed.searchParams.delete(parameter);
+  return parsed.toString();
 }

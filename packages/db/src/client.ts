@@ -21,6 +21,7 @@ import pg from 'pg';
 
 import {
   assertConnectionUrlPolicy,
+  driverConnectionString,
   describeConnectionTarget,
   sslConfigFor,
 } from './connection-url.ts';
@@ -65,7 +66,7 @@ export function createPool(options: CreatePoolOptions): pg.Pool {
 
   const statementTimeoutMs = options.statementTimeoutMs ?? 30_000;
   const pool = new pg.Pool({
-    connectionString: options.connectionString,
+    connectionString: driverConnectionString(options.connectionString, variableName),
     ssl: sslConfigFor(options.connectionString, {
       nodeEnv: options.nodeEnv,
       variableName,
@@ -78,7 +79,9 @@ export function createPool(options: CreatePoolOptions): pg.Pool {
     statement_timeout: statementTimeoutMs,
     // Startup parameter, which survives a transaction pooler; the per-connection SET below is the
     // belt to its braces for poolers that strip `options`.
-    options: `-c search_path=${SEARCH_PATH}`,
+    // No space after the comma: the server splits `options` on whitespace, so `public, extensions`
+    // arrives as search_path=`public,` and every connection fails with a FATAL (S-1).
+    options: `-c search_path=${SEARCH_PATH.replaceAll(' ', '')}`,
   });
 
   pool.on('connect', (client) => {
@@ -92,9 +95,20 @@ export function createPool(options: CreatePoolOptions): pg.Pool {
   return pool;
 }
 
-/** Builds the typed Kysely instance. Every query goes through this. */
-export function createDb(pool: pg.Pool): Kysely<DB> {
-  return new Kysely<DB>({ dialect: new PostgresDialect({ pool }) });
+/**
+ * Builds the typed Kysely instance. Every query goes through this.
+ *
+ * `preparedStatements: false` disables Kysely's prepared-statement cache, which is required
+ * behind a transaction pooler (ADR-008, S-15).
+ */
+export function createDb(
+  pool: pg.Pool,
+  options: { preparedStatements?: boolean } = {},
+): Kysely<DB> {
+  return new Kysely<DB>({
+    dialect: new PostgresDialect({ pool }),
+    ...(options.preparedStatements === false ? { preparedStatements: false } : {}),
+  });
 }
 
 export interface DatabaseHandle {
@@ -108,7 +122,7 @@ export interface DatabaseHandle {
 /** Convenience: pool + Kysely + a safe description + a single close. */
 export function createDatabase(options: CreatePoolOptions): DatabaseHandle {
   const pool = createPool(options);
-  const db = createDb(pool);
+  const db = createDb(pool, { preparedStatements: options.preparedStatements ?? true });
   return {
     db,
     pool,
