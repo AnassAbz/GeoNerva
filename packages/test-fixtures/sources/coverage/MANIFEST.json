@@ -1,0 +1,17 @@
+{
+  "source": "coverage",
+  "fixtures": [
+    {
+      "file": "demo-coverage.json",
+      "url": null,
+      "captured_at": "2026-09-19T21:56:32.821Z",
+      "sha256": "262e55fd6087d7655458914d34f6678c51a140b8353249aa174ba4a2d67c39a7",
+      "bytes": 10415,
+      "http_status": null,
+      "content_type": null,
+      "notes": "Demo-place coverage summary (Q5), computed by demo-coverage.mjs; 280 requests.",
+      "synthetic": true,
+      "derived_from": "USGS FDSN count, EMSC FDSN count, GDACS SEARCH (by country), FIRMS keyless Global 7d CSVs — live 2026-09-19"
+    }
+  ]
+}

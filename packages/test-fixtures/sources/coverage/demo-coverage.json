@@ -1,0 +1,443 @@
+{
+  "generated_at": "2026-09-19T21:31:35.714Z",
+  "period": [
+    "2021-09-19",
+    "2026-09-19"
+  ],
+  "places": [
+    {
+      "name": "Marrakech",
+      "lat": 31.63416,
+      "lon": -7.99994,
+      "gdacsCountries": [
+        "Morocco"
+      ],
+      "usgs": {
+        "r150_m2.5": 9,
+        "r150_m4.5": 4,
+        "r300_m2.5": 13,
+        "r300_m4.5": 5
+      },
+      "emsc": {
+        "r150_m2.5": 187,
+        "r150_m4.5": 6,
+        "r300_m2.5": 218,
+        "r300_m4.5": 8
+      },
+      "gdacs": {
+        "r300_total": 15,
+        "by_type": {
+          "DR": 1,
+          "FL": 8,
+          "EQ": 6
+        },
+        "by_level": {
+          "Green": 14,
+          "Red": 1
+        },
+        "truncated_windows": [],
+        "examples": [
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in Morocco",
+            "from": "2026-08-03T20:14:45",
+            "km": 279
+          },
+          {
+            "type": "FL",
+            "level": "Green",
+            "name": "Flood in Morocco",
+            "from": "2025-12-13T01:00:00",
+            "km": 290
+          },
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in Morocco",
+            "from": "2025-09-03T03:25:59",
+            "km": 81
+          },
+          {
+            "type": "FL",
+            "level": "Green",
+            "name": "Flood in Morocco",
+            "from": "2025-03-05T01:00:00",
+            "km": 157
+          },
+          {
+            "type": "FL",
+            "level": "Green",
+            "name": "Flood in Morocco",
+            "from": "2024-09-20T01:00:00",
+            "km": 210
+          }
+        ]
+      },
+      "firms_7d_r150": {
+        "noaa20": 9,
+        "noaa21": 4,
+        "total": 13
+      }
+    },
+    {
+      "name": "Vancouver",
+      "lat": 49.24966,
+      "lon": -123.11934,
+      "gdacsCountries": [
+        "Canada",
+        "United States"
+      ],
+      "usgs": {
+        "r150_m2.5": 57,
+        "r150_m4.5": 2,
+        "r300_m2.5": 171,
+        "r300_m4.5": 4
+      },
+      "emsc": {
+        "r150_m2.5": 71,
+        "r150_m4.5": 2,
+        "r300_m2.5": 276,
+        "r300_m4.5": 4
+      },
+      "gdacs": {
+        "r300_total": 56,
+        "by_type": {
+          "FL": 11,
+          "WF": 41,
+          "EQ": 4
+        },
+        "by_level": {
+          "Green": 56
+        },
+        "truncated_windows": [
+          "Canada 2023-07-05..2023-07-06",
+          "Canada 2023-07-07..2023-07-07",
+          "Canada 2023-07-08..2023-07-09",
+          "Canada 2023-07-10..2023-07-10",
+          "Canada 2023-07-11..2023-07-12",
+          "Canada 2023-07-13..2023-07-14",
+          "Canada 2023-07-15..2023-07-15",
+          "Canada 2023-07-16..2023-07-17"
+        ],
+        "examples": [
+          {
+            "type": "WF",
+            "level": "Green",
+            "name": "Forest fires in United States",
+            "from": "2026-08-16T00:00:00",
+            "km": 241
+          },
+          {
+            "type": "WF",
+            "level": "Green",
+            "name": "Forest fires in Canada",
+            "from": "2026-08-08T00:00:00",
+            "km": 242
+          },
+          {
+            "type": "WF",
+            "level": "Green",
+            "name": "Forest fires in Canada",
+            "from": "2026-07-29T00:00:00",
+            "km": 169
+          },
+          {
+            "type": "WF",
+            "level": "Green",
+            "name": "Forest fires in Canada",
+            "from": "2026-07-27T00:00:00",
+            "km": 252
+          },
+          {
+            "type": "WF",
+            "level": "Green",
+            "name": "Forest fires in United States",
+            "from": "2026-07-27T00:00:00",
+            "km": 256
+          }
+        ]
+      },
+      "firms_7d_r150": {
+        "noaa20": 44,
+        "noaa21": 33,
+        "total": 77
+      }
+    },
+    {
+      "name": "Los Angeles",
+      "lat": 34.05223,
+      "lon": -118.24368,
+      "gdacsCountries": [
+        "United States",
+        "Mexico"
+      ],
+      "usgs": {
+        "r150_m2.5": 723,
+        "r150_m4.5": 5,
+        "r300_m2.5": 1832,
+        "r300_m4.5": 15
+      },
+      "emsc": {
+        "r150_m2.5": 741,
+        "r150_m4.5": 5,
+        "r300_m2.5": 1885,
+        "r300_m4.5": 16
+      },
+      "gdacs": {
+        "r300_total": 46,
+        "by_type": {
+          "FL": 13,
+          "WF": 16,
+          "EQ": 17
+        },
+        "by_level": {
+          "Green": 43,
+          "Orange": 3
+        },
+        "truncated_windows": [],
+        "examples": [
+          {
+            "type": "WF",
+            "level": "Green",
+            "name": "Forest fires in United States",
+            "from": "2026-05-18T00:00:00",
+            "km": 50
+          },
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in United States",
+            "from": "2026-05-10T07:10:21",
+            "km": 276
+          },
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in United States",
+            "from": "2026-01-20T01:56:14",
+            "km": 192
+          },
+          {
+            "type": "WF",
+            "level": "Green",
+            "name": "Forest fires in United States",
+            "from": "2025-09-02T00:00:00",
+            "km": 287
+          },
+          {
+            "type": "WF",
+            "level": "Green",
+            "name": "Forest fires in United States",
+            "from": "2025-08-02T00:00:00",
+            "km": 211
+          }
+        ]
+      },
+      "firms_7d_r150": {
+        "noaa20": 96,
+        "noaa21": 97,
+        "total": 193
+      }
+    },
+    {
+      "name": "Tokyo",
+      "lat": 35.6895,
+      "lon": 139.69171,
+      "gdacsCountries": [
+        "Japan"
+      ],
+      "usgs": {
+        "r150_m2.5": 414,
+        "r150_m4.5": 172,
+        "r300_m2.5": 1076,
+        "r300_m4.5": 471
+      },
+      "emsc": {
+        "r150_m2.5": 669,
+        "r150_m4.5": 189,
+        "r300_m2.5": 1850,
+        "r300_m4.5": 484
+      },
+      "gdacs": {
+        "r300_total": 473,
+        "by_type": {
+          "EQ": 454,
+          "FL": 11,
+          "TC": 8
+        },
+        "by_level": {
+          "Green": 470,
+          "Orange": 3
+        },
+        "truncated_windows": [],
+        "examples": [
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in Japan",
+            "from": "2026-09-16T15:07:38",
+            "km": 50
+          },
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in Japan",
+            "from": "2026-09-14T10:59:54",
+            "km": 269
+          },
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in Off East Coast Of Honshu, Japan",
+            "from": "2026-09-14T07:33:04",
+            "km": 282
+          },
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in Southeast Of Honshu, Japan",
+            "from": "2026-09-06T12:17:14",
+            "km": 298
+          },
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in Japan",
+            "from": "2026-08-29T15:17:06",
+            "km": 118
+          }
+        ]
+      },
+      "firms_7d_r150": {
+        "noaa20": 19,
+        "noaa21": 21,
+        "total": 40
+      }
+    },
+    {
+      "name": "Reykjavík",
+      "lat": 64.13548,
+      "lon": -21.89541,
+      "gdacsCountries": [
+        "Iceland"
+      ],
+      "usgs": {
+        "r150_m2.5": 109,
+        "r150_m4.5": 54,
+        "r300_m2.5": 164,
+        "r300_m4.5": 78
+      },
+      "emsc": {
+        "r150_m2.5": 1742,
+        "r150_m4.5": 47,
+        "r300_m2.5": 2027,
+        "r300_m4.5": 71
+      },
+      "gdacs": {
+        "r300_total": 71,
+        "by_type": {
+          "VO": 7,
+          "EQ": 60,
+          "WF": 2,
+          "FL": 2
+        },
+        "by_level": {
+          "Green": 71
+        },
+        "truncated_windows": [],
+        "examples": [
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in Iceland",
+            "from": "2026-07-28T05:36:40",
+            "km": 211
+          },
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in Iceland",
+            "from": "2026-06-13T20:14:14",
+            "km": 212
+          },
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in Iceland",
+            "from": "2026-01-31T11:54:51",
+            "km": 205
+          },
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in Iceland",
+            "from": "2026-01-22T10:28:25",
+            "km": 211
+          },
+          {
+            "type": "EQ",
+            "level": "Green",
+            "name": "Earthquake in Iceland",
+            "from": "2025-10-29T16:46:30",
+            "km": 240
+          }
+        ]
+      },
+      "firms_7d_r150": {
+        "noaa20": 5,
+        "noaa21": 2,
+        "total": 7
+      }
+    }
+  ],
+  "firms_7d": {
+    "j1": {
+      "url": "https://firms.modaps.eosdis.nasa.gov/data/active_fire/noaa-20-viirs-c2/csv/J1_VIIRS_C2_Global_7d.csv",
+      "bytes": 49499413,
+      "rows": 593019,
+      "acq_dates": [
+        "2026-09-12",
+        "2026-09-13",
+        "2026-09-14",
+        "2026-09-15",
+        "2026-09-16",
+        "2026-09-17",
+        "2026-09-18",
+        "2026-09-19"
+      ],
+      "last_modified": "Sat, 19 Sep 2026 21:40:44 GMT",
+      "counts": {
+        "Marrakech": 9,
+        "Vancouver": 44,
+        "Los Angeles": 96,
+        "Tokyo": 19,
+        "Reykjavík": 5
+      }
+    },
+    "j2": {
+      "url": "https://firms.modaps.eosdis.nasa.gov/data/active_fire/noaa-21-viirs-c2/csv/J2_VIIRS_C2_Global_7d.csv",
+      "bytes": 48032052,
+      "rows": 575730,
+      "acq_dates": [
+        "2026-09-12",
+        "2026-09-13",
+        "2026-09-14",
+        "2026-09-15",
+        "2026-09-16",
+        "2026-09-17",
+        "2026-09-18",
+        "2026-09-19"
+      ],
+      "last_modified": "Sat, 19 Sep 2026 21:44:03 GMT",
+      "counts": {
+        "Marrakech": 4,
+        "Vancouver": 33,
+        "Los Angeles": 97,
+        "Tokyo": 21,
+        "Reykjavík": 2
+      }
+    }
+  },
+  "requests": 280
+}
