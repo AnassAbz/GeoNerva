@@ -23,7 +23,8 @@
     "db:up": "docker compose -f infra/docker-compose.yml up -d --wait db",
     "db:down": "docker compose -f infra/docker-compose.yml down",
     "db:check": "node scripts/db-check.ts",
-    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm depcruise && pnpm test:unit"
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm depcruise && pnpm test:unit",
+    "build:canary": "node scripts/check-bundle-secrets.ts"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

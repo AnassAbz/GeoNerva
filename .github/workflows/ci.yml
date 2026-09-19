@@ -82,7 +82,8 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      # Production build with canary secrets; fails if any reaches client bundles (SECURITY.md C2).
+      - run: pnpm build:canary
       - run: pnpm --filter @geonerva/web exec playwright install --with-deps chromium
       - run: pnpm test:e2e
       - if: failure()
