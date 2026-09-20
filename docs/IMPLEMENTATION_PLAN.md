@@ -214,7 +214,15 @@ RECOMMENDED NEXT STEP
   - **Conditional GET is implemented in the client but unused.** The frozen schema has nowhere to persist a validator between runs, so "nothing changed" compares the body digest against the previous run's `payload_sha256`. See ARCHITECTURE §4.1.
   - **The error taxonomy was extended** (ADR-032), the only frozen-contract change P3 made.
 
-### P4 — Remaining P0 adapters (parallel: 4a ∥ 4b ∥ 4c)
+> **Phase re-sequencing [2026-09-20].** The long autonomous build session
+> (`docs/geonerva_long_autonomous_session.md`) runs the phases in a different order from this
+> document, and that session's numbering is what the gate reports use. The mapping is recorded in
+> `docs/reviews/p4-plan.md` §1. In short: **session P4** is the historical-USGS/backfill work this
+> document listed under P3 task 4 and P4's "backfill" bullets and that `gate-g3.md` deferred;
+> **session P5** is this document's P4 (EMSC ∥ GDACS ∥ FIRMS). No ADR, frozen schema, domain type,
+> read-model contract or identity semantic changes because of the re-ordering.
+
+### P4 — Remaining P0 adapters (parallel: 4a ∥ 4b ∥ 4c) — *runs as session P5*
 - **Goal:** EMSC, GDACS and FIRMS complete to the same standard as USGS.
 - **Dependencies:** P3 (framework frozen), P0 fixtures.
 - **Agent owner:** Ingestion (three sub-agents, one per folder).

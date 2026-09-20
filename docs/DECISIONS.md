@@ -384,3 +384,27 @@ Turborepo is not adopted until build times justify it.
   - `ABORTED` is excluded from the failure count. A run we cancelled ourselves says nothing about the source, and counting it would mark every source `DEGRADED` after a routine deploy — a false alarm that trains an operator to ignore the panel.
 - **Process note:** this is a frozen-contract change, so it stopped the dependent work (the pipeline's run accounting) until it was resolved here, per the phase rules. It is the only schema contract P3 changes.
 - **Trade-offs:** A migration against a frozen table. Accepted because the alternative is a taxonomy that lies about three real failures, and the cost of adding a class later — after rows exist and health rules depend on them — is much higher than now, when the table is empty.
+
+## ADR-033 — Raw payloads are retained by window, and a backfill stores the hash without the body
+- **Date:** 2026-09-20 (P4.5, forced by the P3 storage measurement)
+- **Context:** P3 measured **2,735 B per first-sighting earthquake**, of which the raw provider payload is **1,269 B — 46 %**. At the planned 260k-event catalogue the payload bodies alone are **~315 MB**, and the whole lean profile reaches ~727 MB against a **500 MB** budget (ARCHITECTURE §12). The previous policy was "keep everything", which was never a decision, only an absence of one. `prunePayloadsBefore` already existed and nothing called it.
+- **The asymmetry that decides this.** A **live** payload is a snapshot of something the provider will not serve again: `all_day` moves on, and the bytes we saw at 12:05 are gone by 12:10. A **backfill** payload is different — it is the catalogue as it stands *now*, and everything in it that GeoNerva reads is already in the normalized version, pinned by `content_sha256`. Keeping 315 MB of JSON to preserve fields we deliberately do not read is not provenance, it is hoarding.
+- **Alternatives:**
+  - *Keep all payload bodies* — rejected: it exceeds the budget on its own, and the owner ruled out paid storage for v1 (Q2).
+  - *Store no raw row at all for backfilled records* — rejected. `observation_versions.raw_record_id` would be NULL, which P3 established is provenance silently lost, and the audit chain would have no hash to check against.
+  - *Chosen:* a backfill **inserts the raw row with `payload = NULL, payload_pruned = true`** from the outset. The row exists, `raw_record_id` is non-null, and the 32-byte digest is kept forever, so an audit can still prove exactly what was ingested — it simply cannot re-read the body. This is the same end state pruning produces, reached immediately instead of after 30 days, and it reuses a column that already means precisely this.
+- **The policy, per retention profile:**
+
+  | What | lean | standard | Why |
+  |---|---|---|---|
+  | Normalized facts (versions, records, aliases, heads) | **forever** | forever | They are the replayable truth; ADR-002's append-only store is the product |
+  | Live raw payload bodies | 30 days | 90 days | Long enough to debug a revision dispute; 400 events/day × 1,269 B × 30 d ≈ **14.5 MB** |
+  | Backfill raw payload bodies | **never stored** | never stored | See the asymmetry above |
+  | Raw rows and their hashes | forever | forever | The audit chain, ~200 B/event |
+  | `ingestion_rejects` excerpts | 14 days | 30 days | Diagnostics. Health derivation never reads them |
+  | `ingestion_runs` | 90 days | 1 year | Health looks back 7 days; the rest is trend |
+  | Fire detections | 72 h (owner Q2) | 30 days | Unchanged; the replay horizon is built on it |
+
+- **Audit implications, stated plainly:** after the retention window, `GET /api/v1/evidence/{id}` can still say *what* was ingested and prove the bytes by digest, but cannot show them. `findRawPayload` already returns `pruned: true` for exactly this case, so the API reports the absence rather than implying the payload never existed. For a backfilled record that is true from the start, and the API must say so.
+- **Storage consequence:** replacing 315 MB of backfill bodies with ~52 MB of rows and hashes brings the projected lean catalogue from ~727 MB to roughly **~460 MB**, which is inside the budget but not comfortably. §4.6's measurement is therefore a gate condition, not a formality, and if the measured figure passes 450 MB the EMSC backfill narrows first (ARCHITECTURE §12).
+- **Trade-offs:** a backfilled record can never have its original bytes inspected. Accepted because those bytes are re-derivable in substance from FDSN by `eventid`, the digest still proves what we ingested, and the alternative is a system that does not fit the deployment the owner chose.
