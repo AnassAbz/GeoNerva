@@ -291,7 +291,11 @@ importers:
 
   packages/geocoding: {}
 
-  packages/http: {}
+  packages/http:
+    dependencies:
+      '@geonerva/config':
+        specifier: workspace:*
+        version: link:../config
 
   packages/pipeline: {}
 
