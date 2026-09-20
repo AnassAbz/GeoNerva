@@ -11,8 +11,10 @@ import { sql, type Kysely } from 'kysely';
 
 import {
   freshnessPolicySchema,
+  pollingPolicySchema,
   type FreshnessPolicy,
   type HazardType,
+  type PollingPolicy,
   type SourceCapability,
 } from '@geonerva/domain';
 
@@ -181,6 +183,47 @@ export async function getSourceFreshnessPolicy(
   const raw = result.rows[0]?.policy;
   if (raw === undefined || raw === null) throw new Error(`unknown source: ${sourceId}`);
   return freshnessPolicySchema.parse(raw.freshness);
+}
+
+/**
+ * The polling policy for a product, falling back to its source's.
+ *
+ * Read from the database rather than the adapter descriptor, so changing how often a source is
+ * polled is a data change and does not need a deploy — and so the interval a worker uses and the
+ * interval `/data-status` judges freshness against can never be two different numbers.
+ */
+export async function getPollingPolicy(
+  db: Kysely<DB>,
+  sourceId: string,
+  productCode?: string,
+): Promise<PollingPolicy> {
+  const result = await sql<{ source_policy: unknown; product_policy: unknown }>`
+    SELECT s.policy AS source_policy, p.policy AS product_policy
+    FROM geonerva.sources s
+    LEFT JOIN geonerva.source_products p
+      ON p.source_id = s.id AND p.code = ${productCode ?? null}
+    WHERE s.id = ${sourceId}
+    LIMIT 1
+  `.execute(db);
+
+  const row = result.rows[0];
+  if (row === undefined) throw new Error(`unknown source: ${sourceId}`);
+
+  const pollingOf = (policy: unknown): PollingPolicy | null => {
+    if (typeof policy !== 'object' || policy === null || !('polling' in policy)) return null;
+    const parsed = pollingPolicySchema.safeParse(policy.polling);
+    return parsed.success ? parsed.data : null;
+  };
+
+  const policy = pollingOf(row.product_policy) ?? pollingOf(row.source_policy);
+  if (policy === null) {
+    // Guessing an interval would either hammer a provider or poll so rarely that the source
+    // looks stale. Neither is a safe default, so this is a configuration error.
+    throw new Error(
+      `no polling policy for ${sourceId}${productCode === undefined ? '' : `:${productCode}`}`,
+    );
+  }
+  return policy;
 }
 
 /** Enables or disables a source. A data change, recorded with `updated_at`. */

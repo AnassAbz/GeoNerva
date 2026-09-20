@@ -8,6 +8,14 @@
 export { classifyFetchFailure, runIngestion } from './run.ts';
 export type { RunCounts, RunIngestionOptions, RunOutcome } from './run.ts';
 
+export { DEFAULT_BREAKER, countsAsFailure, jitteredDelay, runScheduler } from './scheduler.ts';
+export type {
+  BreakerPolicy,
+  ScheduledJob,
+  SchedulerOptions,
+  SchedulerSummary,
+} from './scheduler.ts';
+
 export {
   MAX_DETAIL_LENGTH,
   createJsonLogger,

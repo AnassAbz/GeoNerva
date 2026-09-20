@@ -18,6 +18,13 @@
  *     impossible to re-derive from the row — and would turn a depth revision of 8.245 → 8.247
  *     into a version whose two rows both read 8.25.
  *
+ * **Changing what the hash covers is an event, not a refactor.** The hash is the only change
+ * detector (ADR-029), so adding or removing a field from `hashable` makes every existing record
+ * look revised exactly once: the P3 rounding and alias-sorting changes produced 233 new versions
+ * for 9 genuinely new records on the next live poll. That is correct behaviour and it settles
+ * after one poll, but it fills "What Changed?" with revisions nothing caused, so it belongs in a
+ * release note rather than in a quiet commit.
+ *
  * **Which failures are per-record and which are fatal.** A bad *value* (a latitude of 91, an
  * out-of-range intensity) is one reject row: the batch survives, the reject is counted, and the
  * 20 % drift threshold decides whether the feed as a whole has changed. A broken *identity* is

@@ -6,6 +6,7 @@
  */
 import { checkConfig } from './cli/check-config.ts';
 import { runSource } from './cli/run-source.ts';
+import { startWorker } from './cli/start.ts';
 import { describeUnexpectedError } from './cli/unexpected-error.ts';
 
 const USAGE = `Usage: geonerva-worker <command>
@@ -13,6 +14,7 @@ const USAGE = `Usage: geonerva-worker <command>
 Commands:
   check-config   Validate the worker environment and print a redacted summary
   run            Poll one source once (run --help for options)
+  start          Poll every enabled source on its schedule until SIGTERM
   help           Show this message`;
 
 /**
@@ -39,6 +41,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return checkConfig(process.env);
     case 'run':
       return await runSource(rest, process.env, shutdownSignal());
+    case 'start':
+      return await startWorker(rest, process.env, shutdownSignal());
     case undefined:
     case 'help':
     case '--help':
