@@ -39,11 +39,6 @@ export interface CreatePoolOptions {
   /** Shown in `pg_stat_activity`, which makes a runaway query attributable. */
   readonly applicationName?: string;
   readonly max?: number;
-  /**
-   * `false` for the web app behind a transaction pooler: prepared statements do not survive a
-   * connection that is handed to another transaction.
-   */
-  readonly preparedStatements?: boolean;
   /** PEM certificate authority, when a deployment pins one. */
   readonly caCertificate?: string | undefined;
   /** Server-side statement timeout. A read path must not be able to pin a connection forever. */
@@ -81,11 +76,13 @@ export function createPool(options: CreatePoolOptions): pg.Pool {
     // belt to its braces for poolers that strip `options`.
     // No space after the comma: the server splits `options` on whitespace, so `public, extensions`
     // arrives as search_path=`public,` and every connection fails with a FATAL (S-1).
-    options: `-c search_path=${SEARCH_PATH.replaceAll(' ', '')}`,
+    // TimeZone is pinned because partition bounds are computed from dates: a session in a
+    // non-UTC zone would create local-midnight partitions that later overlap (R-1).
+    options: `-c search_path=${SEARCH_PATH.replaceAll(' ', '')} -c TimeZone=UTC`,
   });
 
   pool.on('connect', (client) => {
-    client.query(`SET search_path TO ${SEARCH_PATH}`).catch(() => {
+    client.query(`SET search_path TO ${SEARCH_PATH}; SET TIME ZONE 'UTC'`).catch(() => {
       // A failure here is not fatal: the startup parameter has already set the same value, and
       // every GeoNerva table reference is schema-qualified. The next real query surfaces any
       // genuine connection problem.
@@ -122,7 +119,7 @@ export interface DatabaseHandle {
 /** Convenience: pool + Kysely + a safe description + a single close. */
 export function createDatabase(options: CreatePoolOptions): DatabaseHandle {
   const pool = createPool(options);
-  const db = createDb(pool, { preparedStatements: options.preparedStatements ?? true });
+  const db = createDb(pool);
   return {
     db,
     pool,
@@ -141,7 +138,6 @@ export function workerPoolOptions(connectionString: string, nodeEnv?: string): C
     variableName: 'DATABASE_URL_WORKER',
     applicationName: 'geonerva-worker',
     max: 5,
-    preparedStatements: true,
     statementTimeoutMs: 120_000,
   };
 }
@@ -154,7 +150,6 @@ export function webPoolOptions(connectionString: string, nodeEnv?: string): Crea
     variableName: 'DATABASE_URL',
     applicationName: 'geonerva-web',
     max: 10,
-    preparedStatements: false,
     statementTimeoutMs: 10_000,
   };
 }
