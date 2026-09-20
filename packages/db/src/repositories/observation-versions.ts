@@ -399,7 +399,15 @@ export async function rebuildHeads(trx: Transaction<DB>): Promise<number> {
     SELECT DISTINCT ON (v.source_record_id)
            v.source_record_id, v.id, v.version_seq, v.ingested_at, v.content_sha256
     FROM geonerva.observation_versions v
-    ORDER BY v.source_record_id, v.ingested_at DESC, v.version_seq DESC
+    -- version_seq first, not ingested_at.
+    --
+    -- Within one record version_seq is the authoritative order: assigned under a row lock, in
+    -- insert order, gap-free, so the highest one IS the head. ingested_at is a batch stamp shared
+    -- by every version in a run, so leading with it decides the head by a tiebreak between rows
+    -- that were never ordered by it - and this is the repair tool, the one reached for when the
+    -- heads have already drifted, so it must agree with the live path (insertVersionIfChanged),
+    -- which always installs the newest insert.
+    ORDER BY v.source_record_id, v.version_seq DESC, v.ingested_at DESC
   `.execute(trx);
   return Number(result.numAffectedRows ?? 0n);
 }

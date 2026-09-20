@@ -324,6 +324,44 @@ describe('version insertion (DOMAIN_MODEL §4.7)', () => {
     expect(head.rows[0]?.latest_version_seq).toBe(2);
   });
 
+  it('rebuilds the head by version_seq, not by batch stamp', async () => {
+    /*
+     * `version_seq` is the authoritative order within a record: assigned under a row lock, in
+     * insert order, gap-free. `ingested_at` is a batch stamp shared by every version in a run, so
+     * a repair that led with it would be deciding the head by a tiebreak between rows that were
+     * never ordered by it — and this is the tool reached for when the heads have *already*
+     * drifted, so it has to agree with the live path.
+     *
+     * The two orderings have to actually disagree or the test proves nothing, so the second
+     * version carries an *earlier* batch stamp than the first: a backfill of an older window
+     * arriving after a live poll, which is a normal thing for this system to do.
+     */
+    const record = await seedObservation(db, {
+      primaryKey: 'us-out-of-order',
+      ingestedAt: minutes(15),
+      magnitude: 4.2,
+      centroid: PLACES.suva,
+    });
+    await seedObservation(db, {
+      primaryKey: 'us-out-of-order',
+      ingestedAt: T0,
+      magnitude: 4.9,
+      centroid: PLACES.suva,
+    });
+
+    await sql`DELETE FROM geonerva.source_record_heads`.execute(db);
+    await db.transaction().execute((trx) => rebuildHeads(trx));
+
+    const head = await sql<{ latest_version_seq: number; magnitude: string }>`
+      SELECT h.latest_version_seq, v.magnitude
+      FROM geonerva.source_record_heads h
+      JOIN geonerva.observation_versions v ON v.id = h.latest_version_id
+      WHERE h.source_record_id = ${record.sourceRecordId}::bigint
+    `.execute(db);
+    expect(head.rows[0]?.latest_version_seq, 'the highest seq is the head').toBe(2);
+    expect(Number(head.rows[0]?.magnitude)).toBe(4.9);
+  });
+
   it('rejects a version observed more than five minutes in the future (I13)', async () => {
     await expect(
       seedObservation(db, {
