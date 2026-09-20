@@ -2,7 +2,7 @@
   "name": "@geonerva/geo",
   "version": "0.0.0",
   "private": true,
-  "description": "Pure geodesy: distance, bounding boxes, antimeridian handling, coordinate parsing and rounding, grid cells.",
+  "description": "Pure geodesy: geodesic distance, bearings, and radius bounding boxes.",
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
@@ -10,5 +10,8 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@geonerva/domain": "workspace:*"
   }
 }

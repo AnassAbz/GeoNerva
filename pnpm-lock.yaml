@@ -262,7 +262,21 @@ importers:
 
   packages/baselines: {}
 
-  packages/briefing: {}
+  packages/briefing:
+    dependencies:
+      '@geonerva/db':
+        specifier: workspace:*
+        version: link:../db
+      '@geonerva/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@geonerva/geo':
+        specifier: workspace:*
+        version: link:../geo
+    devDependencies:
+      kysely:
+        specifier: 0.29.6
+        version: 0.29.6
 
   packages/changes: {}
 
@@ -299,7 +313,11 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
 
-  packages/geo: {}
+  packages/geo:
+    dependencies:
+      '@geonerva/domain':
+        specifier: workspace:*
+        version: link:../domain
 
   packages/geocoding: {}
 
