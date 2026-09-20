@@ -83,11 +83,7 @@ const DEPTH_AGREEMENT_KM = 0.001;
  */
 const POSITION_AGREEMENT_DEG = 0.00001;
 
-function rejected(
-  unid: string,
-  reasonCode: RejectReasonCode,
-  message: string,
-): NormalizationError {
+function rejected(unid: string, reasonCode: RejectReasonCode, message: string): NormalizationError {
   return new NormalizationError('value-in-range', unid, message, reasonCode);
 }
 

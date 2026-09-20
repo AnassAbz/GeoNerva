@@ -134,7 +134,9 @@ function decodeUtf8(body: Uint8Array): string | null {
   }
 }
 
-function issuesOf(error: { issues: readonly { path: PropertyKey[]; message: string }[] }): string[] {
+function issuesOf(error: {
+  issues: readonly { path: PropertyKey[]; message: string }[];
+}): string[] {
   return error.issues.map(
     (issue) => `${issue.path.map(String).join('.') || '(root)'}: ${issue.message}`,
   );

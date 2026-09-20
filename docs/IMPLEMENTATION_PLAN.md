@@ -228,7 +228,8 @@ RECOMMENDED NEXT STEP
 - **Agent owner:** Ingestion (three sub-agents, one per folder).
 - **Files/packages:** `packages/sources/emsc/**`, `packages/sources/gdacs/**`, `packages/sources/firms/**`; `apps/worker/src/registry.ts` is orchestrator-merged.
 - **Tasks:**
-  - 4a EMSC: FDSN `format=json` polling with `updatedafter`, degree-radius handling, `unid` identity, deletion sweep, backfill.
+  - 4a EMSC: FDSN `format=json` polling with `updatedafter`, degree-radius handling, `unid` identity, backfill.
+    **No deletion sweep** — the service answers `includedeleted` with HTTP 400 (V6, re-verified live 2026-09-20), and the seeded `emsc/rts` product has never declared `DELETIONS`. This task line was stale; DATA_SOURCES §6.1 and the seed are authoritative. Retractions need the websocket (P1).
   - 4b GDACS: RSS change trigger → `geteventdata`/`getgeometry`, episode versions, role-tagged geometries, UTC parsing, 204/timeout handling, `derived_from` for EQ, 5-year backfill.
   - 4c FIRMS: sensor capability discovery (`data_availability`), world `DAY_RANGE=2` per active product, keyless fallback, CSV streaming parse with caps, COPY into daily partitions, `missing_data`, partition creation + retention job, `EMPTY_SUSPICIOUS`.
 - **Tests:** contract tests for every fixture + drift fixture; integration idempotency; FIRMS midnight-span test; partition retention test.

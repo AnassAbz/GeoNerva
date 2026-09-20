@@ -36,7 +36,10 @@ import {
  * over-large window is an error (USGS) or a silently truncated body (EMSC).
  */
 const HISTORICAL: Readonly<
-  Record<string, { readonly adapter: SourceAdapter<never>; readonly historical: HistoricalInterface }>
+  Record<
+    string,
+    { readonly adapter: SourceAdapter<never>; readonly historical: HistoricalInterface }
+  >
 > = {
   usgs: { adapter: usgsAdapter as SourceAdapter<never>, historical: usgsHistorical() },
   emsc: { adapter: emscAdapter as SourceAdapter<never>, historical: emscHistorical },
@@ -181,9 +184,7 @@ export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
   if (!help) {
     if (source === undefined) errors.push('--source is required');
     else if (!(source in HISTORICAL)) {
-      errors.push(
-        `unknown source: ${source} (available: ${Object.keys(HISTORICAL).join(', ')})`,
-      );
+      errors.push(`unknown source: ${source} (available: ${Object.keys(HISTORICAL).join(', ')})`);
     }
     if (from === undefined) errors.push('--from is required');
     if (to === undefined) errors.push('--to is required');

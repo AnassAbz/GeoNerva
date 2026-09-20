@@ -75,13 +75,19 @@ function normalizeOne(value: unknown): ReturnType<typeof normalizeEmscFeature> {
 
 describe('the query layer', () => {
   it('asks for format=json, because format=geojson is an HTTP 400 here', () => {
-    const url = emscQueryUrl({ from: new Date('2010-01-01T00:00:00Z'), to: new Date('2010-01-02T00:00:00Z') });
+    const url = emscQueryUrl({
+      from: new Date('2010-01-01T00:00:00Z'),
+      to: new Date('2010-01-02T00:00:00Z'),
+    });
     expect(url).toContain('format=json');
     expect(url).not.toContain('format=geojson');
   });
 
   it('bridges our half-open window onto FDSN’s inclusive endtime', () => {
-    const url = emscQueryUrl({ from: new Date('2010-01-01T00:00:00Z'), to: new Date('2010-01-02T00:00:00Z') });
+    const url = emscQueryUrl({
+      from: new Date('2010-01-01T00:00:00Z'),
+      to: new Date('2010-01-02T00:00:00Z'),
+    });
     // Without the millisecond, two adjacent windows both claim an event at midnight.
     expect(url).toContain('endtime=2010-01-01T23%3A59%3A59.999Z');
   });
@@ -95,7 +101,10 @@ describe('the query layer', () => {
      * a 2023 one). A parameter whose typos are silent is a parameter not worth sending when the
      * whole window is taken anyway.
      */
-    const url = emscQueryUrl({ from: new Date('2020-01-01T00:00:00Z'), to: new Date('2020-01-02T00:00:00Z') });
+    const url = emscQueryUrl({
+      from: new Date('2020-01-01T00:00:00Z'),
+      to: new Date('2020-01-02T00:00:00Z'),
+    });
     expect(url).not.toContain('orderby');
   });
 
@@ -218,7 +227,10 @@ describe('the silent row cap', () => {
      * "incomplete" — anything else marks a backfill interval DONE over a hole.
      */
     const features = Array.from({ length: EMSC_MAX_ROWS }, (_, index) =>
-      feature({ unid: `2026${String(index).padStart(11, '0')}` }, { id: `2026${String(index).padStart(11, '0')}` }),
+      feature(
+        { unid: `2026${String(index).padStart(11, '0')}` },
+        { id: `2026${String(index).padStart(11, '0')}` },
+      ),
     );
     const result = parseEmscFeed(bodyOf({ type: 'FeatureCollection', features }), ctx);
     expect(result.verdict).toBe('REJECTED');
@@ -270,9 +282,7 @@ describe('normalizing', () => {
      */
     const result = parse('revision-t0.json');
     if (result.verdict !== 'OK') throw new Error('fixture should parse');
-    const hawaii = result.records.find(
-      (record) => record.properties.unid === '20260919_0000238',
-    );
+    const hawaii = result.records.find((record) => record.properties.unid === '20260919_0000238');
     if (hawaii === undefined) throw new Error('the Hawaii event is the point of this fixture');
     expect(hawaii.properties.depth).toBe(-0.2);
     expect(normalizeEmscFeature(hawaii, normalizeCtx).depthKm).toBe(-0.2);
@@ -501,7 +511,9 @@ describe('change detection', () => {
     const second = parse('json-page.json');
     if (first.verdict !== 'OK' || second.verdict !== 'OK') throw new Error('fixture should parse');
     const digest = (records: readonly EmscFeature[]) =>
-      records.map((record) => normalizeEmscFeature(record, normalizeCtx).contentSha256.toString('hex'));
+      records.map((record) =>
+        normalizeEmscFeature(record, normalizeCtx).contentSha256.toString('hex'),
+      );
     expect(digest(second.records)).toStrictEqual(digest(first.records));
   });
 });
