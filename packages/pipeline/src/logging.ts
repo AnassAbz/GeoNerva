@@ -77,8 +77,17 @@ const ALLOWED_FIELDS: readonly (keyof IngestionLogFields)[] = [
   'totalMs',
 ];
 
-/** Length beyond which a detail is truncated, matching the 1 KB the run column accepts. */
-export const MAX_DETAIL_LENGTH = 1_000;
+/**
+ * Byte budget for a stored detail.
+ *
+ * `ingestion_runs.error_message` and `backfill_intervals.error_message` both carry
+ * `CHECK (octet_length(...) <= 1024)`, so the bound has to be in bytes. 1,000 leaves room for the
+ * ellipsis and a little slack.
+ */
+export const MAX_DETAIL_BYTES = 1_000;
+
+/** Built once: constructing a segmenter per truncation would be the expensive part. */
+const GRAPHEMES = new Intl.Segmenter('en', { granularity: 'grapheme' });
 
 export interface Logger {
   log(level: LogLevel, event: string, fields: IngestionLogFields): void;
@@ -92,9 +101,35 @@ export interface Logger {
  */
 export function sanitizeDetail(value: string): string {
   const flattened = value.replace(/\s+/g, ' ').trim();
-  return flattened.length <= MAX_DETAIL_LENGTH
-    ? flattened
-    : `${flattened.slice(0, MAX_DETAIL_LENGTH - 1)}…`;
+
+  /*
+   * Bounded in **bytes**, not characters.
+   *
+   * The column's CHECK is `octet_length(error_message) <= 1024`, and 1,000 non-Latin characters
+   * is 2–4 KB. Provider text does reach here — normalization errors carry provider ids and Zod
+   * issue text, and place names are routinely non-Latin — so a character bound let the write fail
+   * on the *failure* path, which is the one path that exists to record that something went wrong.
+   */
+  const encoder = new TextEncoder();
+  if (encoder.encode(flattened).length <= MAX_DETAIL_BYTES) return flattened;
+
+  /*
+   * Trim by **grapheme**, not by UTF-16 code unit.
+   *
+   * `slice(0, -1)` removes half of a surrogate pair, and a lone surrogate encodes as U+FFFD — so
+   * an emoji at the boundary would be stored as a replacement character rather than dropped.
+   * Code points fix that much; `Intl.Segmenter` also keeps a combining mark with its base letter
+   * and a flag or skin-tone sequence whole, which is what "do not mangle the message" means for
+   * the languages place names actually arrive in.
+   */
+  const graphemes = [...GRAPHEMES.segment(flattened)].map((entry) => entry.segment);
+  while (
+    graphemes.length > 0 &&
+    encoder.encode(`${graphemes.join('')}…`).length > MAX_DETAIL_BYTES
+  ) {
+    graphemes.pop();
+  }
+  return `${graphemes.join('')}…`;
 }
 
 /** Builds the record actually written: allowlisted keys, `undefined` dropped, detail bounded. */

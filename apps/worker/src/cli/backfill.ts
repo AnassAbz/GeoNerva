@@ -10,6 +10,7 @@ import { ConfigError, loadWorkerConfig } from '@geonerva/config';
 import { createDatabase, workerPoolOptions } from '@geonerva/db';
 import {
   createJsonLogger,
+  describeBackfillFailure,
   runBackfill,
   runDeletionSweep,
   type BackfillOutcome,
@@ -296,7 +297,9 @@ export async function runBackfillCommand(
     return backfillExitCode(outcome);
   } catch (error) {
     // A range the planner refuses, or configuration the database disagrees with.
-    console.error(`✗ ${error instanceof Error ? error.message : 'the backfill could not start'}`);
+    // Our own errors are safe to repeat; anything else may be a driver message carrying a host,
+    // a port or key values, so it is described rather than quoted (SECURITY.md M7).
+    console.error(`✗ ${describeBackfillFailure(error)}`);
     return 1;
   } finally {
     await handle.close();

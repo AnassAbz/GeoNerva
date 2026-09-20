@@ -840,7 +840,16 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
     );
   } catch (error) {
     // Anything not already classified. The run must still close, or the product stays leased.
-    const detail = error instanceof Error ? error.message : 'unexpected failure';
+    /*
+     * `describeDatabaseFailure`, not `error.message`.
+     *
+     * Everything in the outer `try` can throw a driver error — `lastPayloadDigest` is a database
+     * call with no inner handler — and a `node-postgres` message carries host and port
+     * (`connect ECONNREFUSED 10.0.2.15:5432`), while a constraint violation can carry key values.
+     * Both would land in `ingestion_runs.error_message`, a column the web role can read, and on
+     * stdout. SECURITY.md M7 forbids exactly that.
+     */
+    const detail = describeDatabaseFailure(error);
     logger.log('error', 'ingestion.unexpected', {
       ...base,
       stage: 'run',

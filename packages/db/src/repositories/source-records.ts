@@ -239,6 +239,14 @@ export interface SourceRecordRow {
 
 /** One record by `(source, primary key)`. */
 /**
+ * What an alias set resolved to. `AMBIGUOUS` is a real answer, not an error to be smoothed over.
+ */
+export type AliasLookup =
+  | { readonly kind: 'NONE' }
+  | { readonly kind: 'ONE'; readonly sourceRecordId: string }
+  | { readonly kind: 'AMBIGUOUS'; readonly sourceRecordIds: readonly string[] };
+
+/**
  * Resolves an alias set to an existing record, **without creating one**.
  *
  * `resolveSourceRecord` creates on a miss, which is right for ingestion and wrong for a deletion
@@ -252,10 +260,23 @@ export async function findRecordByAliases(
   db: Db,
   sourceId: string,
   aliases: readonly string[],
-): Promise<string | null> {
+): Promise<AliasLookup> {
   const matched = await findRecordIdsByAliases(db, sourceId, aliases);
-  const survivors = [...new Set(await Promise.all(matched.map((id) => resolveSurvivor(db, id))))];
-  return survivors[0] ?? null;
+  const survivors = [
+    ...new Set(await Promise.all(matched.map((id) => resolveSurvivor(db, id)))),
+  ].sort();
+
+  const first = survivors[0];
+  if (first === undefined) return { kind: 'NONE' };
+  /*
+   * More than one surviving record for one alias set is the situation `resolveSourceRecord`
+   * treats as a *merge*. A read path must not resolve it by picking one: the caller would
+   * tombstone an arbitrary record and leave the other ACTIVE forever, with no reject row and no
+   * error — and because row order is not stable, a second pass could pick the other one, so the
+   * operation would not even be idempotent.
+   */
+  if (survivors.length > 1) return { kind: 'AMBIGUOUS', sourceRecordIds: survivors };
+  return { kind: 'ONE', sourceRecordId: first };
 }
 
 export async function findSourceRecord(

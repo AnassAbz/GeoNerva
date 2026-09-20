@@ -71,6 +71,7 @@ export {
   resolveSourceRecord,
 } from './source-records.ts';
 export type {
+  AliasLookup,
   MergeSourceRecordsInput,
   ResolveSourceRecordInput,
   ResolveSourceRecordResult,

@@ -38,7 +38,7 @@ import {
 } from '@geonerva/sources';
 
 import { createJsonLogger, sanitizeDetail, type Logger } from './logging.ts';
-import { classifyFetchFailure } from './run.ts';
+import { classifyFetchFailure, describeDatabaseFailure } from './run.ts';
 
 export interface DeletionSweepOptions<TRaw> {
   readonly db: Kysely<DB>;
@@ -59,6 +59,14 @@ export interface DeletionSweepOutcome {
   readonly tombstoned: number;
   /** Identified, but for an event GeoNerva never held. Not an error. */
   readonly unknownToUs: number;
+  /**
+   * Identified, but the alias set matched more than one surviving record.
+   *
+   * Recorded as a reject rather than resolved by picking one: tombstoning an arbitrary record
+   * would leave the other `ACTIVE` forever, and row order is not stable, so a second sweep could
+   * pick the other one and the operation would not even be idempotent.
+   */
+  readonly ambiguous: number;
   /** Stripped of all identity by the provider. Counted, never guessed at. */
   readonly unidentifiable: number;
   /** Already tombstoned by an earlier sweep, so re-running writes nothing. */
@@ -88,6 +96,7 @@ export async function runDeletionSweep<TRaw>(
       errorClass: 'CONFIG_ERROR',
       tombstoned: 0,
       unknownToUs: 0,
+      ambiguous: 0,
       unidentifiable: 0,
       alreadyTombstoned: 0,
       detail: `no source_product ${descriptor.productCode} for ${descriptor.sourceId}`,
@@ -107,6 +116,7 @@ export async function runDeletionSweep<TRaw>(
       errorClass: null,
       tombstoned: 0,
       unknownToUs: 0,
+      ambiguous: 0,
       unidentifiable: 0,
       alreadyTombstoned: 0,
       detail: 'another run holds this product',
@@ -129,6 +139,7 @@ export async function runDeletionSweep<TRaw>(
       errorClass,
       tombstoned: 0,
       unknownToUs: 0,
+      ambiguous: 0,
       unidentifiable: 0,
       alreadyTombstoned: 0,
       detail: sanitized,
@@ -162,48 +173,89 @@ export async function runDeletionSweep<TRaw>(
   let tombstoned = 0;
   let unknownToUs = 0;
   let alreadyTombstoned = 0;
+  let ambiguous = 0;
 
-  const committedAt = await db.transaction().execute(async (trx) => {
-    const ingestedAt = await batchTimestamp(trx);
+  let committedAt: Date;
+  try {
+    committedAt = await db.transaction().execute(async (trx) => {
+      // Counters are reset inside the transaction: on a retry after a rollback they must not
+      // carry numbers from work that no longer exists.
+      tombstoned = 0;
+      unknownToUs = 0;
+      alreadyTombstoned = 0;
+      ambiguous = 0;
+      const ingestedAt = await batchTimestamp(trx);
 
-    for (const deletion of sweep.deletions) {
-      const recordId = await findRecordByAliases(trx, descriptor.sourceId, deletion.aliases);
-      if (recordId === null) {
-        // A deletion for an event we never ingested. Creating a record here would invent a fact.
-        unknownToUs += 1;
-        continue;
+      for (const deletion of sweep.deletions) {
+        const found = await findRecordByAliases(trx, descriptor.sourceId, deletion.aliases);
+
+        if (found.kind === 'NONE') {
+          /*
+           * A deletion for an event we never ingested. Creating a record here would invent a
+           * fact, so it is counted *and* recorded: a run whose counts did not add up would leave
+           * an operator unable to tell "43 accounted for elsewhere" from "43 silently dropped".
+           */
+          unknownToUs += 1;
+          await recordReject(trx, runId, 'MISSING_IDENTITY', {
+            id: deletion.primaryKey,
+            reason: 'a deletion for an event GeoNerva has never ingested',
+          });
+          continue;
+        }
+
+        if (found.kind === 'AMBIGUOUS') {
+          ambiguous += 1;
+          await recordReject(trx, runId, 'MISSING_IDENTITY', {
+            id: deletion.primaryKey,
+            reason: `the alias set matches ${found.sourceRecordIds.length} records; refusing to guess which was deleted`,
+          });
+          continue;
+        }
+
+        const result = await insertTombstone(trx, {
+          sourceRecordId: found.sourceRecordId,
+          status: 'DELETED',
+          ingestedAt,
+          ingestionRunId: runId,
+        });
+        if (result.inserted) tombstoned += 1;
+        else alreadyTombstoned += 1;
       }
-      const result = await insertTombstone(trx, {
-        sourceRecordId: recordId,
-        status: 'DELETED',
-        ingestedAt,
-        ingestionRunId: runId,
-      });
-      if (result.inserted) tombstoned += 1;
-      else alreadyTombstoned += 1;
-    }
 
-    // Every stripped entry leaves a row. `MISSING_IDENTITY` exists for exactly this.
-    for (let index = 0; index < sweep.unidentifiable; index += 1) {
-      await recordReject(trx, runId, 'MISSING_IDENTITY', {
-        reason: 'the provider published a deletion with no identifiers',
-      });
-    }
+      // Every stripped entry leaves a row. `MISSING_IDENTITY` exists for exactly this.
+      for (let index = 0; index < sweep.unidentifiable; index += 1) {
+        await recordReject(trx, runId, 'MISSING_IDENTITY', {
+          reason: 'the provider published a deletion with no identifiers',
+        });
+      }
 
-    return finishRun(trx, {
-      runId,
-      status: 'SUCCEEDED',
-      httpStatus,
-      bytesReceived: body.byteLength,
-      counts: {
-        received: sweep.deletions.length + sweep.unidentifiable,
-        newVersions: tombstoned,
-        unchanged: alreadyTombstoned,
-        rejected: sweep.unidentifiable,
-      },
-      committedAt: ingestedAt,
+      return finishRun(trx, {
+        runId,
+        status: 'SUCCEEDED',
+        httpStatus,
+        bytesReceived: body.byteLength,
+        counts: {
+          received: sweep.deletions.length + sweep.unidentifiable,
+          newVersions: tombstoned,
+          unchanged: alreadyTombstoned,
+          // Everything received that did not become a tombstone leaves a reject row, so the
+          // counts on the run row reconcile: received = tombstoned + already + rejected.
+          rejected: sweep.unidentifiable + unknownToUs + ambiguous,
+        },
+        committedAt: ingestedAt,
+      });
     });
-  });
+  } catch (error) {
+    /*
+     * The run must still close.
+     *
+     * Without this the row stays `RUNNING` and the product is leased until the stale-lease
+     * threshold expires — half an hour during which every five-minute live poll returns
+     * `LEASE_HELD` and writes no run row at all, so six polls leave no health evidence.
+     * `runIngestion` was written specifically to close this hole; the sweep did not inherit it.
+     */
+    return await fail('DB_ERROR', describeDatabaseFailure(error));
+  }
 
   logger.log('info', 'deletion_sweep.finished', {
     ...base,
@@ -215,7 +267,7 @@ export async function runDeletionSweep<TRaw>(
     rejected: sweep.unidentifiable,
     detail:
       `${tombstoned} tombstoned, ${alreadyTombstoned} already, ${unknownToUs} for events we ` +
-      `never held, ${sweep.unidentifiable} stripped of identity by the provider`,
+      `never held, ${ambiguous} ambiguous, ${sweep.unidentifiable} stripped of identity`,
   });
 
   return {
@@ -224,6 +276,7 @@ export async function runDeletionSweep<TRaw>(
     errorClass: null,
     tombstoned,
     unknownToUs,
+    ambiguous,
     unidentifiable: sweep.unidentifiable,
     alreadyTombstoned,
     detail: committedAt.toISOString(),

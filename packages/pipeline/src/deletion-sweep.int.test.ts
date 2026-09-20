@@ -117,10 +117,63 @@ describe('the real sweep', () => {
     expect(outcome.unknownToUs).toBe(43);
     expect(outcome.tombstoned).toBe(0);
 
+    /*
+     * 98 rows, not 55: the 43 deletions we *could* identify but have never held are recorded too.
+     * A run whose counts did not add up would leave an operator unable to tell "43 accounted for
+     * elsewhere" from "43 silently dropped".
+     */
     const rejects = await sql<{ reason_code: string; n: string }>`
       SELECT reason_code, count(*)::text AS n FROM geonerva.ingestion_rejects GROUP BY reason_code
     `.execute(db);
-    expect(rejects.rows).toStrictEqual([{ reason_code: 'MISSING_IDENTITY', n: '55' }]);
+    expect(rejects.rows).toStrictEqual([{ reason_code: 'MISSING_IDENTITY', n: '98' }]);
+  });
+
+  it('refuses to guess when an alias set matches more than one record', async () => {
+    /*
+     * Two surviving records for one alias set is the case `resolveSourceRecord` treats as a
+     * merge. Tombstoning an arbitrary one would leave the other ACTIVE forever — and because row
+     * order is not stable, a second sweep could pick the other one, so it would not even be
+     * idempotent.
+     */
+    const raw = JSON.parse(
+      readFixtureBytes('usgs', 'fdsn-includedeleted-only.geojson').toString('utf8'),
+    ) as { features: { id: string; properties: { ids: string | null } }[] };
+    const target = raw.features.find((feature) => feature.id.length > 0);
+    if (target === undefined) throw new Error('fixture should have an identifiable deletion');
+
+    // Two separate records, each holding one of the deletion's aliases.
+    await sql`
+      INSERT INTO geonerva.source_records (source_id, hazard_type, primary_key, first_ingested_at)
+      VALUES ('usgs', 'EARTHQUAKE', ${target.id}, now()),
+             ('usgs', 'EARTHQUAKE', 'us-other-half', now())
+    `.execute(db);
+    await sql`
+      INSERT INTO geonerva.source_record_aliases (source_id, alias, source_record_id)
+      SELECT 'usgs', ${target.id}, id FROM geonerva.source_records WHERE primary_key = ${target.id}
+      UNION ALL
+      SELECT 'usgs', 'extra-alias', id FROM geonerva.source_records
+      WHERE primary_key = 'us-other-half'
+    `.execute(db);
+    // Make the deletion carry both aliases.
+    target.properties.ids = `,${target.id},extra-alias,`;
+
+    const body = new TextEncoder().encode(
+      JSON.stringify({
+        type: 'FeatureCollection',
+        metadata: { count: 1 },
+        features: [target],
+      }),
+    );
+    const outcome = await sweep(() => new Response(body));
+
+    expect(outcome.status).toBe('SUCCEEDED');
+    expect(outcome.ambiguous).toBe(1);
+    expect(outcome.tombstoned, 'nothing is tombstoned on a guess').toBe(0);
+
+    const rejects = await sql<{ excerpt: { reason: string } }>`
+      SELECT excerpt FROM geonerva.ingestion_rejects
+    `.execute(db);
+    expect(rejects.rows[0]?.excerpt.reason).toMatch(/refusing to guess/);
   });
 
   it('does not invent a record for a deletion of an event it never held', async () => {
@@ -141,8 +194,15 @@ describe('the real sweep', () => {
       id: outcome.runId,
       trigger: 'RECONCILE',
       status: 'SUCCEEDED',
-      counts: { received: 98, rejected: 55 },
+      counts: { received: 98, rejected: 98 },
     });
+
+    // The counts reconcile: received = tombstoned + already tombstoned + rejected.
+    const run = runs[0];
+    expect(run?.counts.newVersions ?? 0).toBe(outcome.tombstoned);
+    expect(
+      (run?.counts.newVersions ?? 0) + (run?.counts.unchanged ?? 0) + (run?.counts.rejected ?? 0),
+    ).toBe(run?.counts.received);
   });
 });
 

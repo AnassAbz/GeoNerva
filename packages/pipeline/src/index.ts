@@ -22,7 +22,7 @@ export type {
 } from './scheduler.ts';
 
 export {
-  MAX_DETAIL_LENGTH,
+  MAX_DETAIL_BYTES,
   createJsonLogger,
   createMemoryLogger,
   redact,

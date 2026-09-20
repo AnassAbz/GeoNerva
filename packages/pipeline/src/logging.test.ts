@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  MAX_DETAIL_LENGTH,
+  MAX_DETAIL_BYTES,
   createJsonLogger,
   createMemoryLogger,
   redact,
@@ -59,13 +59,42 @@ describe('sanitizeDetail', () => {
 
   it('bounds the length to what the run column accepts', () => {
     const long = sanitizeDetail('x'.repeat(5_000));
-    expect(long.length).toBe(MAX_DETAIL_LENGTH);
+    expect(new TextEncoder().encode(long).length).toBeLessThanOrEqual(MAX_DETAIL_BYTES);
     expect(long.endsWith('…'), 'truncation is visible, not silent').toBe(true);
+  });
+
+  it('bounds by bytes, not characters, so non-Latin text still fits the column', () => {
+    /*
+     * The CHECK is `octet_length(...) <= 1024`, and 1,000 non-Latin characters is 2–4 KB. A
+     * character bound let the write fail on the *failure* path — the one path that exists to
+     * record that something went wrong. Place names are routinely non-Latin.
+     */
+    const japanese = sanitizeDetail('地震'.repeat(2_000));
+    expect(new TextEncoder().encode(japanese).length).toBeLessThanOrEqual(1_024);
+    expect(japanese.endsWith('…')).toBe(true);
+  });
+
+  it('never splits a multi-byte character while truncating', () => {
+    const emoji = sanitizeDetail('🌋'.repeat(1_000));
+    expect(new TextEncoder().encode(emoji).length).toBeLessThanOrEqual(1_024);
+
+    /*
+     * Round-trip through the encoder to check, because a lone surrogate is not U+FFFD *in the
+     * string* — it only becomes a replacement character once encoded, which is exactly what the
+     * database would store. Asserting on the string alone would pass while the stored value was
+     * corrupt.
+     */
+    const roundTripped = new TextDecoder().decode(new TextEncoder().encode(emoji));
+    expect(roundTripped).not.toContain('�');
+    expect(roundTripped).toBe(emoji);
   });
 
   it('bounds a detail passed through the log fields too', () => {
     const fields = redact({ detail: 'y'.repeat(5_000) });
-    expect(String(fields['detail'])).toHaveLength(MAX_DETAIL_LENGTH);
+    expect(new TextEncoder().encode(String(fields['detail'])).length).toBeLessThanOrEqual(
+      MAX_DETAIL_BYTES,
+    );
+    expect(String(fields['detail']).endsWith('…')).toBe(true);
   });
 });
 
