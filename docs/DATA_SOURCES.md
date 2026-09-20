@@ -59,6 +59,25 @@
 
 Summary feeds **silently drop** deleted events. A deletion is only observable via FDSN `includedeleted=only` (daily reconcile, window = retention of live events). A deletion becomes a tombstone *version* of the record — never a hard delete (replay must still show that the event was visible before deletion).
 
+**[P4 2026-09-20] Most deleted events carry no identity.** Re-reading the P0 capture
+(`fdsn-includedeleted-only.geojson`, 98 deletions over a 7-day window): **55 of 98 have an empty
+feature `id` and `null` for `ids`, `net`, `code`, `place` and `types`.** USGS purges an event's
+metadata when it deletes it, leaving `time`, `mag` and geometry. Only **43** still carry an alias
+set. Consequences, all of them load-bearing:
+
+- The alias-based identity model cannot resolve the stripped 55. GeoNerva **counts them and
+  reports the count**; it does not skip them silently and it does not guess which record they were.
+- A deletion sweep is therefore **~56 % unidentifiable in normal operation**, so the ordinary 20 %
+  reject threshold must not be applied to it — doing so would fail every sweep as schema drift.
+- Drift for a sweep is a different signal: a non-empty sweep in which **nothing** is identifiable
+  means GeoNerva is blind to deletions, and that does fail.
+- The live schema's `id: min(1)` and non-null `ids` are correct for the feed and wrong for this
+  endpoint, which is why the sweep uses its own deletion-tolerant shape.
+
+A record whose deletion is only ever visible as a stripped entry will therefore keep its last
+live version and never be tombstoned. That is a known, documented gap rather than a silent one; a
+tombstone requires the 409-on-`eventid` path or a future websocket feed to identify it.
+
 ### 1.5 Completeness — scientifically critical
 
 - NEIC's goal: ~M4.5 global completeness, ~M3.0 US completeness.

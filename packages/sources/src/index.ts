@@ -36,6 +36,39 @@ export {
 } from './usgs/adapter.ts';
 export type { UsgsFeed } from './usgs/adapter.ts';
 
+export {
+  FDSN_MAX_ROWS,
+  FdsnQueryError,
+  fdsnCount,
+  fdsnCountUrl,
+  fdsnEndpoint,
+  fdsnFetch,
+  fdsnQueryUrl,
+  fdsnWindowSchema,
+  isWindowTooLarge,
+  parseDeletionSweep,
+  parseFdsnCount,
+} from './usgs/fdsn.ts';
+export type {
+  DeletionSweep,
+  FdsnBody,
+  FdsnCount,
+  FdsnFetchOptions,
+  FdsnMode,
+  FdsnWindow,
+  IdentifiedDeletion,
+} from './usgs/fdsn.ts';
+
+export {
+  DEFAULT_WINDOW_PLAN,
+  WindowPlanError,
+  describePlanDefect,
+  planCoverageMs,
+  planWindows,
+  splitWindow,
+} from './usgs/window-planner.ts';
+export type { PlannedWindow, WindowPlanOptions } from './usgs/window-planner.ts';
+
 export { normalizeUsgsFeature, parseIds } from './usgs/normalize.ts';
 export { usgsFeatureSchema, usgsFeedSchema } from './usgs/schema.ts';
 export type { UsgsFeature } from './usgs/schema.ts';
