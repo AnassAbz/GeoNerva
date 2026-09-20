@@ -13,6 +13,9 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@geonerva/config": "workspace:*"
+    "@geonerva/config": "workspace:*",
+    "@geonerva/db": "workspace:*",
+    "@geonerva/pipeline": "workspace:*",
+    "@geonerva/sources": "workspace:*"
   }
 }

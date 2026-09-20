@@ -144,6 +144,17 @@ module.exports = {
       to: { path: '^packages/(sources|pipeline)/', reachable: true },
     },
     {
+      name: 'web-reads-facts-only-through-asof',
+      comment:
+        'G3 carry-over 1, enforced before the first endpoint exists. Every read of a provider ' +
+        'fact goes through the as-of layer, which is the only place that applies the knowledge- ' +
+        'time filter (ADR-003). A repository read would return the newest row instead of the row ' +
+        'as of T, and replay would silently show the present.',
+      severity: 'error',
+      from: { path: '^apps/web/' },
+      to: { path: '^packages/db/src/repositories/', reachable: true },
+    },
+    {
       name: 'worker-does-not-import-web',
       severity: 'error',
       from: { path: '^apps/worker/' },

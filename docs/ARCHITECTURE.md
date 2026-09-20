@@ -534,6 +534,25 @@ Each condition is listed as a reason. Confidence is never a percentage.
 
 A coverage line always follows: "Weather warnings not covered here."
 
+**The last row fails closed [G3 carry-over 2, measured P3 2026-09-19].** "No high-relevance
+hazards detected" is a claim about the world, and it may only be made when there is *positive
+evidence of coverage*. An empty fact list on its own is not that evidence.
+
+The concrete trap, verified against the real database in
+`packages/pipeline/src/blindness.int.test.ts`: RLS is enabled on every fact table with no
+policies, so the `geonerva_web` role currently reads zero rows. Under that role the fact query and
+the health query return **exactly what a genuinely quiet world returns** — and health comes back
+as an **empty array, not a status of `UNAVAILABLE`**, because `geonerva.sources` is behind the
+same deny-all. A briefing that looked for `status === 'UNAVAILABLE'` to detect blindness would
+therefore miss it completely and render an all-clear.
+
+So the rule the briefing engine must implement is:
+
+> If there is no health row for a family's sources, the headline is `DATA_UNAVAILABLE`. The
+> absence of health evidence — not a particular health status — is the signal.
+
+`NO_HIGH_RELEVANCE_ITEMS` requires at least one source health row that is not `UNAVAILABLE`.
+
 ## 10. What Changed?
 
 ### 10.1 Comparison definition
@@ -670,6 +689,34 @@ into a throwaway database on the same PostgreSQL 17 / PostGIS 3.4 image as CI, n
 | `source_records` | 260,000 | **42.3 MB** | 20.5 MB | 21.8 MB |
 | everything else at this point (empty caches, seeds, migrations) | — | ~1.4 MB | — | — |
 | **Measured total** | | **335.3 MB (67 % of the 500 MB budget)** | | |
+
+**Correction [P3 2026-09-19]: three tables were missing from the measurement above.** P3 ingested
+1,737 real USGS events and measured the *delta* across every table the pipeline writes, which
+exposed three the P2 figure never populated:
+
+| Per new event | Measured |
+|---|---|
+| `raw_source_records` (the verbatim payload) | **1,269 B** |
+| `observation_versions` | 972 B |
+| `source_records` | 184 B |
+| `source_record_aliases` | 160 B |
+| `source_record_heads` | 151 B |
+| **Total per first-sighting** | **≈ 2,735 B** |
+
+At the planned 260k-event backfill the three missing tables add **≈ 392 MB** (raw 315, aliases 40,
+heads 37), taking the lean profile from the measured 335 MB to **≈ 727 MB against a 500 MB
+budget**. The backfill as specified does not fit, and the largest single line is the raw payload —
+46 % of the per-event cost.
+
+This does not change the v1 plan, because live polling is cheap: 400 events/day is **≈ 1.04 MiB
+per day**, and raw payloads pruned to 30 days cost 14.5 MB (7 days: 3.4 MB). `prunePayloadsBefore`
+already nulls the body while keeping the hash and the row, so provenance survives pruning. What it
+does change is that **the backfill must not retain raw payloads**, and the raw-payload retention
+window is now a budget lever that has to be set explicitly rather than left at "keep everything".
+That decision belongs to the retention job (P6) and is recorded here so it cannot be forgotten.
+
+*Caveat on the numbers:* index pages grow in chunks, so a 1,737-row delta carries some lumpiness;
+treat these as ±15 %, and re-measure with `estimate-storage` before the backfill is run.
 
 Not yet included, because P2 does not populate them: `places` (GeoNames `cities15000`, 34,146
 rows), `fire_cluster_versions` and `fire_daily_cells` at steady state, snapshots and caches.
