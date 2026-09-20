@@ -286,7 +286,18 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
 
-  packages/correlation: {}
+  packages/correlation:
+    dependencies:
+      '@geonerva/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@geonerva/geo':
+        specifier: workspace:*
+        version: link:../geo
+    devDependencies:
+      '@geonerva/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
 
   packages/db:
     dependencies:
