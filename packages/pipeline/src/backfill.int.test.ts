@@ -418,6 +418,120 @@ describe('window splitting', () => {
   });
 });
 
+describe('window boundaries', () => {
+  /**
+   * A server that actually honours the window it is asked for.
+   *
+   * The other tests here return the same body for every query, which is fine for what they check
+   * but means they would pass unchanged if the planner produced overlapping or wrong windows.
+   * This one filters by `starttime`/`endtime`, so the boundary arithmetic is under test rather
+   * than assumed — and the `-1 ms` bridge between our half-open window and FDSN's inclusive
+   * `endtime` is the only thing standing between "ingested once" and "counted twice".
+   */
+  function windowAwareClient(events: readonly { id: string; timeMs: number }[]) {
+    const template = JSON.parse(readFixtureBytes('usgs', 'all_day.geojson').toString('utf8')) as {
+      features: { id: string; properties: Record<string, unknown> }[];
+    };
+    const shape = template.features[0];
+    if (shape === undefined) throw new Error('fixture should have a feature');
+
+    return scriptedClient({
+      query: (url) => {
+        const start = Date.parse(url.searchParams.get('starttime') ?? '');
+        const end = Date.parse(url.searchParams.get('endtime') ?? '');
+        const inWindow = events.filter((event) => event.timeMs >= start && event.timeMs <= end);
+        return new Response(
+          fdsnBody(
+            inWindow.map((event) => ({
+              ...shape,
+              id: event.id,
+              properties: {
+                ...shape.properties,
+                ids: `,${event.id},`,
+                time: event.timeMs,
+                updated: event.timeMs,
+              },
+            })),
+          ),
+        );
+      },
+      count: (url) => {
+        const start = Date.parse(url.searchParams.get('starttime') ?? '');
+        const end = Date.parse(url.searchParams.get('endtime') ?? '');
+        const n = events.filter((e) => e.timeMs >= start && e.timeMs <= end).length;
+        return new Response(JSON.stringify({ count: n, maxAllowed: 20_000 }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+  }
+
+  it('ingests an event on a window boundary exactly once', async () => {
+    // Midnight between day 1 and day 2 — the instant two adjacent windows could both claim.
+    const boundary = new Date('2026-09-16T00:00:00.000Z').getTime();
+    const { client, queries } = windowAwareClient([{ id: 'nc-boundary', timeMs: boundary }]);
+
+    const outcome = await backfill(client);
+
+    expect(outcome.status).toBe('COMPLETED');
+    expect(queries).toHaveLength(3);
+
+    const rows = await sql<{ n: string; versions: string }>`
+      SELECT count(DISTINCT r.id)::text AS n, count(v.id)::text AS versions
+      FROM geonerva.source_records r
+      JOIN geonerva.observation_versions v ON v.source_record_id = r.id
+      WHERE r.primary_key = 'nc-boundary'
+    `.execute(db);
+    expect(rows.rows[0]?.n, 'one record').toBe('1');
+    expect(rows.rows[0]?.versions, 'and exactly one version').toBe('1');
+
+    /*
+     * The assertion that actually tests the bridge.
+     *
+     * Facts alone cannot: if two adjacent windows both returned the event, the content hash makes
+     * the second one `unchanged`, so the record and version counts are identical either way — a
+     * negative control proved the earlier version of this test passed with the bridge removed.
+     * What double-claiming *does* corrupt is the accounting: the event is received twice, the run
+     * rows say so, and the plan reports more records than the catalogue contains.
+     */
+    expect(outcome.progress.received, 'received once, not once per adjacent window').toBe(1);
+  });
+
+  it('loses no event across a whole range of adjacent windows', async () => {
+    // One event per day, plus both boundary instants: the plan must cover every one, once.
+    const day = 24 * 60 * 60 * 1000;
+    const events = [
+      { id: 'nc-d1', timeMs: FROM.getTime() + 1_000 },
+      { id: 'nc-b1', timeMs: FROM.getTime() + day },
+      { id: 'nc-d2', timeMs: FROM.getTime() + day + 1_000 },
+      { id: 'nc-b2', timeMs: FROM.getTime() + 2 * day },
+      { id: 'nc-d3', timeMs: FROM.getTime() + 2 * day + 1_000 },
+      { id: 'nc-last', timeMs: TO.getTime() - 1 },
+    ];
+    const { client } = windowAwareClient(events);
+
+    const outcome = await backfill(client);
+    expect(outcome.status).toBe('COMPLETED');
+
+    const stored = await sql<{ primary_key: string; versions: string }>`
+      SELECT r.primary_key, count(v.id)::text AS versions
+      FROM geonerva.source_records r
+      JOIN geonerva.observation_versions v ON v.source_record_id = r.id
+      GROUP BY r.primary_key ORDER BY r.primary_key
+    `.execute(db);
+
+    expect(stored.rows.map((row) => row.primary_key).sort()).toStrictEqual(
+      events.map((event) => event.id).sort(),
+    );
+    expect(
+      stored.rows.every((row) => row.versions === '1'),
+      'every event exactly once',
+    ).toBe(true);
+    // Six events, six receipts: no window claimed one that belonged to its neighbour.
+    expect(outcome.progress.received).toBe(events.length);
+  });
+});
+
 describe('the count is a cross-check, not just a planning signal', () => {
   it('fails the interval when the provider returns fewer events than it counted', async () => {
     /*

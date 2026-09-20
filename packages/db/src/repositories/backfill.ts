@@ -183,9 +183,15 @@ export async function addBackfillIntervals(
 /**
  * The next interval to work on, in time order, or `null` when the plan is finished.
  *
- * `FOR UPDATE SKIP LOCKED` so two workers on the same plan take different intervals instead of
- * both doing the same one. The ingestion lease would stop them writing the same batch twice, but
- * they would each waste a fetch discovering that.
+ * **What actually serialises two workers is the per-product ingestion lease, not this.** The row
+ * lock lives only as long as the caller's transaction, which commits before any fetch happens, so
+ * two workers on one plan really can claim the same interval; the second then gets `LEASE_HELD`
+ * from `runIngestion` and stops. `SKIP LOCKED` narrows the window rather than closing it, and the
+ * comment here used to claim otherwise.
+ *
+ * Reserving properly would mean moving the interval out of `PENDING` inside this transaction and
+ * having a way to release it when a worker dies — a second lease, for a case that does not arise
+ * while one worker runs a plan at a time. Recorded rather than built.
  */
 export async function claimNextInterval(
   db: Transaction<DB>,
