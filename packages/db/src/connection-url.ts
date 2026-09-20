@@ -82,9 +82,11 @@ export function describeConnectionTarget(url: string, variableName = 'DATABASE_U
   return `${parsed.hostname}:${port}/${database}`;
 }
 
-/** The database name from a connection string. */
+/** The database name from a connection string, percent-decoded. */
 export function databaseNameOf(url: string, variableName = 'DATABASE_URL'): string {
-  return parse(url, variableName).pathname.replace(/^\//, '');
+  // The path is percent-encoded in a URL, so a database named `my test` arrives as `my%20test`
+  // and a guard that compares names would not recognise it (V-2).
+  return decodeURIComponent(parse(url, variableName).pathname.replace(/^\//, ''));
 }
 
 /** The host from a connection string. */

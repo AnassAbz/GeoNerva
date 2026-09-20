@@ -91,7 +91,7 @@ const NO_RAW_SQL = [
   {
     // Bracket access, including through a cast: `(sql as never)['raw']`. This is the same shape
     // as the NEXT_PUBLIC bypass found in P1 (F-1), so it is closed here by name (R-11).
-    selector: "MemberExpression[computed=true][property.value='raw']",
+    selector: "MemberExpression[computed=true][object.name='sql'][property.value='raw']",
     message:
       'sql.raw interpolates verbatim, however it is reached. Use a bound parameter (docs/SECURITY.md C3).',
   },

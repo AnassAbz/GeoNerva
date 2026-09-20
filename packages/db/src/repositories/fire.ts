@@ -164,6 +164,16 @@ export async function dropDetectionPartitionsBefore(
   cutoff: Date,
   options: { lockTimeoutMs?: number } = {},
 ): Promise<{ readonly dropped: readonly string[]; readonly deferred: readonly string[] }> {
+  // Kysely's `Transaction<DB>` *extends* `Kysely<DB>`, so the parameter type documents the
+  // requirement without enforcing it (V-3). Check at run time: this function catches 55P03 to
+  // defer a busy partition, and a caught error inside a transaction poisons everything after it.
+  if (db.isTransaction) {
+    throw new Error(
+      'dropDetectionPartitionsBefore must run on its own connection, not inside a transaction: ' +
+        'it defers a locked partition by catching an error, which would abort the transaction.',
+    );
+  }
+
   const due = await sql<{ day: string }>`
     SELECT to_char(day, 'YYYYMMDD') AS day
     FROM geonerva.fire_detection_partitions_before(${cutoff.toISOString().slice(0, 10)}::date) AS day
