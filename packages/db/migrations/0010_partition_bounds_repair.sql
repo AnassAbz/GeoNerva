@@ -16,23 +16,45 @@
 -- ever reappears.
 
 -- ── 1. Repair ───────────────────────────────────────────────────────────────
--- For each partition: read its declared bounds (the literals carry an offset, so casting them is
--- exact regardless of the session zone) and compare with UTC midnight for the day in its name.
--- Aligned partitions are left alone. A misaligned one is detached, its rows are re-inserted
--- through the parent so that routing puts each row in the partition for its own UTC day, and the
--- detached table is dropped. Empty ones skip straight to the drop.
+-- Two phases, because one is not enough. A single pass that repairs one partition while its
+-- neighbours are still attached and misaligned hits a routing gap: a row spilling out of the
+-- partition being repaired belongs to a day whose *name* already exists (still misaligned), so
+-- `ensure_fire_detection_partition` takes its "already there" branch and the aligned range is
+-- never created. West of UTC the spill runs forward, east of UTC backward, so no ordering saves it.
+--
+--   Phase A: detach every misaligned partition and stage its rows, so nothing is attached that
+--            could shadow a day that still needs an aligned partition.
+--   Phase B: create the aligned partitions for the whole staged span, re-insert through the
+--            parent (routing each row into the partition for its own UTC day), and assert that
+--            the count came back.
+--
+-- The column list is built from the catalog, excluding `GENERATED ALWAYS` columns: `INSERT …
+-- SELECT *` fails with 428C9 because a generated column cannot be given a value.
 DO $$
 DECLARE
   part record;
   bounds text;
   lower_literal text;
   upper_literal text;
-  actual_lower timestamptz;
-  expected_lower timestamptz;
-  expected_upper timestamptz;
   day date;
-  row_count bigint;
+  detached text[] := '{}';
+  column_list text;
+  staged_rows bigint := 0;
+  restored_rows bigint := 0;
+  min_day date;
+  max_day date;
 BEGIN
+  SELECT string_agg(format('%I', attname), ', ' ORDER BY attnum)
+  INTO column_list
+  FROM pg_attribute a
+  JOIN pg_class c ON c.oid = a.attrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'geonerva' AND c.relname = 'fire_detections'
+    AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = '';
+
+  -- Phase A: detach the misaligned partitions into a staging table.
+  CREATE TEMP TABLE geonerva_partition_repair (LIKE geonerva.fire_detections) ON COMMIT DROP;
+
   FOR part IN
     SELECT c.oid, c.relname, c.relpartbound
     FROM pg_class c
@@ -45,42 +67,63 @@ BEGIN
     ORDER BY c.relname
   LOOP
     bounds := pg_get_expr(part.relpartbound, part.oid);
+    -- The parentheses are escaped: unescaped they are capture groups, the pattern then fails to
+    -- match `FROM ('…')`, `regexp_match` returns NULL, and every partition is silently skipped.
     lower_literal := (regexp_match(bounds, 'FROM \(''([^'']+)''\)'))[1];
     upper_literal := (regexp_match(bounds, 'TO \(''([^'']+)''\)'))[1];
-    CONTINUE WHEN lower_literal IS NULL OR upper_literal IS NULL;
 
-    day := to_date(right(part.relname, 8), 'YYYYMMDD');
-    actual_lower := lower_literal::timestamptz;
-    expected_lower := (day::timestamp AT TIME ZONE 'UTC');
-    expected_upper := ((day + 1)::timestamp AT TIME ZONE 'UTC');
-
-    CONTINUE WHEN actual_lower = expected_lower AND upper_literal::timestamptz = expected_upper;
-
-    EXECUTE format('SELECT count(*) FROM geonerva.%I', part.relname) INTO row_count;
-    RAISE NOTICE 'repairing % (bounds % , % rows)', part.relname, bounds, row_count;
-
-    EXECUTE format('ALTER TABLE geonerva.fire_detections DETACH PARTITION geonerva.%I', part.relname);
-
-    IF row_count > 0 THEN
-      -- Create the partitions the rows will need, then let the parent route them. Detections are
-      -- append-only, so re-inserting is lossless; ON CONFLICT DO NOTHING covers a row that also
-      -- exists in a correctly-bounded partition.
-      PERFORM geonerva.ensure_fire_detection_partition(d::date)
-      FROM generate_series(day - 1, day + 1, interval '1 day') AS d;
-
-      EXECUTE format(
-        'INSERT INTO geonerva.fire_detections SELECT * FROM geonerva.%I ON CONFLICT DO NOTHING',
-        part.relname);
+    IF lower_literal IS NULL OR upper_literal IS NULL THEN
+      RAISE EXCEPTION 'could not read the bounds of partition % (%)', part.relname, bounds;
     END IF;
 
+    day := to_date(right(part.relname, 8), 'YYYYMMDD');
+    CONTINUE WHEN lower_literal::timestamptz = (day::timestamp AT TIME ZONE 'UTC')
+             AND upper_literal::timestamptz = ((day + 1)::timestamp AT TIME ZONE 'UTC');
+
+    RAISE NOTICE 'repairing partition % (bounds %)', part.relname, bounds;
+    EXECUTE format('ALTER TABLE geonerva.fire_detections DETACH PARTITION geonerva.%I', part.relname);
+    EXECUTE format(
+      'INSERT INTO geonerva_partition_repair (%s) SELECT %s FROM geonerva.%I',
+      column_list, column_list, part.relname);
     EXECUTE format('DROP TABLE geonerva.%I', part.relname);
+    detached := detached || part.relname;
   END LOOP;
+
+  IF array_length(detached, 1) IS NULL THEN
+    RETURN; -- every partition was already UTC-aligned
+  END IF;
+
+  -- Phase B: create the aligned partitions for the staged span, then let the parent route.
+  SELECT count(*), min((acquired_at AT TIME ZONE 'UTC')::date), max((acquired_at AT TIME ZONE 'UTC')::date)
+  INTO staged_rows, min_day, max_day
+  FROM geonerva_partition_repair;
+
+  IF staged_rows > 0 THEN
+    PERFORM geonerva.ensure_fire_detection_partition(d::date)
+    FROM generate_series(min_day, max_day, interval '1 day') AS d;
+
+    EXECUTE format(
+      'INSERT INTO geonerva.fire_detections (%s) SELECT %s FROM geonerva_partition_repair
+       ON CONFLICT DO NOTHING',
+      column_list, column_list);
+
+    GET DIAGNOSTICS restored_rows = ROW_COUNT;
+    IF restored_rows <> staged_rows THEN
+      RAISE EXCEPTION
+        'partition repair would lose rows: staged %, restored % (the migration is transactional, '
+        'so nothing has been lost; report this with the partition names %)',
+        staged_rows, restored_rows, detached;
+    END IF;
+  END IF;
+
+  RAISE NOTICE 'repaired % partition(s), % row(s) re-routed',
+    array_length(detached, 1), restored_rows;
 END
 $$;
 
 -- Repairing may have removed the deployment window 0005 created, so re-create one. Partitions
 -- are created on demand before every batch anyway; this only keeps a fresh database ready.
-SELECT geonerva.ensure_fire_detection_partitions(current_date - 1, 5);
+SELECT geonerva.ensure_fire_detection_partitions(((now() AT TIME ZONE 'UTC')::date - 1), 5);
 
 -- ── 2. Fail loudly if it ever recurs ────────────────────────────────────────
 CREATE OR REPLACE FUNCTION geonerva.ensure_fire_detection_partition(day date)
@@ -136,11 +179,30 @@ DO $$
 BEGIN
   EXECUTE format('ALTER DATABASE %I SET TimeZone TO ''UTC''', current_database());
 EXCEPTION
-  WHEN insufficient_privilege THEN
-    -- A managed host may not grant ALTER DATABASE. The per-connection pin still applies.
-    RAISE NOTICE 'could not pin TimeZone=UTC on the database; connections pin it individually';
+  WHEN OTHERS THEN
+    -- A managed host may refuse ALTER DATABASE, and refuse it in its own way. Nothing is lost by
+    -- tolerating that: every GeoNerva connection pins TimeZone itself (client.ts, migrator/cli.ts),
+    -- so this statement is belt to that braces and must never fail a migration.
+    RAISE NOTICE 'could not pin TimeZone=UTC on the database (%); connections pin it individually',
+      SQLERRM;
 END
 $$;
 
--- R-10: without this, the next function added to the schema is PUBLIC-executable again.
-ALTER DEFAULT PRIVILEGES IN SCHEMA geonerva REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+-- V-4: `ALTER DEFAULT PRIVILEGES … REVOKE EXECUTE … FROM PUBLIC` runs without error and does
+-- nothing — EXECUTE-to-PUBLIC is a built-in default, not a granted default privilege, so there is
+-- nothing to revoke in advance. Revoke from what exists, and let a test assert the property for
+-- functions added later (the durable form; a DDL statement here would only look like protection).
+DO $$
+DECLARE
+  fn record;
+BEGIN
+  FOR fn IN
+    SELECT p.oid::regprocedure AS signature
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'geonerva'
+  LOOP
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', fn.signature);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO geonerva_worker', fn.signature);
+  END LOOP;
+END
+$$;
