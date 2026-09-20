@@ -160,6 +160,23 @@ describe('status handling', () => {
     expect(sleeps).toEqual([2000, 2000]);
   });
 
+  it('does not let a stale Retry-After date turn into no backoff at all', async () => {
+    // An HTTP-date Retry-After already in the past parses to 0 ms. Honouring that literally would
+    // retry three times instantly against a server that has just said it is overloaded.
+    const fetchImpl = vi.fn(
+      () =>
+        new Response('slow down', {
+          status: 429,
+          headers: { 'retry-after': new Date(Date.now() - 60_000).toUTCString() },
+        }),
+    );
+    const { sleeps, sleep } = recordingSleeper();
+    await expect(
+      client({ fetchImpl: fetchImpl as unknown as typeof fetch, sleep }).get(URL_OK),
+    ).rejects.toMatchObject({ errorClass: 'RATE_LIMITED' });
+    expect(sleeps, 'falls back to the exponential schedule').toStrictEqual([500, 1000]);
+  });
+
   it('gives up rather than sleeping longer than a run may stay open', async () => {
     const fetchImpl = vi.fn(() =>
       Promise.resolve(

@@ -207,7 +207,14 @@ async function fetchUsgs(ctx: FetchContext): Promise<FetchResult> {
   // cannot quietly widen them.
   const response = await ctx.client.get(url, { signal: ctx.signal });
 
-  const digest = payloadHash(response.body);
+  /*
+   * On a 304 the body is empty, so its digest is sha256("") — and writing that to the run row
+   * would erase the last real payload digest, making the *next* identical feed look changed.
+   * A 304 means "the body you already have", so the digest we already have is what it is.
+   */
+  const digest = response.notModified
+    ? (ctx.lastPayloadSha256 ?? payloadHash(response.body))
+    : payloadHash(response.body);
   const meta = {
     httpStatus: response.status,
     bytes: response.bytes,

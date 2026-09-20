@@ -429,6 +429,10 @@ export class HttpClient {
   #backoffMs(attempt: number, error: SourceFetchError): number {
     const retryAfter = error.context.retryAfterMs;
     if (retryAfter !== undefined) {
+      // A `Retry-After` date already in the past parses to 0 ms, and honouring that literally
+      // would retry three times instantly — the opposite of backing off — against a server that
+      // has just said it is overloaded. The server's wait is a floor, never a licence to hurry.
+      if (retryAfter <= 0) return this.#exponentialBackoffMs(attempt);
       if (retryAfter > this.#retry.maxRetryAfterMs) {
         throw new SourceFetchError(
           error.errorClass,
@@ -438,6 +442,10 @@ export class HttpClient {
       }
       return retryAfter;
     }
+    return this.#exponentialBackoffMs(attempt);
+  }
+
+  #exponentialBackoffMs(attempt: number): number {
     const exponential = Math.min(
       this.#retry.maxDelayMs,
       this.#retry.initialDelayMs * 2 ** (attempt - 1),

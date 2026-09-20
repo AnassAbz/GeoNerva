@@ -147,6 +147,22 @@ async function factDigest(): Promise<Record<string, string>> {
     FROM (
       SELECT (w.source_id, w.payload_sha256) AS row FROM geonerva.raw_source_records w
     ) t
+    UNION ALL
+    -- The head cache is a derived table, and a second run that left it disagreeing with the
+    -- version history would be exactly the kind of drift "no-op in every table" is meant to catch.
+    SELECT 'heads',
+           COALESCE(md5(string_agg(t.row::text, '|' ORDER BY t.row::text)), 'empty')
+    FROM (
+      SELECT (h.source_record_id, h.latest_version_seq, h.latest_content_sha256) AS row
+      FROM geonerva.source_record_heads h
+    ) t
+    UNION ALL
+    -- Rejects too: re-running must not accumulate a second copy of every diagnosis.
+    SELECT 'rejects',
+           COALESCE(md5(string_agg(t.row::text, '|' ORDER BY t.row::text)), 'empty')
+    FROM (
+      SELECT (j.reason_code, j.excerpt) AS row FROM geonerva.ingestion_rejects j
+    ) t
   `.execute(db);
   return Object.fromEntries(result.rows.map((row) => [row.table_name, row.digest]));
 }
@@ -703,6 +719,36 @@ describe('a bad record versus a bad feed', () => {
     expect(outcome.status).toBe('PARTIAL');
     expect(outcome.counts.rejected).toBe(20);
     expect(await countOf('observation_versions')).toBe(210);
+  });
+});
+
+describe('a product that was switched off', () => {
+  it('stops ingesting, rather than only stopping the reporting', async () => {
+    // deriveSourceHealth already reports a disabled product as UNAVAILABLE. Without this the
+    // facts would keep arriving while the panel said the source was off — and DOMAIN_MODEL
+    // presents enabling and disabling as the control surface for exactly this.
+    await sql`UPDATE geonerva.source_products SET enabled = false WHERE source_id = 'usgs'`.execute(
+      db,
+    );
+    try {
+      const outcome = await ingest(clientServing(() => feedResponse('all_day.geojson')));
+      expect(outcome.status).toBe('SKIPPED');
+      expect(outcome.runId, 'a product that is off does not take the lease').toBeNull();
+      expect(await countOf('observation_versions')).toBe(0);
+      expect(await listRecentRuns(db, { sourceId: 'usgs' })).toHaveLength(0);
+    } finally {
+      await sql`UPDATE geonerva.source_products SET enabled = true WHERE source_id = 'usgs'`.execute(
+        db,
+      );
+    }
+  });
+
+  it('attributes the records it does ingest to the product that produced them', async () => {
+    await ingest(clientServing(() => feedResponse('all_day.geojson')));
+    const unattributed = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM geonerva.source_records WHERE product_id IS NULL
+    `.execute(db);
+    expect(unattributed.rows[0]?.n).toBe('0');
   });
 });
 

@@ -102,19 +102,35 @@ export async function resolveSourceRecord(
   if (matched.length === 0) {
     // `ON CONFLICT` covers the race where another transaction created the same primary key
     // between our lookup and this insert.
-    const inserted = await sql<{ id: string }>`
+    const inserted = await sql<{ id: string; was_inserted: boolean; merged_into: string | null }>`
       INSERT INTO geonerva.source_records
         (source_id, product_id, hazard_type, primary_key, first_ingested_at)
       VALUES (${input.sourceId}, ${input.productId ?? null}, ${input.hazardType},
               ${input.primaryKey}, ${input.firstIngestedAt})
       ON CONFLICT (source_id, primary_key) DO UPDATE SET primary_key = EXCLUDED.primary_key
-      RETURNING id::text AS id
+      RETURNING id::text AS id,
+                -- xmax is 0 only for a genuinely new row; on the DO UPDATE path it is the
+                -- updating transaction's id. Without this the caller counts an existing record
+                -- as new every time an alias row is missing.
+                (xmax = 0) AS was_inserted,
+                merged_into::text AS merged_into
     `.execute(trx);
-    const recordId = inserted.rows[0]?.id;
-    if (recordId === undefined) throw new Error('failed to insert source record');
+    const row = inserted.rows[0];
+    if (row === undefined) throw new Error('failed to insert source record');
 
+    /*
+     * The row we got back may have been merged into another record. Attaching versions to an
+     * absorbed record would hide them from `observationsAsOf`, which follows `merged_at` — a
+     * silent disappearance rather than an error, so it is resolved here.
+     */
+    const recordId = row.merged_into === null ? row.id : await resolveSurvivor(trx, row.id);
     const added = await addAliases(trx, input.sourceId, recordId, aliases);
-    return { sourceRecordId: recordId, created: true, mergedRecordIds: [], addedAliases: added };
+    return {
+      sourceRecordId: recordId,
+      created: row.was_inserted,
+      mergedRecordIds: [],
+      addedAliases: added,
+    };
   }
 
   if (matched.length === 1) {

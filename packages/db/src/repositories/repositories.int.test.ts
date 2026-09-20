@@ -511,6 +511,40 @@ describe('record identity and the USGS merge (DOMAIN_MODEL §4.6)', () => {
     expect(again.created).toBe(false);
   });
 
+  it('does not report an existing record as newly created', async () => {
+    /*
+     * The insert uses `ON CONFLICT … DO UPDATE … RETURNING`, which returns the *existing* row's
+     * id on a conflict. Reporting that as `created` inflates `n_new_records` on every run where
+     * a record's alias rows are missing — a run row that says a quiet day discovered 230 new
+     * earthquakes.
+     */
+    const first = await db.transaction().execute((trx) =>
+      resolveSourceRecord(trx, {
+        sourceId: 'usgs',
+        hazardType: 'EARTHQUAKE',
+        primaryKey: 'nc-created-once',
+        firstIngestedAt: T0,
+      }),
+    );
+    expect(first.created).toBe(true);
+
+    // Remove the alias rows so the second call has to fall through to the insert path.
+    await sql`
+      DELETE FROM geonerva.source_record_aliases WHERE alias = 'nc-created-once'
+    `.execute(db);
+
+    const second = await db.transaction().execute((trx) =>
+      resolveSourceRecord(trx, {
+        sourceId: 'usgs',
+        hazardType: 'EARTHQUAKE',
+        primaryKey: 'nc-created-once',
+        firstIngestedAt: minutes(5),
+      }),
+    );
+    expect(second.sourceRecordId).toBe(first.sourceRecordId);
+    expect(second.created, 'the same record cannot be created twice').toBe(false);
+  });
+
   it('keeps the merge deterministic regardless of the order ids arrive in', async () => {
     const older = await seedObservation(db, {
       primaryKey: 'us-first',

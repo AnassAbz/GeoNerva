@@ -174,6 +174,7 @@ interface PersistResult {
 async function persistBatch(
   trx: Transaction<DB>,
   runId: string,
+  productId: number,
   adapter: SourceAdapter<unknown>,
   records: readonly NormalizedRecord[],
   rejects: readonly RejectedRecord[],
@@ -199,6 +200,7 @@ async function persistBatch(
   for (const record of records) {
     const resolved = await resolveSourceRecord(trx, {
       sourceId: adapter.descriptor.sourceId,
+      productId,
       hazardType: record.hazardType,
       primaryKey: record.primaryKey,
       aliases: record.aliases,
@@ -427,6 +429,27 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
     );
   }
 
+  /*
+   * A product switched off in the database must not keep ingesting.
+   *
+   * `deriveSourceHealth` already reports a disabled product as UNAVAILABLE/DISABLED, so without
+   * this check turning a source off would stop the *reporting* while the facts kept arriving —
+   * and DOMAIN_MODEL presents enabling and disabling as the control surface for exactly this.
+   * SKIPPED rather than FAILED: it was switched off on purpose, and that is not a fault.
+   */
+  if (!product.enabled || product.status === 'RETIRED') {
+    const reason = product.enabled
+      ? `${descriptor.productCode} is retired`
+      : `${descriptor.productCode} is disabled`;
+    logger.log('info', 'ingestion.product_disabled', {
+      ...base,
+      stage: 'lease',
+      status: 'SKIPPED',
+      detail: reason,
+    });
+    return finish('SKIPPED', null, null, reason, EMPTY_COUNTS, null);
+  }
+
   // ── 1. Lease ────────────────────────────────────────────────────────────
   const lease = await acquireRunLease(db, {
     sourceId: descriptor.sourceId,
@@ -649,6 +672,7 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
           persistBatch(
             trx,
             runId,
+            product.id,
             adapter as SourceAdapter<unknown>,
             normalized,
             rejects,
