@@ -35,6 +35,29 @@ export type {
   RunSummary,
 } from './ingestion-runs.ts';
 
+export {
+  addBackfillIntervals,
+  backfillProgress,
+  claimNextInterval,
+  finishBackfillPlan,
+  findBackfillPlan,
+  markIntervalDone,
+  markIntervalFailed,
+  openBackfillPlan,
+  recordIntervalAttempt,
+  splitBackfillInterval,
+} from './backfill.ts';
+export type {
+  BackfillIntervalRow,
+  BackfillIntervalStatus,
+  BackfillMode,
+  BackfillPlanRequest,
+  BackfillPlanRow,
+  BackfillPlanStatus,
+  BackfillProgress,
+  OpenPlanResult,
+} from './backfill.ts';
+
 export { findRawPayload, prunePayloadsBefore, upsertRawRecords } from './raw-records.ts';
 export type { RawRecordInput } from './raw-records.ts';
 

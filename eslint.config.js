@@ -242,6 +242,14 @@ export default tseslint.config(
     rules: { 'no-restricted-globals': 'off', 'no-restricted-properties': 'off' },
   },
 
+  // `packages/db/src/generated/**` is written by kysely-codegen from the live schema and must
+  // never be hand-edited, so a *stylistic* rule there would mean patching generated output on
+  // every regeneration. Only the style rule is relaxed; every correctness rule still applies.
+  {
+    files: ['packages/db/src/generated/**/*.ts'],
+    rules: { '@typescript-eslint/consistent-type-definitions': 'off' },
+  },
+
   // Tests may use non-null assertions on fixtures they control.
   {
     files: ['**/*.test.ts', '**/*.int.test.ts', '**/e2e/**/*.ts'],

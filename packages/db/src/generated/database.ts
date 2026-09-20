@@ -16,9 +16,9 @@ export type Json = JsonValue;
 
 export type JsonArray = JsonValue[];
 
-export interface JsonObject {
+export type JsonObject = {
   [x: string]: JsonValue | undefined;
-}
+};
 
 export type JsonPrimitive = boolean | number | string | null;
 
@@ -71,6 +71,36 @@ export interface AnalysisRuns {
   started_at: Timestamp;
   stats: Json | null;
   status: string;
+}
+
+export interface BackfillIntervals {
+  attempts: Generated<number>;
+  completed_at: Timestamp | null;
+  error_class: string | null;
+  error_message: string | null;
+  ingestion_run_id: string | null;
+  interval_from: Timestamp;
+  interval_to: Timestamp;
+  n_received: Generated<number>;
+  plan_id: string;
+  status: string;
+}
+
+export interface BackfillPlans {
+  created_at: Generated<Timestamp>;
+  error_message: string | null;
+  finished_at: Timestamp | null;
+  id: string;
+  min_magnitude: Numeric | null;
+  min_window_ms: Int8;
+  mode: string;
+  product_id: number | null;
+  range_from: Timestamp;
+  range_to: Timestamp;
+  source_id: string;
+  status: string;
+  updated_at: Generated<Timestamp>;
+  window_ms: Int8;
 }
 
 export interface BaselineMetrics {
@@ -267,6 +297,9 @@ export interface IngestionRuns {
    * Batch timestamp taken immediately before COMMIT; equals ingested_at of the batch's versions.
    */
   committed_at: Timestamp | null;
+  /**
+   * Sanitized failure class (ADR-032). CONFIG_ERROR and ABORTED are statements about GeoNerva, not about the provider, and source-health derivation must treat them as such.
+   */
   error_class: string | null;
   error_message: string | null;
   finished_at: Timestamp | null;
@@ -459,6 +492,8 @@ export interface DB {
   agent_outputs: AgentOutputs;
   analysis_locations: AnalysisLocations;
   analysis_runs: AnalysisRuns;
+  backfill_intervals: BackfillIntervals;
+  backfill_plans: BackfillPlans;
   baseline_metrics: BaselineMetrics;
   canonical_event_state: CanonicalEventState;
   canonical_events: CanonicalEvents;

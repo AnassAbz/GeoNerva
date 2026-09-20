@@ -14,7 +14,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "migrate": "node src/migrator/cli.ts",
     "db:test:create": "node src/testing/create-test-database.ts",
-    "codegen": "kysely-codegen --dialect postgres --default-schema geonerva --exclude-pattern \"public.*\" --out-file src/generated/database.ts && prettier --write src/generated/database.ts",
+    "codegen": "kysely-codegen --dialect postgres --default-schema geonerva --include-pattern \"geonerva.*\" --out-file src/generated/database.ts && prettier --write src/generated/database.ts",
     "estimate-storage": "node src/estimate-storage.ts"
   },
   "dependencies": {
