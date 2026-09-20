@@ -220,8 +220,38 @@ export const ERROR_CLASSES = [
   /** The previous run's lease was still held and had to be expired. */
   'LEASE_EXPIRED',
   'UNKNOWN',
+  /** DNS, connection or TLS failure: there was never an answer to time out on. */
+  'NETWORK',
+  /**
+   * The allowlist, the private-address check or a refused redirect (ADR-032).
+   *
+   * A statement about GeoNerva, not about the provider: it means we are blind to this source.
+   * Source health must not read it as "the source is down", and it never self-heals by retrying.
+   */
+  'CONFIG_ERROR',
+  /** The caller cancelled — a worker shutting down. Not evidence about the provider at all. */
+  'ABORTED',
 ] as const;
 export type ErrorClass = (typeof ERROR_CLASSES)[number];
+
+/**
+ * Failures that say something about the *provider*. The rest describe GeoNerva's own state and
+ * must not be counted against a source when deriving its health (ADR-032).
+ */
+export const PROVIDER_ERROR_CLASSES = [
+  'HTTP_4XX',
+  'HTTP_5XX',
+  'TIMEOUT',
+  'TOO_LARGE',
+  'SCHEMA_DRIFT',
+  'EMPTY_SUSPICIOUS',
+  'RATE_LIMITED',
+  'NETWORK',
+] as const satisfies readonly ErrorClass[];
+
+export function isProviderFault(errorClass: ErrorClass): boolean {
+  return (PROVIDER_ERROR_CLASSES as readonly ErrorClass[]).includes(errorClass);
+}
 
 /** Why a record was rejected at parse or normalize time (`ingestion_rejects.reason_code`). */
 export const REJECT_REASON_CODES = [

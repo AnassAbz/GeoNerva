@@ -152,7 +152,8 @@ Changes from the brief:
 6. post-commit       correlation (EQ) / clustering (FIRMS) for affected records → projections → snapshot materialization
 ```
 
-- Failures are classified as `HTTP_4XX | HTTP_5XX | TIMEOUT | TOO_LARGE | SCHEMA_DRIFT | EMPTY_SUSPICIOUS | RATE_LIMITED | DB_ERROR`.
+- Failures are classified as `HTTP_4XX | HTTP_5XX | TIMEOUT | TOO_LARGE | SCHEMA_DRIFT | EMPTY_SUSPICIOUS | RATE_LIMITED | DB_ERROR | LEASE_EXPIRED | NETWORK | CONFIG_ERROR | ABORTED | UNKNOWN` (ADR-032).
+  `CONFIG_ERROR` and `ABORTED` describe GeoNerva's own state, not the provider's, and are excluded from source-health derivation.
 - Retries use exponential backoff with jitter and honour `Retry-After`.
 - A per-source circuit breaker opens after 5 consecutive failures and probes every 15 minutes.
 - Step 6 failures never roll back facts. They are recorded as `analysis_runs` failures and retried on the next cycle, because projections are rebuildable.

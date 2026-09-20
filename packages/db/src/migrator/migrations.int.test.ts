@@ -10,7 +10,7 @@ import type pg from 'pg';
 import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { freshnessPolicySchema, INITIAL_FRESHNESS_POLICIES } from '@geonerva/domain';
+import { ERROR_CLASSES, freshnessPolicySchema, INITIAL_FRESHNESS_POLICIES } from '@geonerva/domain';
 
 import { createDb } from '../client.ts';
 import type { DB } from '../generated/database.ts';
@@ -372,6 +372,33 @@ describe('seeds', () => {
       'VIIRS_NOAA21_NRT',
     ]);
     expect(result.rows.every((row) => row.resolution_m === 375)).toBe(true);
+  });
+
+  it('accepts every documented error class and refuses anything else (ADR-032)', async () => {
+    // The taxonomy exists in two places — the domain union and this CHECK — and a class the code
+    // can produce but the database refuses would crash the run *while it is recording a failure*,
+    // which is the worst moment to discover it. Before migration 0011 this failed on NETWORK.
+    for (const errorClass of ERROR_CLASSES) {
+      await expect(
+        sql`
+          INSERT INTO geonerva.ingestion_runs
+            (id, source_id, trigger, started_at, committed_at, status, error_class)
+          VALUES (gen_random_uuid(), 'usgs', 'MANUAL', now(), now(), 'FAILED', ${errorClass})
+        `.execute(db),
+        `the database refuses the documented class ${errorClass}`,
+      ).resolves.toBeDefined();
+    }
+
+    await expect(
+      sql`
+        INSERT INTO geonerva.ingestion_runs
+          (id, source_id, trigger, started_at, committed_at, status, error_class)
+        VALUES (gen_random_uuid(), 'usgs', 'MANUAL', now(), now(), 'FAILED', 'MADE_UP')
+      `.execute(db),
+      'an unclassified failure must not slip through as free text',
+    ).rejects.toThrow();
+
+    await sql`DELETE FROM geonerva.ingestion_runs WHERE trigger = 'MANUAL'`.execute(db);
   });
 
   it('seeds one GDACS product per event type', async () => {
