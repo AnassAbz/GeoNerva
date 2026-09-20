@@ -20,3 +20,17 @@ export type {
   DataConfidenceInput,
   SourceAvailabilityInput,
 } from './availability.ts';
+
+export { demote, promoteWithinHeuristics, reason } from './assessment.ts';
+export type { Assessment, Reason } from './assessment.ts';
+
+export {
+  AUTHORITATIVE_ALERT_RADIUS_KM,
+  DEEP_FOCUS_KM,
+  EARTHQUAKE_BANDS,
+  EARTHQUAKE_MODEL_VERSION,
+  FELT_REPORTS_THRESHOLD,
+  assessEarthquake,
+  hypocentralDistanceKm,
+} from './earthquake.ts';
+export type { EarthquakeInput } from './earthquake.ts';
