@@ -208,6 +208,11 @@ RECOMMENDED NEXT STEP
 - **Acceptance criteria:** G3. `worker start` ingests live USGS locally for 1 h with no errors.
 - **Expected commits:** `feat(http): add hardened outbound client`, `feat(sources): define adapter contract`, `feat(pipeline): add ingestion run lifecycle`, `feat(ingestion): add USGS earthquake adapter`, `feat(worker): add scheduler and CLI`, `feat(worker): add USGS backfill`.
 - **Risks:** the transaction size for backfills (chunk commits); deciding which volatile fields to exclude from the USGS hash.
+- **Delivered [P3 complete, 2026-09-19]** — tasks 1, 2, 3 and 5's `start`/`run --source` in full. Deviations, each deliberate:
+  - **Task 4's FDSN reconciles and task 5's `backfill usgs` were not built.** Both are *additional interfaces* to USGS (`fdsnws/event/1/query` with `updatedafter` and `includedeleted=only`, plus count-guided chunking), not part of the vertical slice the phase brief scoped: fixture → parse → normalize → persist → as-of read, proven idempotent. They move to **P4 alongside the other adapters**, where the deletion and reconcile machinery is shared work rather than a USGS special case. The storage measurement is the second reason: a 260k-event backfill needs the raw-payload retention decision (ARCHITECTURE §12) made first, or it will not fit the budget.
+  - **`croner` was not introduced.** Every v1 schedule is an interval, not a calendar; the scheduler uses injected timers, which is what makes the jitter and the breaker testable without waiting. The first genuinely calendar-based job (the daily reconcile, the retention sweep) is the right moment for a cron dependency.
+  - **Conditional GET is implemented in the client but unused.** The frozen schema has nowhere to persist a validator between runs, so "nothing changed" compares the body digest against the previous run's `payload_sha256`. See ARCHITECTURE §4.1.
+  - **The error taxonomy was extended** (ADR-032), the only frozen-contract change P3 made.
 
 ### P4 — Remaining P0 adapters (parallel: 4a ∥ 4b ∥ 4c)
 - **Goal:** EMSC, GDACS and FIRMS complete to the same standard as USGS.

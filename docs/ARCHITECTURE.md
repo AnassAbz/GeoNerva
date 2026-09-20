@@ -107,6 +107,9 @@ domain, geo, db, relevance, baselines, changes, config ◄── briefing
 domain, geo, sources, db, correlation, briefing, http, config ◄── pipeline
 domain, briefing, config ◄── ai
 briefing, geocoding, ai, config ◄── apps/web
+  db/asof ◄── apps/web   (P3: reads only through the as-of layer; the dependency-cruiser rule
+                          `web-reads-facts-only-through-asof` refuses the write side, and the
+                          `@geonerva/db/asof` subpath is what makes that satisfiable)
 pipeline, config ◄── apps/worker
 ```
 

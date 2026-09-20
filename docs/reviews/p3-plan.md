@@ -30,7 +30,8 @@ packages/sources/       contract.ts  — SourceAdapter, descriptor, FetchResult,
                         usgs/        — descriptor, feed URLs, Zod parse, pure normalize
 packages/pipeline/      run.ts       — the 6-step lifecycle, stage timings, counters
                         logging.ts   — structured events with a redaction allowlist
-apps/worker/            `run --source usgs [--feed all_day] [--reconcile]`
+apps/worker/            `run --source usgs [--feed all_day]`, `start` (scheduler + breaker)
+                        `--reconcile` belongs with the FDSN reconcile in P4, not here
 ```
 
 ## 3. Identity and idempotency, stated precisely

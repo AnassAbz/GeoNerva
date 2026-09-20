@@ -88,6 +88,16 @@ export function parseIds(ids: string | null): readonly string[] {
  */
 export function wrapLongitude(value: number): number {
   if (!Number.isFinite(value)) return Number.NaN;
+  /*
+   * A value already in range is returned untouched.
+   *
+   * The modular arithmetic below is three floating-point operations, and on an in-range value
+   * they are not free: -155.285507202148 comes back as -155.28550720214798. That is about a
+   * hundredth of a millimetre and physically meaningless, but it is still GeoNerva silently
+   * storing a number the provider did not send, and it would change the content hash of every
+   * record for no reason. The golden snapshot caught it.
+   */
+  if (value >= -180 && value < 180) return value;
   const wrapped = ((((value + 180) % 360) + 360) % 360) - 180;
   // -0 is a valid longitude but hashes differently from 0.
   return wrapped === 0 ? 0 : wrapped;

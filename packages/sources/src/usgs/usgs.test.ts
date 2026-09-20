@@ -339,6 +339,7 @@ describe('normalization', () => {
     [-180, -180],
     [180.5, -179.5],
     [179.899, 179.899],
+    [-155.285507202148, -155.285507202148],
   ])('wraps longitude %p to %p instead of refusing it', (input, expected) => {
     // USGS publishes Kermadec and Fiji events on the antimeridian, and a captured month of M4.5+
     // data already reached 179.899. `isNormalizedLongitude` excludes exactly 180, so rejecting
