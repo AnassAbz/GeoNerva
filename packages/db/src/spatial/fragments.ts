@@ -122,7 +122,7 @@ export function bufferedConvexHull(
 
 /** GeoJSON for a geography column, with a bounded number of decimals. */
 export function asGeoJson(column: string, decimals = 6): RawBuilder<string> {
-  return sql`ST_AsGeoJSON(${sql.ref(column)}::geometry, ${sql.lit(decimals)})`;
+  return sql`ST_AsGeoJSON(${sql.ref(column)}::geometry, ${decimals})`;
 }
 
 /** GeoJSON for an arbitrary geography expression. */
@@ -130,7 +130,7 @@ export function expressionAsGeoJson(
   expression: RawBuilder<unknown>,
   decimals = 6,
 ): RawBuilder<string> {
-  return sql`ST_AsGeoJSON(${expression}::geometry, ${sql.lit(decimals)})`;
+  return sql`ST_AsGeoJSON(${expression}::geometry, ${decimals})`;
 }
 
 /** The centroid of a geography, returned as geography. */

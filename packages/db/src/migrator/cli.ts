@@ -19,7 +19,13 @@ import { fileURLToPath } from 'node:url';
 
 import pg from 'pg';
 
-import { assertConnectionUrlPolicy, describeConnectionTarget } from '../connection-url.ts';
+import {
+  assertConnectionUrlPolicy,
+  describeConnectionTarget,
+  driverConnectionString,
+  sslConfigFor,
+} from '../connection-url.ts';
+import { SEARCH_PATH } from '../schema.ts';
 import { migrateUp, migrationStatus } from './runner.ts';
 
 const COMMANDS = ['up', 'status'] as const;
@@ -84,7 +90,16 @@ async function main(): Promise<number> {
 
   assertConnectionUrlPolicy(url, { nodeEnv: process.env['NODE_ENV'], variableName });
 
-  const client = new pg.Client({ connectionString: url, connectionTimeoutMillis: 10_000 });
+  // The same TLS handling as every other connection: policy checked above, TLS parameters
+  // stripped so the driver uses GeoNerva's `ssl` object rather than the URL's interpretation,
+  // and TimeZone pinned to UTC so a migration cannot create local-midnight partition bounds
+  // (R-4, R-1).
+  const client = new pg.Client({
+    connectionString: driverConnectionString(url, variableName),
+    ssl: sslConfigFor(url, { nodeEnv: process.env['NODE_ENV'], variableName }),
+    options: `-c search_path=${SEARCH_PATH.replaceAll(' ', '')} -c TimeZone=UTC`,
+    connectionTimeoutMillis: 10_000,
+  });
   await client.connect();
   write(`database: ${describeConnectionTarget(url, variableName)}`);
 

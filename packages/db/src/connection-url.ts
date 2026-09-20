@@ -64,8 +64,11 @@ function parse(url: string, variableName: string): URL {
 /** The `sslmode` query parameter, lowercased, or `null` when absent. */
 export function sslModeOf(url: string, variableName = 'DATABASE_URL'): string | null {
   const parsed = parse(url, variableName);
-  const mode = parsed.searchParams.get('sslmode');
-  return mode === null ? null : mode.trim().toLowerCase();
+  // Query-parameter names are case-sensitive in the URL API but not in libpq (R-8).
+  for (const [name, value] of parsed.searchParams) {
+    if (name.toLowerCase() === 'sslmode') return value.trim().toLowerCase();
+  }
+  return null;
 }
 
 /**
@@ -118,11 +121,15 @@ export function assertConnectionUrlPolicy(
   // from pg v9 plain `sslmode=require` will too. GeoNerva strips TLS parameters before handing the
   // URL to the driver (see `driverConnectionString`), so carrying them is always a mistake worth
   // naming rather than silently ignoring (S-2).
-  for (const rejected of ['uselibpqcompat', 'ssl']) {
-    if (parsed.searchParams.has(rejected)) {
+  for (const name of parsed.searchParams.keys()) {
+    const lower = name.toLowerCase();
+    // `sslmode` is the one TLS parameter the policy *reads*; everything else that could steer the
+    // driver's TLS is refused rather than silently stripped, so a deployment cannot believe it
+    // pinned a certificate in the URL (S-2, R-5, R-8).
+    if (lower !== 'sslmode' && isTlsParameter(lower)) {
       throw new DatabaseUrlError(
         variableName,
-        `must not set "${rejected}": GeoNerva configures TLS on the driver, not in the URL`,
+        `must not set "${name}": GeoNerva configures TLS on the driver, not in the URL`,
       );
     }
   }
@@ -176,14 +183,15 @@ export function sslConfigFor(
 }
 
 /** Query parameters that decide TLS. GeoNerva owns this decision, so they never reach the driver. */
-const TLS_QUERY_PARAMETERS = [
-  'sslmode',
-  'ssl',
-  'uselibpqcompat',
-  'sslrootcert',
-  'sslcert',
-  'sslkey',
-];
+/**
+ * Parameters that influence TLS. Matched case-insensitively, and `ssl*` is a prefix rule rather
+ * than a list: libpq keeps adding parameters (`sslnegotiation` was missed by an explicit list,
+ * R-5), and a parameter GeoNerva has never heard of must not get to configure the socket.
+ */
+function isTlsParameter(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower.startsWith('ssl') || lower === 'uselibpqcompat' || lower === 'requiressl';
+}
 
 /**
  * The connection string to hand to node-postgres, with every TLS parameter removed (S-2).
@@ -196,6 +204,8 @@ const TLS_QUERY_PARAMETERS = [
  */
 export function driverConnectionString(url: string, variableName = 'DATABASE_URL'): string {
   const parsed = parse(url, variableName);
-  for (const parameter of TLS_QUERY_PARAMETERS) parsed.searchParams.delete(parameter);
+  for (const name of [...parsed.searchParams.keys()]) {
+    if (isTlsParameter(name)) parsed.searchParams.delete(name);
+  }
   return parsed.toString();
 }

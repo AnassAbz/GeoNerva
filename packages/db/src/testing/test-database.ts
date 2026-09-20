@@ -8,9 +8,10 @@
  *     not even as a fallback, so a developer with a production URL in their shell cannot lose
  *     their data to `pnpm test:integration`. When the variable is unset, the harness uses the
  *     documented local default (`…:54320/geonerva_test`) and nothing else.
- *  2. **Local, or explicitly permitted.** The host must be loopback, or the database name must
- *     end in `_test`. Anything else is refused unless `GEONERVA_ALLOW_REMOTE_TEST_DB=1` is set,
- *     which makes reaching a remote database a deliberate, visible act.
+ *  2. **Local *and* disposable.** The host must be loopback **and** the database name must end in
+ *     `_test`. Either condition alone is not enough: the development database is on loopback, and
+ *     so is any production database someone has tunnelled. Anything else is refused unless
+ *     `GEONERVA_ALLOW_REMOTE_TEST_DB=1` is set, which makes it a deliberate, visible act.
  *  3. **Isolated.** Tests run against their own database inside the shared container, created on
  *     demand and migrated from empty. The suite truncates between tests rather than sharing
  *     state, and it never touches the development database.
@@ -65,7 +66,7 @@ export function resolveTestDatabaseUrl(env: TestEnv): string {
   }
 
   const isLocal = isLoopbackHost(host);
-  const looksLikeTestDatabase = database.endsWith('_test');
+  const looksLikeTestDatabase = database.toLowerCase().endsWith('_test');
 
   // Both conditions, not either (S-3). "Loopback" is not evidence that a database is disposable:
   // the development database is on loopback, and so is any production database someone has
