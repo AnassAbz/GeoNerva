@@ -349,7 +349,11 @@ importers:
         specifier: workspace:*
         version: link:../test-fixtures
 
-  packages/relevance: {}
+  packages/relevance:
+    dependencies:
+      '@geonerva/domain':
+        specifier: workspace:*
+        version: link:../domain
 
   packages/sources:
     dependencies:
