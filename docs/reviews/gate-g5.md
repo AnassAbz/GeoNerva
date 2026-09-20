@@ -155,8 +155,42 @@ The run row is where all four sources meet, and the distinctions `/data-status` 
 | Product switched off | `SKIPPED` | — | Deliberate, not a fault |
 | Another worker holds it | *(no run row)* | — | A scheduler being early is not an event |
 
-Backfill runs are excluded from live-poll health (the G4 fix), so a long backfill cannot make a
-dead live feed read `FRESH`.
+### What the health model actually said
+
+Derived from the real database at 2026-09-20T21:28Z, after the session's runs — not reasoned
+about, queried:
+
+```
+product                      status        lastErrorClass  newestObserved            reason
+eccc/weather-alerts          UNAVAILABLE   -               -                         DISABLED
+emsc/rts                     DEGRADED      -               2026-09-20T20:24:05Z      POLL_AGEING
+firms/VIIRS_NOAA20_NRT       FRESH         -               2026-09-20T18:17:00Z      OK
+firms/VIIRS_NOAA21_NRT       FRESH         DB_ERROR        2026-09-20T18:56:00Z      OK
+gdacs/EQ                     FRESH         DB_ERROR        2026-09-20T13:55:47Z      OK
+gdacs/FL                     FRESH         SCHEMA_DRIFT    2026-09-18T01:00:00Z      OK
+gdacs/VO                     FRESH         -               -                         OK
+gdacs/DR                     FRESH         -               -                         OK
+usgs/comcat                  UNAVAILABLE   -               -                         NEVER_SUCCEEDED
+```
+
+Five different things are being said there, and each is the truth:
+
+- **`gdacs/VO` and `gdacs/DR` are `FRESH` with no observation at all.** The poll worked and there
+  are no live volcanoes or droughts. That is the *unavailable ≠ empty ≠ unknown* rule visible in
+  one row: a source that is working and has nothing to report does not look like a source that is
+  down.
+- **`emsc/rts` is `DEGRADED / POLL_AGEING`,** 56 minutes after its last poll against a policy that
+  expects one every 5 and calls it stale at 60. Ageing, not failed — nothing is wrong yet.
+- **`firms/VIIRS_NOAA21_NRT` is `FRESH` while still carrying `lastErrorClass: DB_ERROR`.** It
+  failed on the negative FRP and then recovered. The current state and the last fault are
+  different facts and are reported as different fields.
+- **`eccc/weather-alerts` is `UNAVAILABLE / DISABLED`,** not "broken" — it is switched off in the
+  database, which is the documented control surface.
+- **`usgs/comcat` is `UNAVAILABLE / NEVER_SUCCEEDED`, and that is correct.** This database holds
+  only `BACKFILL` and `RECONCILE` runs for USGS: a 439-record backfill and a deletion sweep both
+  succeeded within the last three hours, and neither is evidence that the *live feed* works. This
+  is the G4 HIGH finding — *"a backfill made a dead live feed read `FRESH`"* — demonstrably fixed,
+  on live data, in the direction that costs us something rather than the direction that flatters.
 
 ## 8. Defects found by running the code against the real world
 
