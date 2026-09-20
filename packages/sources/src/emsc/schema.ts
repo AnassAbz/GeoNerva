@@ -57,9 +57,19 @@ export const emscFeaturePropertiesSchema = z.looseObject({
   lon: finiteNumber,
   /** Kilometres, positive downwards. Negative above the datum. See the header. */
   depth: finiteNumber.nullable(),
-  mag: finiteNumber.nullable(),
+  /*
+   * `mag` and `magtype` are the two fields whose **key** EMSC sometimes omits rather than sending
+   * null: 2 of the 97 events on 2010-01-01 carry neither. Every other field this adapter reads
+   * stays required-even-when-nullable, so that a rename is a loud reject rather than a silently
+   * missing value; these two cannot be, because the provider genuinely does not always send them.
+   *
+   * That trade is paid for in the parser instead. A rename of `mag` would make every magnitude
+   * null at once, which is a different shape from the occasional bulletin event with no
+   * magnitude, and `parseEmscFeed` fails the batch when magnitudes disappear wholesale.
+   */
+  mag: finiteNumber.nullish(),
   /** Case is not stable: `ml` on recent events, `MD` on older ones. Lowercased in normalize. */
-  magtype: z.string().max(100).nullable(),
+  magtype: z.string().max(100).nullish(),
   /**
    * Left open on purpose. Live counts over 2,000 recent events (2026-09-20) were `ke` 1,990,
    * `ue` 7, `se` 3, and EMSC's WADL documents no vocabulary for the field. Closing it on three

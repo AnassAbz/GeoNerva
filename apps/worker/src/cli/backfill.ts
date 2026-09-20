@@ -19,24 +19,48 @@ import {
 import {
   DEFAULT_WINDOW_PLAN,
   createSourceClient,
+  emscAdapter,
+  emscHistorical,
   usgsAdapter,
+  usgsHistorical,
+  type HistoricalInterface,
   type SourceAdapter,
 } from '@geonerva/sources';
 
-/** Sources with a historical query interface. USGS is the only one until P5. */
-const HISTORICAL_ADAPTERS: Readonly<Record<string, SourceAdapter<never>>> = {
-  usgs: usgsAdapter as SourceAdapter<never>,
+/**
+ * Sources with a historical query interface, each paired with how it answers one.
+ *
+ * The pairing is explicit rather than derived from the adapter because the two really are
+ * separate things: a live poll and a bounded query are different endpoints with different
+ * failure modes, and EMSC proved they can disagree about something as basic as whether an
+ * over-large window is an error (USGS) or a silently truncated body (EMSC).
+ */
+const HISTORICAL: Readonly<
+  Record<string, { readonly adapter: SourceAdapter<never>; readonly historical: HistoricalInterface }>
+> = {
+  usgs: { adapter: usgsAdapter as SourceAdapter<never>, historical: usgsHistorical() },
+  emsc: { adapter: emscAdapter as SourceAdapter<never>, historical: emscHistorical },
 };
+
+/**
+ * Sources whose deletions can be swept.
+ *
+ * EMSC is absent, and that is a measured fact rather than an omission: its FDSN service answers
+ * `includedeleted` with HTTP 400 *Unknown request parameters(s)*, and retractions are published
+ * only on a websocket. Offering `--deleted-only --source emsc` would let an operator believe a
+ * reconcile had run when nothing could have been reconciled.
+ */
+const SWEEPABLE = ['usgs'] as const;
 
 export const BACKFILL_USAGE = `Usage: geonerva-worker backfill --source <id> --from <date> --to <date>
 
-  --source          Which source to backfill (${Object.keys(HISTORICAL_ADAPTERS).join(', ')})
+  --source          Which source to backfill (${Object.keys(HISTORICAL).join(', ')})
   --from            Start of the range, inclusive (ISO 8601, e.g. 2026-01-01)
   --to              End of the range, exclusive (ISO 8601)
   --min-magnitude   Only events at or above this magnitude
   --window-days     Nominal window size before splitting (default 30)
   --max-intervals   Stop after this many windows, leaving the rest for the next run
-  --deleted-only    Sweep deletions instead of events
+  --deleted-only    Sweep deletions instead of events (${SWEEPABLE.join(', ')} only)
 
 Re-running the same range resumes the same plan; completed windows are not walked again.
 Exits 0 when the range completed, 2 when work remains, 1 when the worker could not run.`;
@@ -156,9 +180,9 @@ export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
 
   if (!help) {
     if (source === undefined) errors.push('--source is required');
-    else if (!(source in HISTORICAL_ADAPTERS)) {
+    else if (!(source in HISTORICAL)) {
       errors.push(
-        `unknown source: ${source} (available: ${Object.keys(HISTORICAL_ADAPTERS).join(', ')})`,
+        `unknown source: ${source} (available: ${Object.keys(HISTORICAL).join(', ')})`,
       );
     }
     if (from === undefined) errors.push('--from is required');
@@ -239,13 +263,14 @@ export async function runBackfillCommand(
   }
 
   const source = args.source;
-  const adapter = source === undefined ? undefined : HISTORICAL_ADAPTERS[source];
+  const entry = source === undefined ? undefined : HISTORICAL[source];
   const from = args.from;
   const to = args.to;
-  if (adapter === undefined || from === undefined || to === undefined) {
+  if (entry === undefined || from === undefined || to === undefined) {
     console.error('✗ the request is incomplete');
     return 2;
   }
+  const { adapter, historical } = entry;
 
   const handle = createDatabase(workerPoolOptions(config.DATABASE_URL_WORKER, config.NODE_ENV));
   try {
@@ -259,6 +284,18 @@ export async function runBackfillCommand(
      * GeoNerva invented, and `findRecordByAliases` exists precisely to make it impossible.
      */
     if (args.deletedOnly) {
+      /*
+       * Refused rather than silently doing nothing. EMSC has no deletion query at all, and a
+       * sweep that fetched nothing and reported SUCCEEDED would be indistinguishable from a
+       * catalogue with no retractions in the range.
+       */
+      if (!(SWEEPABLE as readonly string[]).includes(adapter.descriptor.sourceId)) {
+        console.error(
+          `✗ ${adapter.descriptor.sourceId} publishes no deletion query; ` +
+            `--deleted-only is available for ${SWEEPABLE.join(', ')}`,
+        );
+        return 1;
+      }
       const sweep = await runDeletionSweep({
         db: handle.db,
         adapter,
@@ -277,6 +314,7 @@ export async function runBackfillCommand(
     const outcome = await runBackfill({
       db: handle.db,
       adapter,
+      historical,
       client: createSourceClient(adapter.descriptor, {
         userAgent: `GeoNerva/${config.NODE_ENV} (+https://github.com/geonerva)`,
       }),

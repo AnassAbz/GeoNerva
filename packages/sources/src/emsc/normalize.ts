@@ -7,13 +7,23 @@
  * mangled in a way that still looks plausible becomes *corroborating evidence* for something that
  * never happened. The four things below are all silent if got wrong.
  *
- *  1. **Depth is `properties.depth`, not the GeoJSON z.** `geometry.coordinates[2]` is the
- *     **negation** of the depth, verified against live data on 2026-09-20 in both directions: an
- *     8.1 km event has z = −8.1, and a Hawaiʻi event 0.2 km *above* the datum has `depth: -0.2`
- *     with z = 0.2. The USGS adapter reads the z, because for USGS the z *is* the depth. Copying
- *     that line would have inverted every depth in the catalogue while every value stayed
- *     plausible. The adapter checks the relationship on every record rather than trusting it, so
- *     the day EMSC changes convention is a batch of rejects instead of a silently flipped sign.
+ *  1. **Depth is `properties.depth`, and the GeoJSON z cannot be used at all.** For the live RTS
+ *     catalogue `coordinates[2]` is the *negation* of the depth — an 8.1 km event publishes
+ *     z = -8.1, and a Hawaiʻi event 0.2 km *above* the datum publishes `depth: -0.2` with
+ *     z = 0.2. For the EMSC-EMB merged bulletin it is the depth itself: of 97 events on
+ *     2010-01-01, 78 EMB records publish z = +depth and 12 RTS records publish z = -depth (the
+ *     7 remaining EMB records are at depth 0, where both are the same number).
+ *
+ *     So there is no sign convention to follow, only two of them, and which one applies depends
+ *     on a field the GeoJSON itself does not carry. The USGS adapter reads the z because for
+ *     USGS the z *is* the depth; copying that line inverted 78 of 97 historical depths, and
+ *     every value stayed plausible. What the data does support is that the **magnitudes** always
+ *     agree, so that is what is checked — it still catches the z becoming some unrelated number,
+ *     without asserting a sign rule the provider does not keep.
+ *
+ *     Found by a live backfill of one 2010 day rejecting 73 % of its records, against the sign
+ *     check that assumed the RTS convention held everywhere. Fixture: `emsc/emb-2010-day.json`.
+ *
  *  2. **Identity is `unid`, not the feature `id`.** They agree in everything observed, which is
  *     exactly why the check is cheap and worth making: `unid` is what EMSC documents as stable
  *     and `id` is what a serializer is free to restate. Disagreement is fatal to the batch, not a
@@ -53,13 +63,15 @@ import { roundStored, wrapLongitude } from '../usgs/normalize.ts';
 import type { EmscFeature } from './schema.ts';
 
 /**
- * How far `geometry.coordinates[2]` may sit from `-properties.depth` before the record is
+ * How far |`geometry.coordinates[2]`| may sit from |`properties.depth`| before the record is
  * refused.
  *
  * Not zero. The two are serialized independently and EMSC prints them at different precisions —
  * `depth: 9` against z `9.0` is common — so an exact comparison would reject on formatting. A
  * metre is far below anything a hypocentre is determined to and far above any rounding EMSC does,
- * so it separates "the same number twice" from "the convention changed" without straddling either.
+ *
+ * Absolute values, because the *sign* differs between EMSC's two catalogues and only the
+ * magnitude is a claim both of them make. See the header.
  */
 const DEPTH_AGREEMENT_KM = 0.001;
 
@@ -189,18 +201,19 @@ export function normalizeEmscFeature(
   }
 
   /*
-   * The depth, and the check that the sign convention has not moved.
+   * The depth, and a cross-check of the one thing both serializers agree on.
    *
    * `geoZ` is optional in the schema because a two-element coordinate pair is valid GeoJSON; when
-   * EMSC sends it — it always has — it must be the negation.
+   * EMSC sends it — it always has — its magnitude must be the depth's. Its *sign* must not be
+   * read: RTS negates it and EMB does not.
    */
   const depthKm = p.depth === null ? null : roundStored(p.depth);
   if (p.depth !== null && geoZ !== undefined) {
-    if (Math.abs(geoZ + p.depth) > DEPTH_AGREEMENT_KM) {
+    if (Math.abs(Math.abs(geoZ) - Math.abs(p.depth)) > DEPTH_AGREEMENT_KM) {
       throw rejected(
         unid,
         'SCHEMA_INVALID',
-        `depth=${p.depth} and geometry z=${geoZ} are not negations, so the depth convention has changed`,
+        `depth=${p.depth} and geometry z=${geoZ} are not the same distance, so they are not the same measurement`,
       );
     }
   }
@@ -216,7 +229,9 @@ export function normalizeEmscFeature(
 
   const observedAt = instant(unid, 'time', p.time);
   const sourceUpdatedAt = p.lastupdate === null ? null : instant(unid, 'lastupdate', p.lastupdate);
-  const magnitude = p.mag === null ? null : roundStored(p.mag);
+  // An absent key and an explicit null are the same fact: EMSC has no magnitude for this event.
+  // (They are *not* the same fact at batch level — see the drift check in the parser.)
+  const magnitude = p.mag === null || p.mag === undefined ? null : roundStored(p.mag);
   const magnitudeType = optionalText(p.magtype)?.toLowerCase() ?? null;
   const contributor = optionalText(p.auth) ?? null;
   const region = optionalText(p.flynn_region) ?? null;

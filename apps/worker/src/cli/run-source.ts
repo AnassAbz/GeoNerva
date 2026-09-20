@@ -26,14 +26,36 @@ import { createJsonLogger, runIngestion, type RunOutcome } from '@geonerva/pipel
 import {
   USGS_FEEDS,
   createSourceClient,
+  emscAdapter,
   isUsgsFeed,
   usgsAdapter,
   type SourceAdapter,
 } from '@geonerva/sources';
 
-/** The adapters this build can run. Adding the second source is one line here. */
+/** The adapters this build can run. */
 const ADAPTERS: Readonly<Record<string, SourceAdapter<never>>> = {
   usgs: usgsAdapter as SourceAdapter<never>,
+  emsc: emscAdapter as SourceAdapter<never>,
+};
+
+/**
+ * What `--feed` means, per source, checked before a database connection is opened.
+ *
+ * A map rather than a chain of `if (source === ...)`, because the second source made the shape of
+ * the problem visible: `--feed` does not mean the same kind of thing twice. For USGS it names one
+ * of three summary files; for EMSC there are no feeds at all, only how far back `updatedafter`
+ * reaches, in minutes. A source with nothing to validate is absent from the map and its value
+ * goes to the adapter, which refuses what it does not understand rather than defaulting.
+ */
+const FEED_VALIDATORS: Readonly<Record<string, (feed: string) => string | null>> = {
+  usgs: (feed) =>
+    isUsgsFeed(feed) ? null : `unknown feed: ${feed} (available: ${USGS_FEEDS.join(', ')})`,
+  emsc: (feed) => {
+    const minutes = Number(feed);
+    return Number.isInteger(minutes) && minutes >= 1 && minutes <= 10_080
+      ? null
+      : `unknown feed: ${feed} (EMSC takes a lookback in whole minutes, 1 to 10080)`;
+  },
 };
 
 export const AVAILABLE_SOURCES = Object.keys(ADAPTERS);
@@ -83,8 +105,9 @@ export function parseRunArgs(argv: readonly string[]): RunSourceArgs {
   }
   // Checked here as well as in the adapter, so an operator gets the answer before the worker
   // opens a database connection — and never gets a different feed than the one they named.
-  if (source === 'usgs' && feed !== undefined && !isUsgsFeed(feed)) {
-    errors.push(`unknown feed: ${feed} (available: ${USGS_FEEDS.join(', ')})`);
+  if (source !== undefined && feed !== undefined) {
+    const complaint = FEED_VALIDATORS[source]?.(feed);
+    if (complaint !== null && complaint !== undefined) errors.push(complaint);
   }
 
   return {

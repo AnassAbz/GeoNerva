@@ -21,6 +21,8 @@ import { z } from 'zod';
 
 import type { HttpClient, SourceFetchError } from '@geonerva/http';
 
+import type { HistoricalInterface, HistoricalRequestOptions } from '../historical.ts';
+
 import {
   assertWindow,
   bridgeEndtime,
@@ -332,3 +334,33 @@ export type { UsgsFeature };
 // Re-exported so that `@geonerva/sources` keeps one name for each of these, wherever it now lives.
 export { FdsnQueryError, fdsnWindowSchema };
 export type { FdsnWindow };
+
+/**
+ * USGS as a historical source.
+ *
+ * A factory rather than a constant because `mode` selects the deletion query, which only this
+ * service has. The backfill never asks for `deleted-only` — a sweep is a different operation with
+ * a different persist path (that was a HIGH finding in G4) — but the by-mode shape keeps one
+ * definition of how this service is queried.
+ */
+export function usgsHistorical(mode: FdsnMode = 'live'): HistoricalInterface {
+  return {
+    endpoint: () => fdsnEndpoint(mode),
+    count: async (window, options: HistoricalRequestOptions) => {
+      const answer = await fdsnCount(window, mode, options);
+      return { count: answer.count, overLimit: answer.overLimit };
+    },
+    fetch: (window, options: HistoricalRequestOptions) => fdsnFetch(window, mode, options),
+    /*
+     * 400 only.
+     *
+     * P0 did see a 503 "table is full" mean "too many rows", but 503 is *also* the ordinary
+     * "provider is busy", and by the time a run outcome exists the body that told them apart is
+     * gone. Treating every 503 as a size refusal halves a healthy window permanently — the parent
+     * stays SPLIT, so a transient outage leaves a distortion that resume never repairs. A 400 is
+     * safe to read this way because the parameters are typed and closed, so a malformed query is
+     * not reachable; a 503 goes to the ordinary retry path.
+     */
+    isSizeRefusal: (httpStatus) => httpStatus === 400,
+  };
+}

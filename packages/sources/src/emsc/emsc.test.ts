@@ -278,14 +278,54 @@ describe('normalizing', () => {
     expect(normalizeEmscFeature(hawaii, normalizeCtx).depthKm).toBe(-0.2);
   });
 
-  it('rejects a record whose depth and z stop being negations', () => {
-    // The day EMSC changes convention is a batch of rejects, not a silently flipped sign.
+  it('reads the bulletin depth, where the z is the depth rather than its negation', () => {
+    /*
+     * The regression for the defect a live backfill found: a 2010 day rejected 73 % of its
+     * records against a check that assumed the RTS sign convention held everywhere. It does not.
+     * Of the 97 events that day, 78 EMSC-EMB records publish z = +depth and 12 RTS records
+     * publish z = -depth; the 7 remaining EMB records sit at depth 0, where the two agree.
+     *
+     * Every value stayed plausible when it was wrong, which is the whole reason this is a test
+     * and not a comment: 78 of 97 historical depths were sign-inverted and nothing looked amiss.
+     */
+    const result = parse('emb-2010-day.json');
+    if (result.verdict !== 'OK') throw new Error(`the bulletin must ingest, got ${result.detail}`);
+    expect(result.records).toHaveLength(97);
+    expect(result.rejects).toHaveLength(0);
+
+    const byCatalogue = { 'EMSC-EMB': 0, 'EMSC-RTS': 0 } as Record<string, number>;
+    for (const record of result.records) {
+      const normalized = normalizeEmscFeature(record, normalizeCtx);
+      const catalogue = String(normalized.attributes['provider_catalog']);
+      byCatalogue[catalogue] = (byCatalogue[catalogue] ?? 0) + 1;
+      // Positive, always: EMSC's 2010 bulletin has no event above the datum, and a sign-reading
+      // adapter would have produced 78 negative ones.
+      expect(normalized.depthKm === null || normalized.depthKm >= 0).toBe(true);
+    }
+    expect(byCatalogue['EMSC-EMB']).toBe(85);
+    expect(byCatalogue['EMSC-RTS']).toBe(12);
+  });
+
+  it('still rejects a z that is not the same distance as the depth', () => {
+    // The sign is unusable; the magnitude is the one claim both serializers make, so a z that is
+    // some other number entirely is still drift.
     expect(() =>
       normalizeOne({
         ...feature(),
-        geometry: { type: 'Point', coordinates: [-5.2113, 32.2039, 8.1] },
+        geometry: { type: 'Point', coordinates: [-5.2113, 32.2039, 40] },
       }),
-    ).toThrow(/depth convention has changed/);
+    ).toThrow(/not the same distance/);
+  });
+
+  it('accepts a bulletin event that omits the magnitude keys altogether', () => {
+    // EMSC omits the `mag` and `magtype` *keys* on some bulletin events rather than sending null:
+    // 2 of the 97 on 2010-01-01. Requiring the key would reject a real event forever.
+    const withoutMagnitude = feature();
+    delete (withoutMagnitude.properties as Record<string, unknown>)['mag'];
+    delete (withoutMagnitude.properties as Record<string, unknown>)['magtype'];
+    const record = normalizeOne(withoutMagnitude);
+    expect(record.magnitude).toBeNull();
+    expect(record.magnitudeType).toBeNull();
   });
 
   it('keys identity on unid and treats a disagreeing feature id as fatal', () => {
@@ -356,6 +396,53 @@ describe('normalizing', () => {
   it('rejects a timestamp outside the range a real catalogue can hold', () => {
     // Parsable but not a fact: it would sort to one end of every time-ordered query forever.
     expect(() => normalizeOne(feature({ time: '1731-01-01T00:00:00Z' }))).toThrow(/1900, 2100/);
+  });
+});
+
+describe('a field that disappeared', () => {
+  it('fails the batch when magnitudes vanish wholesale', () => {
+    /*
+     * The cost of making `mag` optional, paid back.
+     *
+     * A rename to `magnitude` parses perfectly — every field is a loose object — and quietly
+     * nulls every magnitude in the catalogue. Magnitude drives relevance, so this has to be loud,
+     * and the only thing distinguishing it from the bulletin's occasional missing value is how
+     * much of the batch is affected: ~2 % against 100 %.
+     */
+    const features = Array.from({ length: 40 }, (_, index) => {
+      const unid = `20100101_000${String(index).padStart(4, '0')}`;
+      const record = feature({ unid }, { id: unid });
+      delete (record.properties as Record<string, unknown>)['mag'];
+      return record;
+    });
+    const result = parseEmscFeed(bodyOf({ type: 'FeatureCollection', features }), ctx);
+    expect(result.verdict).toBe('REJECTED');
+    if (result.verdict !== 'REJECTED') return;
+    expect(result.errorClass).toBe('SCHEMA_DRIFT');
+    expect(result.detail).toMatch(/no magnitude/);
+  });
+
+  it('does not fire on the real bulletin, where a few events simply have none', () => {
+    // 2 of 97 on the captured day. A rule that cannot tell this from a rename is not a rule.
+    const result = parse('emb-2010-day.json');
+    expect(result.verdict).toBe('OK');
+    if (result.verdict !== 'OK') return;
+    const missing = result.records.filter(
+      (record) => record.properties.mag === undefined || record.properties.mag === null,
+    );
+    expect(missing).toHaveLength(2);
+  });
+
+  it('says nothing about a batch too small for a ratio to mean anything', () => {
+    // Three records with one missing is 33 %, and means nothing at all.
+    const features = Array.from({ length: 3 }, (_, index) => {
+      const unid = `20100101_000${String(index).padStart(4, '0')}`;
+      const record = feature({ unid }, { id: unid });
+      if (index === 0) delete (record.properties as Record<string, unknown>)['mag'];
+      return record;
+    });
+    const result = parseEmscFeed(bodyOf({ type: 'FeatureCollection', features }), ctx);
+    expect(result.verdict).toBe('OK');
   });
 });
 

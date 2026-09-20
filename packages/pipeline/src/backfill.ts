@@ -43,15 +43,11 @@ import {
   FdsnQueryError,
   WindowPlanError,
   describePlanDefect,
-  fdsnCount,
-  fdsnEndpoint,
-  fdsnFetch,
-  isWindowTooLarge,
   payloadHash,
   planWindows,
   splitWindow,
-  type FdsnMode,
   type FdsnWindow,
+  type HistoricalInterface,
   type PlannedWindow,
   type SourceAdapter,
   type WindowPlanOptions,
@@ -82,7 +78,15 @@ export interface RunBackfillOptions<TRaw> {
    * and the plan says exactly where it got to.
    */
   readonly maxIntervals?: number;
-  readonly mode?: FdsnMode;
+  /**
+   * How this source answers a bounded historical question.
+   *
+   * Passed in rather than read off the adapter, because the two are genuinely separate: an
+   * adapter is a live poll, and a service can have one without the other. What made it an
+   * interface instead of a pair of imports was EMSC disagreeing with USGS about how an
+   * over-large window is reported — see `HistoricalInterface`.
+   */
+  readonly historical: HistoricalInterface;
 }
 
 export interface BackfillOutcome {
@@ -128,7 +132,6 @@ export async function runBackfill<TRaw>(
 ): Promise<BackfillOutcome> {
   const { db, adapter, client, request } = options;
   const logger = options.logger ?? createJsonLogger();
-  const mode = options.mode ?? 'live';
   const descriptor = adapter.descriptor;
   const base = { sourceId: descriptor.sourceId, productCode: descriptor.productCode };
 
@@ -171,7 +174,10 @@ export async function runBackfill<TRaw>(
   const { plan, created } = await openBackfillPlan(db, {
     sourceId: descriptor.sourceId,
     productId: product.id,
-    mode: mode === 'deleted-only' ? 'DELETION_SWEEP' : 'HISTORICAL',
+    // `runBackfill` only ever ingests. A deletion sweep is a different operation with a
+    // different persist path — routing one through here was a HIGH finding in G4 — and it opens
+    // its own DELETION_SWEEP plan.
+    mode: 'HISTORICAL',
     rangeFrom: request.from,
     rangeTo: request.to,
     minMagnitude: request.minMagnitude ?? null,
@@ -228,9 +234,15 @@ export async function runBackfill<TRaw>(
     const window = toFdsnWindow(interval, request.minMagnitude);
 
     try {
-      // Ask how many rows the window holds before paying for them. The count endpoint answers
-      // HTTP 200 with an `error` field when it is over the limit, which `parseFdsnCount` reads.
-      const count = await fdsnCount(window, mode, {
+      /*
+       * Ask how many rows the window holds before paying for them.
+       *
+       * For USGS this saves a request that would be refused. For EMSC it is the *only* protection
+       * there is: that service answers an over-large query with HTTP 200 and a silently truncated
+       * body, so a window fetched without being counted could be one fifth of an answer marked
+       * DONE. Each source decides what "over limit" means for it.
+       */
+      const count = await options.historical.count(window, {
         client,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
@@ -240,7 +252,7 @@ export async function runBackfill<TRaw>(
         continue;
       }
 
-      const outcome = await ingestWindow(options, plan.id, interval, window, mode, logger);
+      const outcome = await ingestWindow(options, plan.id, interval, window, logger);
 
       if (outcome.status === 'LEASE_HELD' || outcome.status === 'SKIPPED') {
         /*
@@ -316,7 +328,7 @@ export async function runBackfill<TRaw>(
        */
       if (
         outcome.status === 'FAILED' &&
-        isSizeRefusal(outcome.httpStatus) &&
+        options.historical.isSizeRefusal(outcome.httpStatus) &&
         splittable(interval, options.plan)
       ) {
         intervalsSplit += 1;
@@ -336,12 +348,15 @@ export async function runBackfill<TRaw>(
     } catch (error) {
       /*
        * No body text: the hardened client discards a non-2xx body rather than risk putting
-       * provider bytes in an error, so `isWindowTooLarge` decides on the status alone. That is
-       * sound here because the FDSN parameters are typed, validated and closed — a caller cannot
-       * produce a malformed query, so a 400 on a window that passed the count check is a
-       * disagreement about size.
+       * provider bytes in an error, so the decision is made on the status alone. That is sound
+       * for USGS because its parameters are typed, validated and closed — a caller cannot produce
+       * a malformed query, so a 400 on a window that passed the count check is a disagreement
+       * about size. A source that never refuses answers `false` here and the failure stays a
+       * failure, which is what stops a transient outage halving a healthy window.
        */
-      const tooLarge = error instanceof SourceFetchError && isWindowTooLarge(error);
+      const tooLarge =
+        error instanceof SourceFetchError &&
+        options.historical.isSizeRefusal(error.context.status ?? null);
       if (tooLarge && splittable(interval, options.plan)) {
         intervalsSplit += 1;
         await splitTooLargeWindow(db, plan.id, interval, options.plan, logger, base);
@@ -424,13 +439,12 @@ export async function runBackfill<TRaw>(
   };
 }
 
-/** One window, through the ordinary six-step lifecycle with the fetch supplied by FDSN. */
+/** One window, through the ordinary six-step lifecycle with the fetch supplied by the service. */
 async function ingestWindow<TRaw>(
   options: RunBackfillOptions<TRaw>,
   planId: string,
   interval: { readonly from: Date; readonly to: Date },
   window: FdsnWindow,
-  mode: FdsnMode,
   logger: Logger,
 ): Promise<RunOutcome> {
   return runIngestion({
@@ -445,7 +459,7 @@ async function ingestWindow<TRaw>(
     // A historical window with no events is a quiet period, not a broken feed.
     emptyBatchIsSuspicious: false,
     fetchOverride: async (ctx) => {
-      const fetched = await fdsnFetch(window, mode, {
+      const fetched = await options.historical.fetch(window, {
         client: ctx.client,
         ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
       });
@@ -455,7 +469,7 @@ async function ingestWindow<TRaw>(
         httpStatus: fetched.httpStatus,
         bytes: fetched.bytes,
         payloadSha256: payloadHash(fetched.body),
-        endpoint: fdsnEndpoint(mode),
+        endpoint: options.historical.endpoint(),
         attempts: fetched.attempts,
         durationMs: fetched.durationMs,
       };
@@ -485,27 +499,6 @@ async function splitTooLargeWindow(
       `${interval.from.toISOString()}–${interval.to.toISOString()} holds ` +
       `${count === undefined ? 'more rows than the service will return' : `${count} rows`}; split in two`,
   });
-}
-
-/**
- * Statuses that mean "this window holds more than the service will return".
- *
- * The documented 400 and the 503 "table is full" P0 observed. The body is gone by the time the
- * outcome exists, and that is acceptable here for the same reason `isWindowTooLarge` accepts it:
- * the parameters are typed and closed, so a malformed query is not reachable.
- */
-function isSizeRefusal(httpStatus: number | null): boolean {
-  /*
-   * 400 only.
-   *
-   * P0 did see a 503 "table is full" mean "too many rows", but 503 is *also* the ordinary
-   * "provider is busy", and by the time an outcome exists the body that told them apart is gone.
-   * Treating every 503 as a size refusal splits a perfectly good 30-day window in half
-   * permanently — the parent stays SPLIT, so a transient outage leaves a distortion that resume
-   * never repairs. A 400 is safe to read this way because the parameters are typed and closed,
-   * so a malformed query is not reachable; a 503 is left to the ordinary retry path.
-   */
-  return httpStatus === 400;
 }
 
 /** Whether a window can still be halved, so a refusal at the floor is reported instead of looped. */

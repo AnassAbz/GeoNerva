@@ -95,7 +95,13 @@ export { normalizeEmscFeature } from './emsc/normalize.ts';
 export { emscFeatureSchema, emscFeedSchema } from './emsc/schema.ts';
 export type { EmscFeature, EmscFeatureProperties } from './emsc/schema.ts';
 
-export {
-  assertWindow,
-  bridgeEndtime,
-} from './fdsn/window.ts';
+export { assertWindow, bridgeEndtime } from './fdsn/window.ts';
+
+export { emscHistorical } from './emsc/fdsn.ts';
+export { usgsHistorical } from './usgs/fdsn.ts';
+export type {
+  HistoricalBody,
+  HistoricalCount,
+  HistoricalInterface,
+  HistoricalRequestOptions,
+} from './historical.ts';

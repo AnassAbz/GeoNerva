@@ -87,6 +87,18 @@
       "derived_from": "json-page.json"
     },
     {
+      "file": "emb-2010-day.json",
+      "url": "https://www.seismicportal.eu/fdsnws/event/1/query?format=json&starttime=2010-01-01T00:00:00Z&endtime=2010-01-01T23:59:59.999Z&limit=20000",
+      "captured_at": "2026-09-20T20:33:00.000Z",
+      "sha256": "8332d24efca8999e4dab070e8d51cb19f5b5a163a6ee552df3ac3a6b0bbf9936",
+      "bytes": 53069,
+      "http_status": 200,
+      "content_type": "application/json",
+      "notes": "One historical day, captured because a live backfill of it rejected 73 % of its records. It is the EMSC-EMB merged bulletin: 85 EMB to 12 RTS. Two findings live here. (1) The sign of geometry.coordinates[2] is NOT stable: RTS publishes z = -depth, EMB publishes z = +depth (78 records; the 7 EMB records where both hold are all depth 0). Absolute values agree for all 97. properties.depth is the only depth to read. (2) Two records omit the `mag` and `magtype` KEYS entirely rather than sending null.",
+      "synthetic": false,
+      "derived_from": null
+    },
+    {
       "file": "eventid-late-update.json",
       "url": "https://www.seismicportal.eu/fdsnws/event/1/query?format=json&eventid=20250913_0000173",
       "captured_at": "2026-09-19T20:57:14.254Z",

@@ -56,6 +56,18 @@ import { emscFeatureSchema, emscFeedSchema, type EmscFeature } from './schema.ts
  */
 export const EMSC_POLL_LOOKBACK_MS = 15 * 60 * 1_000;
 
+/**
+ * How much of a batch may lack a magnitude before the field is treated as gone.
+ *
+ * Measured against the worst real case there is: the EMSC-EMB merged bulletin, where 2 of 97
+ * events on 2010-01-01 have no `mag` key at all — about 2 %. A rename would make it 100 %. Half
+ * leaves a very wide margin on both sides of a question that has no borderline answer.
+ */
+const MAX_MISSING_MAGNITUDE_RATIO = 0.5;
+
+/** Below this, the ratio is noise: three records with one missing is 33 % and means nothing. */
+const MIN_RECORDS_FOR_FIELD_DRIFT = 20;
+
 export const emscDescriptor: SourceDescriptor = {
   sourceId: 'emsc',
   productCode: 'rts',
@@ -222,6 +234,35 @@ export function parseEmscFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
   const verdict = batchVerdict(ctx.descriptor, records.length, rejects.length);
   if (!verdict.ok) {
     return { verdict: 'REJECTED', errorClass: verdict.errorClass, detail: verdict.detail, rejects };
+  }
+
+  /*
+   * A field that disappeared, as distinct from a field that is sometimes absent.
+   *
+   * `mag` is the one field this adapter reads whose *key* EMSC legitimately omits — 2 of 97
+   * events on 2010-01-01 carry no `mag` at all — so the schema cannot require it, and a rename to
+   * `magnitude` would otherwise parse cleanly and quietly null every magnitude in the catalogue.
+   * Magnitude drives relevance, so "every earthquake is now magnitude-less" must be loud.
+   *
+   * The threshold is what separates the two: a few per cent is the bulletin, and most of a batch
+   * is the field. It is checked after the verdict so that it describes a batch that was otherwise
+   * healthy, and skipped on small batches where the ratio says nothing.
+   */
+  const withoutMagnitude = records.filter(
+    (record) => record.properties.mag === undefined || record.properties.mag === null,
+  ).length;
+  if (records.length >= MIN_RECORDS_FOR_FIELD_DRIFT) {
+    const ratio = withoutMagnitude / records.length;
+    if (ratio > MAX_MISSING_MAGNITUDE_RATIO) {
+      return {
+        verdict: 'REJECTED',
+        errorClass: 'SCHEMA_DRIFT',
+        detail:
+          `${withoutMagnitude} of ${records.length} records have no magnitude ` +
+          `(${(ratio * 100).toFixed(1)} %), which is a field that has gone rather than a quiet catalogue`,
+        rejects,
+      };
+    }
   }
 
   /*

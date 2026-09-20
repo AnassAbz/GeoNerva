@@ -31,6 +31,8 @@ import { z } from 'zod';
 
 import type { HttpClient } from '@geonerva/http';
 
+import type { HistoricalInterface, HistoricalRequestOptions } from '../historical.ts';
+
 import { assertWindow, bridgeEndtime, FdsnQueryError, type FdsnWindow } from '../fdsn/window.ts';
 
 export const EMSC_HOST = 'www.seismicportal.eu';
@@ -164,3 +166,36 @@ export async function emscCount(
   });
   return parseEmscCount(response.body);
 }
+
+/**
+ * EMSC as a historical source.
+ *
+ * The two answers that differ from USGS are both here, and both follow from the same measurement:
+ * this service does not refuse an over-large window, it truncates one.
+ *
+ *  - `overLimit` compares against `EMSC_WINDOW_TARGET`, not the cap. The count and the query are
+ *    two requests and the catalogue moves between them, so sizing to exactly 20,000 would
+ *    occasionally produce a silently truncated fetch that nothing could detect afterwards.
+ *  - `isSizeRefusal` is `false` for every status, because there is no status to read. A failure
+ *    here is a failure, and splitting on it would halve a healthy window over a transient outage.
+ */
+export const emscHistorical: HistoricalInterface = {
+  endpoint: () => emscEndpoint('query'),
+  count: async (window, options: HistoricalRequestOptions) => {
+    const count = await emscCount(options.client, window, options.signal);
+    return { count, overLimit: count > EMSC_WINDOW_TARGET };
+  },
+  fetch: async (window, options: HistoricalRequestOptions) => {
+    const response = await options.client.get(emscQueryUrl(window), {
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    return {
+      body: response.body,
+      httpStatus: response.status,
+      bytes: response.bytes,
+      attempts: response.attempts,
+      durationMs: response.durationMs,
+    };
+  },
+  isSizeRefusal: () => false,
+};

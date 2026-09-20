@@ -21,7 +21,12 @@ import {
 } from '@geonerva/db';
 import type { DB } from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
-import { createSourceClient, usgsAdapter, type WindowPlanOptions } from '@geonerva/sources';
+import {
+  createSourceClient,
+  usgsAdapter,
+  usgsHistorical,
+  type WindowPlanOptions,
+} from '@geonerva/sources';
 import { readFixtureBytes } from '@geonerva/test-fixtures';
 
 import { runBackfill, type BackfillOutcome } from './backfill.ts';
@@ -123,6 +128,7 @@ async function backfill(
   return runBackfill({
     db,
     adapter: usgsAdapter,
+    historical: usgsHistorical(),
     client,
     request: { from: FROM, to: TO },
     plan: PLAN,
