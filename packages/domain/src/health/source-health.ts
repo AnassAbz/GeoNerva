@@ -175,9 +175,15 @@ export function deriveSourceHealth(input: DeriveSourceHealthInput): SourceHealth
     return newest === null || candidate.getTime() > newest.getTime() ? candidate : newest;
   }, null);
 
+  // A run we cancelled ourselves — a worker handling SIGTERM — is not evidence about the source
+  // (ADR-032). Counting it would mark every source DEGRADED after a routine deploy, which is a
+  // false alarm and, worse, trains the operator to ignore the one signal that matters.
+  // `CONFIG_ERROR` is deliberately *not* excluded: a broken allowlist means we really do have no
+  // data, so the status must degrade. Only `lastErrorClass` says whose fault it is.
   const failuresSinceSuccess = runs.filter(
     (run) =>
       run.status === 'FAILED' &&
+      run.errorClass !== 'ABORTED' &&
       (lastSuccessAt === null || run.committedAt.getTime() > lastSuccessAt.getTime()),
   );
   const lastFailure = failuresSinceSuccess.at(-1) ?? null;

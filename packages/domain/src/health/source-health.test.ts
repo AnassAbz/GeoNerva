@@ -152,6 +152,32 @@ describe('deriveSourceHealth', () => {
       expect(result.status).toBe('FRESH');
     });
 
+    it('does not blame the source for a run we cancelled ourselves (ADR-032)', () => {
+      // A deploy restarts the worker and every in-flight run ends ABORTED. If that counted, one
+      // routine deploy would light up the whole /data-status panel.
+      const result = health([
+        run('SUCCEEDED', 10 * MINUTE_MS),
+        run('FAILED', 2 * MINUTE_MS, { errorClass: 'ABORTED' }),
+      ]);
+      expect(result.status).toBe('FRESH');
+      expect(result.reasons).toStrictEqual(['OK']);
+      expect(result.consecutiveFailures).toBe(0);
+      // Still reported, so the run is not invisible — it simply is not held against the source.
+      expect(result.lastErrorClass).toBe('ABORTED');
+    });
+
+    it('still degrades when GeoNerva itself is misconfigured (ADR-032)', () => {
+      // The opposite case: CONFIG_ERROR means we really have no data, so the status must fall.
+      // Only the class tells the operator the fault is ours rather than the provider's.
+      const result = health([
+        run('SUCCEEDED', 10 * MINUTE_MS),
+        run('FAILED', 2 * MINUTE_MS, { errorClass: 'CONFIG_ERROR' }),
+      ]);
+      expect(result.status).toBe('DEGRADED');
+      expect(result.reasons).toStrictEqual(['LAST_POLL_FAILED']);
+      expect(result.lastErrorClass).toBe('CONFIG_ERROR');
+    });
+
     it('treats PARTIAL as a success that still degrades the source', () => {
       const result = health([run('PARTIAL', 2 * MINUTE_MS)]);
       expect(result.status).toBe('DEGRADED');
