@@ -88,6 +88,17 @@ const NO_RAW_SQL = [
     message:
       'sql.raw interpolates verbatim. Use a bound parameter, or sql.ref/sql.lit for identifiers (docs/SECURITY.md C3).',
   },
+  {
+    // Bracket access, including through a cast: `(sql as never)['raw']`. This is the same shape
+    // as the NEXT_PUBLIC bypass found in P1 (F-1), so it is closed here by name (R-11).
+    selector: "MemberExpression[computed=true][property.value='raw']",
+    message:
+      'sql.raw interpolates verbatim, however it is reached. Use a bound parameter (docs/SECURITY.md C3).',
+  },
+  {
+    selector: "ImportSpecifier[imported.name='raw']",
+    message: 'Importing a raw-SQL helper bypasses parameterisation (docs/SECURITY.md C3).',
+  },
 ];
 
 /** Outbound network calls are only allowed through @geonerva/http (docs/SECURITY.md M1, ADR-028). */
