@@ -45,30 +45,34 @@ const codes = (input: Partial<FireInput>): readonly string[] =>
 describe('the bands, from both sides', () => {
   it.each([
     // HIGH: d ≤ 10 & ACTIVE & (n24h ≥ 5 or overpasses ≥ 2)
-    ['10 km, active, 5 detections', { nearestDetectionKm: 10, n24h: 5, overpasses24h: 1 }, 'HIGH'],
+    [
+      '10 km, active, 5 detections',
+      { nearestDetectionKm: FIRE_NEAR_KM, n24h: 5, overpasses24h: 1 },
+      'HIGH',
+    ],
     [
       '11 km, active, 5 detections',
-      { nearestDetectionKm: 11, n24h: 5, overpasses24h: 1 },
+      { nearestDetectionKm: FIRE_NEAR_KM + 1, n24h: 5, overpasses24h: 1 },
       'MODERATE',
     ],
     [
       '10 km, active, 4 detections, 1 pass',
-      { nearestDetectionKm: 10, n24h: 4, overpasses24h: 1 },
+      { nearestDetectionKm: FIRE_NEAR_KM, n24h: 4, overpasses24h: 1 },
       'MODERATE',
     ],
     [
       '10 km, active, 4 detections, 2 passes',
-      { nearestDetectionKm: 10, n24h: 4, overpasses24h: 2 },
+      { nearestDetectionKm: FIRE_NEAR_KM, n24h: 4, overpasses24h: 2 },
       'HIGH',
     ],
     // MODERATE: d ≤ 30 & ACTIVE
-    ['30 km, active', { nearestDetectionKm: 30, n24h: 1, overpasses24h: 1 }, 'MODERATE'],
-    ['31 km, active', { nearestDetectionKm: 31, n24h: 1, overpasses24h: 1 }, 'LOW'],
+    ['30 km, active', { nearestDetectionKm: FIRE_MID_KM, n24h: 1, overpasses24h: 1 }, 'MODERATE'],
+    ['31 km, active', { nearestDetectionKm: FIRE_MID_KM + 1, n24h: 1, overpasses24h: 1 }, 'LOW'],
     // MODERATE: d ≤ 10 & COOLING
-    ['10 km, cooling', { nearestDetectionKm: 10, state: 'COOLING' as const }, 'MODERATE'],
-    ['11 km, cooling', { nearestDetectionKm: 11, state: 'COOLING' as const }, 'LOW'],
+    ['10 km, cooling', { nearestDetectionKm: FIRE_NEAR_KM, state: 'COOLING' as const }, 'MODERATE'],
+    ['11 km, cooling', { nearestDetectionKm: FIRE_NEAR_KM + 1, state: 'COOLING' as const }, 'LOW'],
     // LOW: d ≤ 150
-    ['150 km, active', { nearestDetectionKm: 150, n24h: 1, overpasses24h: 1 }, 'LOW'],
+    ['150 km, active', { nearestDetectionKm: FIRE_OUTER_KM, n24h: 1, overpasses24h: 1 }, 'LOW'],
   ])('%s is %s', (_name, input, expected) => {
     expect(levelOf(input)).toBe(expected);
   });
