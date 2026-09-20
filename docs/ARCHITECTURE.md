@@ -131,9 +131,26 @@ interface SourceAdapter<TRaw> {
 
 Changes from the brief:
 - `healthCheck()` is removed, because health is derived from run history (`DOMAIN_MODEL.md` §4.3).
-- `attribution()` and `freshnessPolicy()` become static descriptor data.
 - `normalize` is synchronous and pure, which makes contract tests trivial and deterministic.
 - `parse` returns a **batch verdict**, so schema drift is decided per batch, not per record.
+
+Corrections from the P3 implementation, which is the authoritative shape:
+
+- **The descriptor does not carry attribution or the freshness policy.** Both are seeded in
+  `geonerva.sources`; copying them into code would let the two drift, and the drift would be
+  invisible. The descriptor names the policy (`policyKey`) and an integration test asserts every
+  descriptor matches a seeded product.
+- **It carries one `productCode`, not a list.** One adapter serves one product; a source with
+  several products has several descriptors.
+- **It carries `emptyBatchIsSuspicious`, which is *not* the policy's `quietIsNormal`.** "Is it
+  normal for the newest observation to be old?" (USGS: yes) and "is it normal for a whole poll to
+  return nothing?" (USGS: no) are different questions, and one flag for both forces a wrong answer
+  to one of them.
+- **Conditional GET is supported by the HTTP client but not used.** The frozen schema has nowhere
+  to persist an ETag between runs, so "nothing changed" is detected by comparing the body digest
+  with the previous run's `ingestion_runs.payload_sha256`. The cost is one ~1 MB download per poll
+  that a 304 could have avoided; adding a column to a frozen table was not judged worth it. A feed
+  that *does* answer 304 is still handled.
 
 ### 4.2 Run lifecycle
 
@@ -153,7 +170,22 @@ Changes from the brief:
 ```
 
 - Failures are classified as `HTTP_4XX | HTTP_5XX | TIMEOUT | TOO_LARGE | SCHEMA_DRIFT | EMPTY_SUSPICIOUS | RATE_LIMITED | DB_ERROR | LEASE_EXPIRED | NETWORK | CONFIG_ERROR | ABORTED | UNKNOWN` (ADR-032).
-  `CONFIG_ERROR` and `ABORTED` describe GeoNerva's own state, not the provider's, and are excluded from source-health derivation.
+  `CONFIG_ERROR` and `ABORTED` describe GeoNerva's own state, not the provider's. They are treated differently, on purpose (ADR-032): **`ABORTED` is excluded** from the failure count, because a run we cancelled says nothing about the source and counting it would mark everything `DEGRADED` after a routine deploy; **`CONFIG_ERROR` still counts**, because a broken allowlist means we genuinely have no data and the status must fall — what changes is that `lastErrorClass` tells the operator the fault is ours.
+- **The drift threshold is re-checked after persistence, not only after parsing.** Records can
+  also be refused by the time-semantics invariants (a future observation, an inverted validity
+  interval). If that pushes the batch past the threshold, the transaction is rolled back and the
+  run fails writing nothing — otherwise a feed whose timestamps drifted would commit as `PARTIAL`
+  with zero facts and report itself as merely degraded.
+- **One unusable *record* is a reject; one broken *identity* fails the batch.** A bad value (an
+  out-of-range intensity, an impossible coordinate) is a reject row and the batch survives, because
+  a summary feed republishes the same record for 24 hours and failing on it would take the source
+  dark for a day. A preferred id missing from its own alias set fails the batch, because carrying
+  on would fabricate a duplicate record that later reads as a second independent source.
+- **A product the database does not know is `CONFIG_ERROR` with no run row at all.** The lease is
+  taken *after* the product lookup, so there is nothing to hang a run on, and this failure is
+  therefore invisible in source health by construction. The worker exits non-zero for it — that
+  exit code is the only signal, which is why `CONFIG_ERROR` is the one class the CLI does not
+  treat as routine.
 - Retries use exponential backoff with jitter and honour `Retry-After`.
 - A per-source circuit breaker opens after 5 consecutive failures and probes every 15 minutes.
 - Step 6 failures never roll back facts. They are recorded as `analysis_runs` failures and retried on the next cycle, because projections are rebuildable.
@@ -725,9 +757,12 @@ Budgeting ~40 MB for those puts the lean profile at **roughly 375 MB of 500 MB**
 Two things the measurement makes obvious: indexes are ~45 % of the cost on both big tables, and
 the earthquake catalogue — not fire — is the largest single consumer. If the EMSC backfill is
 widened, that is where the budget goes.
-| **Total** | **~330–380 MB of 500 MB** |
+| **Total, P2 accounting** | **~330–380 MB of 500 MB** |
 
-This fits, with roughly 125 MB of headroom for growth and bloat. If a later measurement passes
+**Superseded by the P3 measurement above.** That table omitted `raw_source_records`,
+`source_record_aliases` and `source_record_heads` entirely; with them the 260k-event backfill
+reaches **~727 MB**, so the backfill as specified does **not** fit and must not retain raw
+payloads. Live polling does fit comfortably (~1.04 MiB/day). If a later measurement passes
 450 MB, the lean profile narrows the EMSC backfill (M ≥ 3.5, or fewer years) before it touches
 fire retention, because the earthquake catalogue is the bigger consumer and the fire window is
 what the replay horizon is built on. **Standard profile** (≥ 8 GB: Supabase Pro at ~US$25/month or

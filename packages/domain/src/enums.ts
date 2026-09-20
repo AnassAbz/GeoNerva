@@ -235,8 +235,12 @@ export const ERROR_CLASSES = [
 export type ErrorClass = (typeof ERROR_CLASSES)[number];
 
 /**
- * Failures that say something about the *provider*. The rest describe GeoNerva's own state and
- * must not be counted against a source when deriving its health (ADR-032).
+ * Failures that say something about the *provider*, for describing a failure to a reader.
+ *
+ * **This is not the health rule.** `deriveSourceHealth` counts every failed run except `ABORTED`,
+ * including `CONFIG_ERROR` — a broken allowlist means we genuinely have no data, so the status
+ * must fall (ADR-032). An earlier version of this comment said the opposite and was wrong; the
+ * health function is the authority, and it is tested in both directions.
  */
 export const PROVIDER_ERROR_CLASSES = [
   'HTTP_4XX',
@@ -249,6 +253,7 @@ export const PROVIDER_ERROR_CLASSES = [
   'NETWORK',
 ] as const satisfies readonly ErrorClass[];
 
+/** True when the class blames the provider rather than GeoNerva. Presentation only. */
 export function isProviderFault(errorClass: ErrorClass): boolean {
   return (PROVIDER_ERROR_CLASSES as readonly ErrorClass[]).includes(errorClass);
 }

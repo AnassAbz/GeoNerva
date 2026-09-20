@@ -184,6 +184,21 @@ describe('deriveSourceHealth', () => {
       expect(result.reasons).toStrictEqual(['PARTIAL_BATCH']);
     });
 
+    it('does not let a SKIPPED poll erase a partial batch', () => {
+      // A skipped poll means "the provider answered with the same bytes", not "the last batch
+      // was complete". If it counted, the records that never became facts would stop being
+      // visible on /data-status one poll after they were lost.
+      const result = health([run('PARTIAL', 10 * MINUTE_MS), run('SKIPPED', 2 * MINUTE_MS)]);
+      expect(result.status).toBe('DEGRADED');
+      expect(result.reasons).toContain('PARTIAL_BATCH');
+    });
+
+    it('clears PARTIAL_BATCH once a complete batch lands', () => {
+      const result = health([run('PARTIAL', 10 * MINUTE_MS), run('SUCCEEDED', 2 * MINUTE_MS)]);
+      expect(result.status).toBe('FRESH');
+      expect(result.reasons).toStrictEqual(['OK']);
+    });
+
     it('reports every applicable reason, not only the worst', () => {
       const result = health([run('PARTIAL', 25 * MINUTE_MS), run('FAILED', 2 * MINUTE_MS)]);
       expect(result.status).toBe('DEGRADED');

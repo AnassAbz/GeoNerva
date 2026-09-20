@@ -51,11 +51,20 @@ export interface SourceDescriptor {
   readonly timeoutMs: number;
   readonly maxBytes: number;
   /**
-   * Whether a batch of zero records is normal. `false` means an empty answer is suspicious
-   * enough to fail the run: USGS never has a genuinely silent day (~400 events), so zero
-   * features means something broke upstream, and reporting it as "all quiet" would be a lie.
+   * Whether a batch of zero records means the feed is broken.
+   *
+   * Deliberately **not** called `quietIsNormal`, and deliberately not read from the freshness
+   * policy, because they answer different questions and USGS answers them differently:
+   *
+   *  - `FreshnessPolicy.quietIsNormal` (seeded, `true` for USGS) asks *"is it normal for the
+   *    newest observation to be old?"* — yes, hours can pass with no notable earthquake.
+   *  - This asks *"is it normal for a whole poll to contain nothing?"* — no. `all_day` is a
+   *    24-hour window over ~400 events/day, so an empty one is a broken feed, and reporting it
+   *    as "no earthquakes" would be the most misleading thing this system could say.
+   *
+   * One name for both would have forced one answer, and either answer would be wrong somewhere.
    */
-  readonly quietIsNormal: boolean;
+  readonly emptyBatchIsSuspicious: boolean;
   /** Fraction of rejected records above which the batch is treated as schema drift. */
   readonly maxRejectRatio: number;
 }
@@ -162,19 +171,42 @@ export interface SourceAdapter<TRaw> {
 }
 
 /**
- * Raised when an adapter's own invariant is violated — the case where skipping the record would
- * be worse than stopping. It carries the provider id so the failure is actionable without the
- * body.
+ * Raised by `normalize`, for the two different kinds of thing that can be wrong with a record.
+ *
+ *  - **With a `reasonCode`:** this one record is unusable, but the batch is not. It becomes a
+ *    reject row, it is counted, and the drift threshold decides whether the feed as a whole has
+ *    changed. A bad latitude is this kind.
+ *  - **Without one:** an invariant that makes the whole batch untrustworthy. The identity rules
+ *    are these: carrying on after "the preferred id is not in its own alias set" would fabricate
+ *    a duplicate record, which later reads as a second independent source agreeing with the
+ *    first — the most expensive mistake this system can make.
+ *
+ * The distinction matters because getting it wrong in the safe-looking direction is not safe: a
+ * single bad coordinate treated as batch-fatal takes a source dark for as long as the provider
+ * keeps republishing that record, which for a 24-hour summary feed is a day.
  */
 export class NormalizationError extends Error {
   readonly providerId: string;
   readonly invariant: string;
+  /** Present when only this record is affected; absent when the batch cannot be trusted. */
+  readonly reasonCode: RejectReasonCode | undefined;
 
-  constructor(invariant: string, providerId: string, message: string) {
+  constructor(
+    invariant: string,
+    providerId: string,
+    message: string,
+    reasonCode?: RejectReasonCode,
+  ) {
     super(`${invariant} (${providerId}): ${message}`);
     this.name = 'NormalizationError';
     this.invariant = invariant;
     this.providerId = providerId;
+    this.reasonCode = reasonCode;
+  }
+
+  /** True when the batch can continue without this record. */
+  get isRecordLevel(): boolean {
+    return this.reasonCode !== undefined;
   }
 }
 
@@ -250,7 +282,7 @@ export function batchVerdict(
     } {
   const total = accepted + rejected;
   if (total === 0) {
-    if (descriptor.quietIsNormal) return { ok: true };
+    if (!descriptor.emptyBatchIsSuspicious) return { ok: true };
     return {
       ok: false,
       errorClass: 'EMPTY_SUSPICIOUS',

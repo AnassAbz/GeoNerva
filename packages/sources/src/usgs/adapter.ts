@@ -8,6 +8,7 @@
  */
 
 import type { RejectReasonCode } from '@geonerva/domain';
+import { SourceFetchError } from '@geonerva/http';
 
 import {
   batchVerdict,
@@ -57,7 +58,8 @@ export const usgsDescriptor: SourceDescriptor = {
   maxBytes: 20 * 1024 * 1024,
   // USGS records ~400 events a day worldwide. A feed with nothing in it is a broken feed, not a
   // quiet planet, and calling it quiet would be the most misleading thing this system could say.
-  quietIsNormal: false,
+  // This is a different question from the seeded policy's `quietIsNormal` — see the descriptor.
+  emptyBatchIsSuspicious: true,
   maxRejectRatio: 0.2,
 };
 
@@ -184,7 +186,21 @@ export function parseUsgsFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
 }
 
 async function fetchUsgs(ctx: FetchContext): Promise<FetchResult> {
-  const feed = ctx.feed !== undefined && isUsgsFeed(ctx.feed) ? ctx.feed : DEFAULT_USGS_FEED;
+  /*
+   * An unknown feed is refused, never defaulted.
+   *
+   * `all_month` is a real USGS feed that this adapter does not list. Falling back to `all_day`
+   * would answer "SUCCEEDED, 230 accepted" to an operator who asked for a month of backfill after
+   * an outage, and the gap they were trying to close would stay open and invisible.
+   */
+  if (ctx.feed !== undefined && !isUsgsFeed(ctx.feed)) {
+    throw new SourceFetchError(
+      'CONFIG_ERROR',
+      `unknown USGS feed ${ctx.feed}; expected one of ${USGS_FEEDS.join(', ')}`,
+      { host: USGS_HOST },
+    );
+  }
+  const feed = ctx.feed ?? DEFAULT_USGS_FEED;
   const url = usgsFeedUrl(feed);
   // The deadline and the size cap are not passed per request: the client is built from the
   // descriptor (see `createSourceClient`), so they are enforced in one place and an adapter

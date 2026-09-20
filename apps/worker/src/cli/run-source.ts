@@ -10,15 +10,26 @@
  * and a scheduler treating it as a crash would restart a worker that is working correctly.
  *
  * `CONFIG_ERROR` is the exception, and it is the whole reason ADR-032 gave it its own class: a
- * host that is not allowlisted, or a product the database has never heard of, is *our* fault. It
- * never self-heals, it is invisible in source health, and exiting 0 on it would let a
- * misconfigured deployment sit there looking healthy. That one exits 1.
+ * host that is not allowlisted, or a product the database has never heard of, is *our* fault and
+ * never self-heals. Exiting 0 on it would let a misconfigured deployment sit there looking
+ * healthy, so that one exits 1.
+ *
+ * The two `CONFIG_ERROR` paths differ in how much evidence they leave, which is why the exit code
+ * matters more for one than the other: an allowlist or redirect refusal happens after the lease
+ * is taken, so it commits a FAILED run and degrades source health normally. An unknown product is
+ * found *before* the lease, so there is no run to write and nothing appears in health at all.
  */
 
 import { createDatabase, workerPoolOptions } from '@geonerva/db';
 import { ConfigError, loadWorkerConfig } from '@geonerva/config';
 import { createJsonLogger, runIngestion, type RunOutcome } from '@geonerva/pipeline';
-import { createSourceClient, usgsAdapter, type SourceAdapter } from '@geonerva/sources';
+import {
+  USGS_FEEDS,
+  createSourceClient,
+  isUsgsFeed,
+  usgsAdapter,
+  type SourceAdapter,
+} from '@geonerva/sources';
 
 /** The adapters this build can run. Adding the second source is one line here. */
 const ADAPTERS: Readonly<Record<string, SourceAdapter<never>>> = {
@@ -69,6 +80,11 @@ export function parseRunArgs(argv: readonly string[]): RunSourceArgs {
   if (!help && source === undefined) errors.push('--source is required');
   if (source !== undefined && !(source in ADAPTERS)) {
     errors.push(`unknown source: ${source} (available: ${AVAILABLE_SOURCES.join(', ')})`);
+  }
+  // Checked here as well as in the adapter, so an operator gets the answer before the worker
+  // opens a database connection — and never gets a different feed than the one they named.
+  if (source === 'usgs' && feed !== undefined && !isUsgsFeed(feed)) {
+    errors.push(`unknown feed: ${feed} (available: ${USGS_FEEDS.join(', ')})`);
   }
 
   return {

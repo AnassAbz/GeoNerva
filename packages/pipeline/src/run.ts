@@ -39,6 +39,7 @@ import type { ErrorClass, RunStatus, RunTrigger } from '@geonerva/domain';
 import { SourceFetchError, type HttpClient } from '@geonerva/http';
 import {
   NormalizationError,
+  batchVerdict,
   type FetchResult,
   type NormalizedRecord,
   type RejectedRecord,
@@ -120,6 +121,42 @@ export function classifyFetchFailure(error: SourceFetchError): ErrorClass {
   }
 }
 
+/**
+ * Raised inside the persist transaction when the finished batch fails the drift threshold.
+ *
+ * Throwing is the point: it rolls the transaction back, so the "write nothing" rule holds for a
+ * batch that only turned out to be undersized after most of its records had been refused.
+ */
+class BatchRejectedError extends Error {
+  readonly errorClass: 'SCHEMA_DRIFT' | 'EMPTY_SUSPICIOUS';
+
+  constructor(errorClass: 'SCHEMA_DRIFT' | 'EMPTY_SUSPICIOUS', message: string) {
+    super(message);
+    this.name = 'BatchRejectedError';
+    this.errorClass = errorClass;
+  }
+}
+
+/**
+ * A database failure, described without quoting the driver.
+ *
+ * `node-postgres` messages carry host and port (`connect ECONNREFUSED 10.0.2.15:5432`), and a
+ * constraint violation can carry key values. Both would land in `ingestion_runs.error_message`
+ * and on stdout, which SECURITY.md M7 forbids. The SQLSTATE code is the part an operator can act
+ * on, and it identifies the fault without describing the deployment.
+ */
+export function describeDatabaseFailure(error: unknown): string {
+  if (error instanceof VersionRejectedError) return `version refused: ${error.reasonCode}`;
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code)
+      : undefined;
+  if (code !== undefined && /^[0-9A-Z]{5}$/.test(code)) {
+    return `the database refused the batch (SQLSTATE ${code})`;
+  }
+  return 'the batch could not be written; see the worker log for the stack trace';
+}
+
 interface PersistResult {
   readonly counts: RunCounts;
   readonly newestObservedAt: Date | null;
@@ -150,6 +187,7 @@ async function persistBatch(
   let unchanged = 0;
   let mergedRecords = 0;
   let rejected = rejects.length;
+  let persistRejects = 0;
   let newestObservedAt: Date | null = null;
 
   for (const reject of rejects) {
@@ -182,26 +220,47 @@ async function persistBatch(
    * `insertVersionIfChanged` still makes the real decision under a row lock; this only decides
    * what is worth storing beforehand, and it errs towards storing.
    */
-  const heads = await headContentHashes(trx, resolvedIds);
-  const changing = records.filter((record, index) => {
-    const head = heads.get(resolvedIds[index] ?? '');
-    return head?.equals(record.contentSha256) !== true;
+  const liveHeads = await headContentHashes(trx, resolvedIds);
+  const rawInput = (record: NormalizedRecord) => ({
+    sourceId: adapter.descriptor.sourceId,
+    payloadSha256: record.rawPayloadSha256,
+    payload: record.rawPayload,
+    firstSeenAt: ingestedAt,
   });
 
   const rawIds = await upsertRawRecords(
     trx,
-    changing.map((record) => ({
-      sourceId: adapter.descriptor.sourceId,
-      payloadSha256: record.rawPayloadSha256,
-      payload: record.rawPayload,
-      firstSeenAt: ingestedAt,
-    })),
+    records
+      .filter(
+        (record, index) =>
+          liveHeads.get(resolvedIds[index] ?? '')?.equals(record.contentSha256) !== true,
+      )
+      .map(rawInput),
   );
 
   for (const [index, record] of records.entries()) {
     const sourceRecordId = resolvedIds[index];
     if (sourceRecordId === undefined) {
       throw new Error(`no resolved identity for ${record.primaryKey}; this is a pipeline bug`);
+    }
+
+    /*
+     * The head can move *during* the batch: two features whose alias sets intersect resolve to
+     * one record, so the second one is compared against a head the first just wrote. `liveHeads`
+     * tracks that, and a record whose payload was skipped but which turns out to be changing
+     * after all gets its payload stored now — one extra round trip in a rare case, rather than a
+     * committed version with `raw_record_id = NULL` and no trace of the payload it came from.
+     */
+    let rawRecordId = rawIds.get(record.rawPayloadSha256.toString('hex')) ?? null;
+    const willChange = liveHeads.get(sourceRecordId)?.equals(record.contentSha256) !== true;
+    if (willChange && rawRecordId === null) {
+      const late = await upsertRawRecords(trx, [rawInput(record)]);
+      rawRecordId = late.get(record.rawPayloadSha256.toString('hex')) ?? null;
+      if (rawRecordId === null) {
+        throw new Error(
+          `could not store the provider payload for ${record.primaryKey}; refusing to write a version without its provenance`,
+        );
+      }
     }
 
     const input: InsertVersionInput = {
@@ -225,19 +284,22 @@ async function persistBatch(
       title: record.title,
       sourceUrl: record.sourceUrl,
       contentSha256: record.contentSha256,
-      rawRecordId: rawIds.get(record.rawPayloadSha256.toString('hex')) ?? null,
+      rawRecordId,
     };
 
     try {
       const result = await insertVersionIfChanged(trx, input);
-      if (result.inserted) newVersions += 1;
-      else unchanged += 1;
+      if (result.inserted) {
+        newVersions += 1;
+        liveHeads.set(sourceRecordId, record.contentSha256);
+      } else unchanged += 1;
     } catch (error) {
       // A record the time-semantics invariants refuse (a future observation, an inverted
       // validity interval) is a reject with a reason code — never a dropped record, and never a
       // reason to lose the rest of a good batch.
       if (!(error instanceof VersionRejectedError)) throw error;
       rejected += 1;
+      persistRejects += 1;
       await recordReject(trx, runId, error.reasonCode, {
         id: record.primaryKey,
         issues: [sanitizeDetail(error.message)],
@@ -250,7 +312,19 @@ async function persistBatch(
     }
   }
 
-  const accepted = records.length;
+  /*
+   * The drift threshold is a property of the *batch*, not of the parse stage.
+   *
+   * Records can also be refused here, by the time-semantics invariants: if USGS ever moved `time`
+   * from epoch milliseconds to microseconds, every feature would parse cleanly and then every
+   * version would be refused as FUTURE_OBSERVATION. Without this second check the run would
+   * commit as PARTIAL with 230 rejects and zero facts, store the payload digest so the next
+   * identical body is SKIPPED, and report itself as merely degraded.
+   */
+  const verdict = batchVerdict(adapter.descriptor, records.length - persistRejects, rejected);
+  if (!verdict.ok) throw new BatchRejectedError(verdict.errorClass, verdict.detail);
+
+  const accepted = records.length - persistRejects;
   const counts: RunCounts = {
     received: receivedCount,
     accepted,
@@ -386,6 +460,13 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
     detail: string,
     httpStatus?: number,
     bytes?: number,
+    /*
+     * Counts for a batch that was refused. No *facts* are written — that is the frozen rule —
+     * but the run row still records how many records arrived and how many were unusable.
+     * Reporting `n_received = 0` for a feed that delivered 230 records would make a drift event
+     * indistinguishable on /data-status from a feed that returned nothing.
+     */
+    seen?: { readonly received: number; readonly rejected: number },
   ): Promise<RunOutcome> => {
     const sanitized = sanitizeDetail(detail);
     await finishRun(db, {
@@ -395,8 +476,15 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
       errorMessage: sanitized,
       ...(httpStatus === undefined ? {} : { httpStatus }),
       ...(bytes === undefined ? {} : { bytesReceived: bytes }),
+      ...(seen === undefined
+        ? {}
+        : { counts: { received: seen.received, rejected: seen.rejected } }),
     });
-    return finish('FAILED', runId, errorClass, sanitized, EMPTY_COUNTS, null);
+    const counts: RunCounts =
+      seen === undefined
+        ? EMPTY_COUNTS
+        : { ...EMPTY_COUNTS, received: seen.received, rejected: seen.rejected };
+    return finish('FAILED', runId, errorClass, sanitized, counts, null);
   };
 
   try {
@@ -476,7 +564,10 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
         rejected: parsed.rejects.length,
         parseMs: Math.round(parseMs),
       });
-      return await failRun(parsed.errorClass, parsed.detail, fetched.httpStatus, fetched.bytes);
+      return await failRun(parsed.errorClass, parsed.detail, fetched.httpStatus, fetched.bytes, {
+        received: parsed.rejects.length,
+        rejected: parsed.rejects.length,
+      });
     }
 
     const received = parsed.records.length + parsed.rejects.length;
@@ -494,14 +585,29 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
 
     // ── 4. Normalize ──────────────────────────────────────────────────────
     const normalizeStarted = monotonic();
-    let normalized: NormalizedRecord[];
+    const normalized: NormalizedRecord[] = [];
+    const rejects: RejectedRecord[] = [...parsed.rejects];
     try {
-      normalized = parsed.records.map((raw) => adapter.normalize(raw, { descriptor }));
+      for (const raw of parsed.records) {
+        try {
+          normalized.push(adapter.normalize(raw, { descriptor }));
+        } catch (error) {
+          if (!(error instanceof NormalizationError) || !error.isRecordLevel) throw error;
+          // One unusable record. The batch survives and the drift threshold decides whether the
+          // feed as a whole has changed — a single bad coordinate must not take the source dark
+          // for the 24 hours a summary feed keeps republishing it.
+          rejects.push({
+            reasonCode: error.reasonCode ?? 'SCHEMA_INVALID',
+            excerpt: { id: error.providerId, issues: [sanitizeDetail(error.message)] },
+            detail: sanitizeDetail(error.message),
+          });
+        }
+      }
     } catch (error) {
       normalizeMs = monotonic() - normalizeStarted;
       if (!(error instanceof NormalizationError)) throw error;
-      // An identity-model violation. Continuing would create a duplicate record that later reads
-      // as a second independent source agreeing with the first.
+      // A broken identity. Continuing would create a duplicate record that later reads as a
+      // second independent source agreeing with the first.
       logger.log('error', 'ingestion.invariant_violated', {
         ...base,
         stage: 'normalize',
@@ -512,6 +618,26 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
       return await failRun('SCHEMA_DRIFT', error.message, fetched.httpStatus, fetched.bytes);
     }
     normalizeMs = monotonic() - normalizeStarted;
+
+    // Rejects raised here count towards the same threshold as the ones parse produced.
+    const afterNormalize = batchVerdict(descriptor, normalized.length, rejects.length);
+    if (!afterNormalize.ok) {
+      logger.log('error', 'ingestion.batch_rejected', {
+        ...base,
+        stage: 'normalize',
+        runId,
+        errorClass: afterNormalize.errorClass,
+        detail: afterNormalize.detail,
+        rejected: rejects.length,
+      });
+      return await failRun(
+        afterNormalize.errorClass,
+        afterNormalize.detail,
+        fetched.httpStatus,
+        fetched.bytes,
+        { received, rejected: rejects.length },
+      );
+    }
 
     // ── 5. Persist ────────────────────────────────────────────────────────
     const persistStarted = monotonic();
@@ -525,7 +651,7 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
             runId,
             adapter as SourceAdapter<unknown>,
             normalized,
-            parsed.rejects,
+            rejects,
             fetched,
             received,
           ),
@@ -535,7 +661,24 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
       // The transaction rolled back, so no facts and no finished run. The run row is still
       // RUNNING and this closes it, outside the failed transaction, so the next poll is not
       // blocked by a lease nobody holds.
-      const detail = error instanceof Error ? error.message : 'persist failed';
+      // A batch refused by the drift threshold after persist-time rejects: the transaction has
+      // rolled back, so "write nothing" holds, and it is drift rather than a database fault.
+      if (error instanceof BatchRejectedError) {
+        logger.log('error', 'ingestion.batch_rejected', {
+          ...base,
+          stage: 'persist',
+          runId,
+          errorClass: error.errorClass,
+          detail: error.message,
+          persistMs: Math.round(persistMs),
+        });
+        return await failRun(error.errorClass, error.message, fetched.httpStatus, fetched.bytes, {
+          received,
+          rejected: received,
+        });
+      }
+
+      const detail = describeDatabaseFailure(error);
       logger.log('error', 'ingestion.persist_failed', {
         ...base,
         stage: 'persist',

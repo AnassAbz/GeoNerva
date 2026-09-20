@@ -19,7 +19,7 @@ import {
   observationsAsOf,
   type DB,
 } from '@geonerva/db';
-import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
+import { createTestPool, setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import { INITIAL_FRESHNESS_POLICIES } from '@geonerva/domain';
 import type { HttpClient } from '@geonerva/http';
 import { createSourceClient, usgsAdapter } from '@geonerva/sources';
@@ -202,6 +202,13 @@ describe('a successful run', () => {
       unchanged: 0,
     });
     expect(await countOf('observation_versions')).toBe(230);
+
+    // Every version can point at the payload it came from. A NULL here is provenance lost with
+    // no trace, which is what /api/v1/evidence would have to answer "I don't know" to.
+    const orphaned = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM geonerva.observation_versions WHERE raw_record_id IS NULL
+    `.execute(db);
+    expect(orphaned.rows[0]?.n).toBe('0');
 
     // The facts are only real if the one legitimate reader can see them.
     const visible = await observationsAsOf(db, { asOf: new Date() });
@@ -428,22 +435,43 @@ describe('time semantics', () => {
   });
 
   it('stores the same instants whatever the server timezone is set to', async () => {
-    // A session TimeZone leaking into a timestamptz is how P2's partition bounds broke. The same
-    // class of bug here would shift every observed_at by the server's offset.
-    await sql`SET SESSION TimeZone = 'America/New_York'`.execute(db);
+    /*
+     * A session TimeZone leaking into a timestamptz is how P2's partition bounds broke. The same
+     * class of bug here would shift every observed_at by the server's offset.
+     *
+     * The timezone is set on a **dedicated pool**, not with `SET SESSION` on the shared one.
+     * Kysely hands out pooled connections per query, so a `SET SESSION` and its matching reset
+     * can land on different connections and strand one of them in the wrong zone — a session
+     * setting that outlives its test and makes some later, unrelated test fail sometimes.
+     */
+    const skewed = createTestPool(testDb.url, { TimeZone: 'America/New_York' });
+    const skewedDb = createDb(skewed);
     try {
-      await ingest(clientServing(() => feedResponse('all_day.geojson')));
-      const row = await sql<{ observed_ms: string; primary_key: string }>`
-        SELECT (extract(epoch FROM v.observed_at) * 1000)::bigint::text AS observed_ms,
-               r.primary_key
+      // `SHOW TimeZone` returns a column literally named "TimeZone"; alias it rather than guess.
+      const zone = await sql<{ tz: string }>`SELECT current_setting('TimeZone') AS tz`.execute(
+        skewedDb,
+      );
+      expect(zone.rows[0]?.tz, 'the pool really is on a non-UTC clock').toBe('America/New_York');
+
+      const outcome = await runIngestion({
+        db: skewedDb,
+        adapter: usgsAdapter,
+        client: clientServing(() => feedResponse('all_day.geojson')),
+        trigger: 'MANUAL',
+        logger: createMemoryLogger(),
+      });
+      expect(outcome.status).toBe('SUCCEEDED');
+
+      // Read back through the UTC pool: the exact epoch millisecond from the captured feed.
+      const row = await sql<{ observed_ms: string }>`
+        SELECT (extract(epoch FROM v.observed_at) * 1000)::bigint::text AS observed_ms
         FROM geonerva.observation_versions v
         JOIN geonerva.source_records r ON r.id = v.source_record_id
         WHERE r.primary_key = 'nc75438582'
       `.execute(db);
-      // The exact epoch millisecond from the captured feed, unshifted.
       expect(row.rows[0]?.observed_ms).toBe('1789850640280');
     } finally {
-      await sql`SET SESSION TimeZone = 'UTC'`.execute(db);
+      await skewedDb.destroy();
     }
   });
 });
@@ -584,6 +612,97 @@ describe('a misconfigured deployment', () => {
     expect(outcome.runId).toBeNull();
     expect(await listRecentRuns(db, { sourceId: 'usgs' })).toHaveLength(0);
     expect(await countOf('observation_versions')).toBe(0);
+  });
+});
+
+describe('a bad record versus a bad feed', () => {
+  /** The captured feed with `mutate` applied to the first `count` features. */
+  function mutatedFeed(count: number, mutate: (p: Record<string, unknown>) => void): Uint8Array {
+    const body = JSON.parse(readFixtureBytes('usgs', 'all_day.geojson').toString('utf8')) as {
+      features: { properties: Record<string, unknown> }[];
+    };
+    for (const feature of body.features.slice(0, count)) mutate(feature.properties);
+    return new TextEncoder().encode(JSON.stringify(body));
+  }
+
+  function serving(body: Uint8Array): ReturnType<typeof clientServing> {
+    return clientServing(
+      () => new Response(body, { headers: { 'content-type': 'application/json' } }),
+    );
+  }
+
+  it('rejects one unusable record and keeps the other 229', async () => {
+    /*
+     * A single out-of-range value used to be fatal: normalization raised, the run failed as
+     * SCHEMA_DRIFT, and because `all_day` republishes the same event for 24 hours the source
+     * stayed dark for ~288 consecutive polls. One bad record is now one reject row.
+     */
+    const outcome = await ingest(serving(mutatedFeed(1, (p) => (p['cdi'] = 15))));
+
+    expect(outcome.status).toBe('PARTIAL');
+    expect(outcome.counts).toMatchObject({ accepted: 229, rejected: 1 });
+    expect(await countOf('observation_versions')).toBe(229);
+
+    const rejects = await sql<{ reason_code: string }>`
+      SELECT reason_code FROM geonerva.ingestion_rejects
+    `.execute(db);
+    expect(rejects.rows.map((row) => row.reason_code)).toStrictEqual(['SCHEMA_INVALID']);
+  });
+
+  it('ingests an event on the antimeridian instead of going dark', async () => {
+    // Exactly +180 is a real place — Kermadec and Fiji sit on it — and `isNormalizedLongitude`
+    // excludes it, so refusing the record would have taken the source down for a day.
+    const body = JSON.parse(readFixtureBytes('usgs', 'all_day.geojson').toString('utf8')) as {
+      features: { geometry: { coordinates: number[] } }[];
+    };
+    const first = body.features[0];
+    if (first === undefined) throw new Error('fixture should have a feature');
+    first.geometry.coordinates[0] = 180;
+
+    const outcome = await ingest(serving(new TextEncoder().encode(JSON.stringify(body))));
+
+    expect(outcome.status).toBe('SUCCEEDED');
+    expect(outcome.counts.accepted).toBe(230);
+    const wrapped = await sql<{ lon: string }>`
+      SELECT round(ST_X(v.centroid::geometry)::numeric, 4)::text AS lon
+      FROM geonerva.observation_versions v
+      JOIN geonerva.source_records r ON r.id = v.source_record_id
+      WHERE r.primary_key = 'nc75438582'
+    `.execute(db);
+    expect(wrapped.rows[0]?.lon).toBe('-180.0000');
+  });
+
+  it('fails the batch and writes nothing when most records are refused at persist', async () => {
+    /*
+     * The scenario that mattered: if USGS moved `time` from epoch milliseconds to microseconds,
+     * every feature would parse cleanly and every version would then be refused as a future
+     * observation. Before the verdict was re-checked after persist, the run committed as PARTIAL
+     * with zero facts, stored the payload digest so the next identical body was SKIPPED, and
+     * reported itself as merely degraded.
+     */
+    const farFuture = Date.now() + 10 * 365 * 24 * 60 * 60 * 1000;
+    const outcome = await ingest(serving(mutatedFeed(230, (p) => (p['time'] = farFuture))));
+
+    expect(outcome.status).toBe('FAILED');
+    expect(outcome.errorClass).toBe('SCHEMA_DRIFT');
+    expect(await countOf('observation_versions'), 'the transaction rolled back').toBe(0);
+    expect(await countOf('source_records')).toBe(0);
+    expect(await countOf('raw_source_records')).toBe(0);
+
+    // The next poll must not mistake the same body for "nothing changed".
+    const runs = await listRecentRuns(db, { sourceId: 'usgs' });
+    expect(runs[0]).toMatchObject({ status: 'FAILED', errorClass: 'SCHEMA_DRIFT' });
+    expect(runs[0]?.counts.received, 'the run still says how much arrived').toBe(230);
+  });
+
+  it('survives a minority of records being refused at persist', async () => {
+    const farFuture = Date.now() + 10 * 365 * 24 * 60 * 60 * 1000;
+    const outcome = await ingest(serving(mutatedFeed(20, (p) => (p['time'] = farFuture))));
+
+    // 20 of 230 is 8.7 %, under the threshold, so the batch stands and the rejects are visible.
+    expect(outcome.status).toBe('PARTIAL');
+    expect(outcome.counts.rejected).toBe(20);
+    expect(await countOf('observation_versions')).toBe(210);
   });
 });
 

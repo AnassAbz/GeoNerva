@@ -12,7 +12,7 @@ import { readFixtureBytes, readFixtureJson } from '@geonerva/test-fixtures';
 
 import { NormalizationError, type ParseContext } from '../contract.ts';
 import { parseUsgsFeed, usgsDescriptor } from './adapter.ts';
-import { normalizeUsgsFeature, parseIds } from './normalize.ts';
+import { normalizeUsgsFeature, parseIds, roundStored, wrapLongitude } from './normalize.ts';
 import { usgsFeatureSchema, type UsgsFeature } from './schema.ts';
 
 const ctx: ParseContext = { descriptor: usgsDescriptor };
@@ -189,11 +189,25 @@ describe('batch verdicts', () => {
 describe('identity', () => {
   it.each([
     [',nc75438582,', ['nc75438582']],
-    [',pt26261050,us7000tiar,pr2026261000,', ['pt26261050', 'us7000tiar', 'pr2026261000']],
+    // Sorted, not feed-ordered: the alias set is part of the content hash and ComCat reshuffles
+    // `ids` when contributor preference changes.
+    [',pt26261050,us7000tiar,pr2026261000,', ['pr2026261000', 'pt26261050', 'us7000tiar']],
     [',a,,a,', ['a']],
     [null, []],
   ])('parses ids %s', (ids, expected) => {
     expect(parseIds(ids)).toStrictEqual(expected);
+  });
+
+  it('is not a revision when the provider merely reorders ids', () => {
+    const a = normalizeUsgsFeature(
+      usgsFeatureSchema.parse(feature({ id: 'nc1', properties: { ids: ',nc1,us9,' } })),
+      normalizeCtx,
+    );
+    const b = normalizeUsgsFeature(
+      usgsFeatureSchema.parse(feature({ id: 'nc1', properties: { ids: ',us9,nc1,' } })),
+      normalizeCtx,
+    );
+    expect(b.contentSha256.equals(a.contentSha256)).toBe(true);
   });
 
   it('keeps every alias of an event that changed its preferred id', () => {
@@ -244,8 +258,9 @@ describe('normalization', () => {
     const dmin = raw.properties.dmin;
     expect(dmin).not.toBeNull();
     // 0.002881° is ~0.32 km. Stored raw it would read as 0.003 km — a 111× understatement of how
-    // well constrained the solution is.
-    expect(record.attributes['min_station_distance_km']).toBeCloseTo(dmin! * 111.195, 6);
+    // well constrained the solution is. Rounded to the two decimals the column holds.
+    expect(record.attributes['min_station_distance_km']).toBeCloseTo(dmin! * 111.195, 2);
+    expect(record.attributes['min_station_distance_km']).toBe(0.32);
     expect(record.attributes['min_station_distance_km']).not.toBe(dmin);
   });
 
@@ -308,7 +323,95 @@ describe('normalization', () => {
     const nullIsland = usgsFeatureSchema.parse(
       feature({ geometry: { type: 'Point', coordinates: [0, 0, 10] } }),
     );
-    expect(() => normalizeUsgsFeature(nullIsland, normalizeCtx)).toThrow(/null-island|0, 0/);
+    try {
+      normalizeUsgsFeature(nullIsland, normalizeCtx);
+      expect.unreachable();
+    } catch (error) {
+      const failure = error as NormalizationError;
+      expect(failure.reasonCode).toBe('NULL_ISLAND');
+      // One bad record, not a dead source.
+      expect(failure.isRecordLevel).toBe(true);
+    }
+  });
+
+  it.each([
+    [180, -180],
+    [-180, -180],
+    [180.5, -179.5],
+    [179.899, 179.899],
+  ])('wraps longitude %p to %p instead of refusing it', (input, expected) => {
+    // USGS publishes Kermadec and Fiji events on the antimeridian, and a captured month of M4.5+
+    // data already reached 179.899. `isNormalizedLongitude` excludes exactly 180, so rejecting
+    // would take the source dark for the 24 hours `all_day` keeps republishing that event.
+    expect(wrapLongitude(input)).toBe(expected);
+    const onTheLine = usgsFeatureSchema.parse(
+      feature({ geometry: { type: 'Point', coordinates: [input, -27.86, 94] } }),
+    );
+    expect(normalizeUsgsFeature(onTheLine, normalizeCtx).centroid.lon).toBe(expected);
+  });
+
+  it.each([
+    ['cdi', { cdi: 15 }],
+    ['gap', { gap: 400 }],
+    ['sig', { sig: 9_000 }],
+    ['nst', { nst: 2.5 }],
+  ])('rejects an out-of-range %s rather than quietly clamping it', (field, properties) => {
+    /*
+     * Clamping looks harmless and is not: the clamped value goes into the content hash, so a
+     * provider revising gap from 380 to 500 — both clamped to 360 — would hash identically and a
+     * real revision would be discarded as `unchanged`.
+     */
+    const bad = usgsFeatureSchema.parse(feature({ properties }));
+    try {
+      normalizeUsgsFeature(bad, normalizeCtx);
+      expect.unreachable();
+    } catch (error) {
+      const failure = error as NormalizationError;
+      expect(failure.reasonCode).toBe('SCHEMA_INVALID');
+      expect(failure.isRecordLevel, `${field} must not kill the batch`).toBe(true);
+      expect(failure.message).toContain(field);
+    }
+  });
+
+  it.each([
+    [8.245, 8.25],
+    [-8.245, -8.25],
+    [2.567, 2.57],
+    [0.005, 0.01],
+    [3.67000007629395, 3.67],
+    [1.5, 1.5],
+    [-0.004, 0],
+  ])('rounds %p to %p, the way numeric(_, 2) would', (input, expected) => {
+    // Verified against PostgreSQL: SELECT 8.245::numeric(6,2) is 8.25, because `pg` sends the
+    // decimal string "8.245" and numeric rounds half away from zero. Math.round(v * 100) / 100
+    // gives 8.24 here, and would hash a value the database does not hold.
+    expect(roundStored(input)).toBe(expected);
+  });
+
+  it('rounds magnitude and depth to what the column actually stores', () => {
+    // numeric(4,2) and numeric(6,2). Hashing more precision than the column holds would make
+    // content_sha256 impossible to re-derive from the stored row.
+    const precise = usgsFeatureSchema.parse(
+      feature({
+        properties: { mag: 2.567 },
+        geometry: { type: 'Point', coordinates: [-122.8, 38.7, 8.245] },
+      }),
+    );
+    const record = normalizeUsgsFeature(precise, normalizeCtx);
+    expect(record.magnitude).toBe(2.57);
+    expect(record.depthKm).toBe(8.25);
+  });
+
+  it('treats a broken identity as fatal, unlike a bad value', () => {
+    const broken = usgsFeatureSchema.parse(feature({ properties: { ids: ',somethingelse,' } }));
+    try {
+      normalizeUsgsFeature(broken, normalizeCtx);
+      expect.unreachable();
+    } catch (error) {
+      const failure = error as NormalizationError;
+      expect(failure.reasonCode).toBeUndefined();
+      expect(failure.isRecordLevel, 'a duplicate record is worse than a lost batch').toBe(false);
+    }
   });
 });
 

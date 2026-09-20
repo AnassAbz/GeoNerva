@@ -235,7 +235,17 @@ export function deriveSourceHealth(input: DeriveSourceHealthInput): SourceHealth
     reasons.push('LAST_POLL_FAILED');
   }
 
-  if (lastSuccess !== null && lastSuccess.status === 'PARTIAL') {
+  /*
+   * `SKIPPED` is a successful poll but not a batch, so it must not be allowed to answer the
+   * question "was the last batch complete?".
+   *
+   * A source that returns a byte-identical body is SKIPPED, and if that counted here then one
+   * poll after a PARTIAL run the incompleteness would vanish and the source would read FRESH —
+   * while the records that never became facts stayed missing. Losing that from /data-status is
+   * the "absence rendered as everything is fine" failure this project exists to avoid.
+   */
+  const lastBatch = runs.filter((run) => run.status === 'SUCCEEDED' || run.status === 'PARTIAL');
+  if (lastBatch.at(-1)?.status === 'PARTIAL') {
     status = worst(status, 'DEGRADED');
     reasons.push('PARTIAL_BATCH');
   }

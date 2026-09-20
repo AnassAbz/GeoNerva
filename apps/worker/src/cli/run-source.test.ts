@@ -57,6 +57,17 @@ describe('parseRunArgs', () => {
     expect(parseRunArgs(argv).errors).toContain(expected);
   });
 
+  it('refuses a feed the adapter does not have instead of quietly polling all_day', () => {
+    // `all_month` is a real USGS feed this adapter does not list. Falling back would report
+    // "SUCCEEDED, 230 accepted" to an operator trying to close a three-day gap.
+    const parsed = parseRunArgs(['--source', 'usgs', '--feed', 'all_month']);
+    expect(parsed.errors.join(' ')).toContain('unknown feed: all_month');
+  });
+
+  it.each(['all_hour', 'all_day', 'all_week'])('accepts the real feed %s', (feed) => {
+    expect(parseRunArgs(['--source', 'usgs', '--feed', feed]).errors).toStrictEqual([]);
+  });
+
   it('allows --help without a source', () => {
     expect(parseRunArgs(['--help'])).toMatchObject({ help: true, errors: [] });
   });

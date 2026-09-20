@@ -19,7 +19,7 @@
 | `observed_at` | When the physical phenomenon occurred / was measured | provider | EQ origin time; FIRMS `acq_date+acq_time`; GDACS `fromdate`; alert `sent` of the first message |
 | `valid_from` / `valid_to` | Interval during which the provider says the record applies | provider | alert `effective`/`expires`; GDACS `fromdate`/`todate`; TC forecast times. Null for instantaneous events |
 | `source_updated_at` | When the provider says it last revised this record | provider | USGS `updated`; GDACS `datemodified`; CAP `sent` of an Update. **Null** for FIRMS (no revision time exists) |
-| `ingested_at` | When the version became visible in GeoNerva's database | GeoNerva | one timestamp per ingestion batch, taken with `clock_timestamp()` immediately before `COMMIT` |
+| `ingested_at` | When the version became visible in GeoNerva's database | GeoNerva | one timestamp per ingestion batch, read once from the **database** clock inside the writing transaction, and equal to that run's `committed_at` |
 
 Rules:
 
@@ -27,7 +27,12 @@ Rules:
 - Provider timestamps without an offset (GDACS) are parsed as UTC **explicitly** in the adapter; the adapter test asserts it.
 - `observed_at` may be *later* than `ingested_at` never; if a provider reports a future `observed_at` (> `ingested_at` + 5 min) the record is rejected with `FUTURE_OBSERVATION` (except forecast geometry, which is modelled via `valid_from/valid_to`, not `observed_at`).
 - **Replay invariant:** the view of the world "as of T" contains exactly the versions with `ingested_at ≤ T`, and for each record only the latest such version. Nothing else. A property test enforces this across every read path (`TESTING.md` §6).
-- `ingested_at` is a batch timestamp, not the fetch start. A version fetched at 12:00 whose batch commits at 12:17 is invisible to a replay at 12:10.
+- `ingested_at` is a batch timestamp, not the fetch start, and it is identical for every version in the batch and for the run's `committed_at`. An integration test asserts all three.
+- **Precisely when it is read [corrected P3 2026-09-19].** It is `clock_timestamp()` taken as the *first* statement of the persist transaction, not the last. It has to be: identity resolution needs a `first_ingested_at` for records it creates, and that loop is most of the batch's duration. So the stamp precedes the real `COMMIT` by however long the writes take — seconds for a 2,000-record batch.
+  What this does and does not guarantee:
+  - **Atomicity holds.** Everything is one transaction, so no reader ever sees part of a batch; after `COMMIT` all of it appears at once, under one `ingested_at`.
+  - **The stamp is the database's clock, not the worker's.** A worker with a skewed clock cannot write facts that appear to arrive before or after the run carrying them.
+  - **It is not exactly the commit instant.** A replay asked for a `T` that falls inside the write window will see the batch once it has committed, though a query running *during* that window would not have. The window is the persist duration and the anomaly is unreachable for any `T` a user can ask for (the replay horizon is measured in hours), but it is a real difference from "immediately before `COMMIT`" and is recorded here rather than papered over.
 - Derived artifacts (clusters, canonical links, baselines, snapshots) carry `as_of` = the knowledge time they were computed for, and `computed_at` = wall-clock of computation. Only `as_of` participates in replay.
 
 ## 3. Enumerations

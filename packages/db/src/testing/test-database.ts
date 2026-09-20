@@ -162,6 +162,27 @@ export async function truncateAll(client: pg.ClientBase): Promise<void> {
   await client.query(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
 }
 
+/**
+ * A second pool on the test database, with extra server settings.
+ *
+ * For tests that need a connection configured differently from the shared one — a non-UTC
+ * `TimeZone`, say. It exists here so that a test does not have to import `pg` itself, which the
+ * architecture rules forbid outside this package, and because `SET SESSION` on a *pooled*
+ * connection is not an alternative: the set and its reset can land on different connections and
+ * strand one of them in the wrong state, which shows up later as an unrelated flaky test.
+ *
+ * The caller destroys it.
+ */
+export function createTestPool(
+  url: string,
+  settings: Readonly<Record<string, string>> = {},
+): pg.Pool {
+  const options = ['-c search_path=public,extensions']
+    .concat(Object.entries(settings).map(([key, value]) => `-c ${key}=${value}`))
+    .join(' ');
+  return new pg.Pool({ connectionString: url, max: 2, connectionTimeoutMillis: 10_000, options });
+}
+
 export interface TestDatabase {
   readonly url: string;
   readonly pool: pg.Pool;
