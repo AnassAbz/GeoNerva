@@ -1078,3 +1078,280 @@ should re-run only the non-UTC migration scenario end to end: migrate a fresh da
 `ALTER DATABASE … SET TimeZone`, confirm every partition's bounds are UTC-midnight-aligned, confirm
 `ensure_fire_detection_partitions` spans the old seam without raising, and confirm a detection at
 `00:30Z` lands in the partition named for its own UTC day.
+
+---
+
+# Re-verification
+
+- **Date:** 2026-09-19
+- **Scope:** `git diff 6e1fb11..HEAD` — commits `a51e81b`, `2bcab03`, `7757332`, `ce4ac29`,
+  `33b3c81`, `b64eeac` (plus `5e6a951`, the re-review above). 12 files, +1,371/−35.
+- **Method:** the narrow scenario I specified, redone independently, plus the case the orchestrator
+  could not test — a database that **already holds rows** with local-midnight bounds — in two zones
+  on opposite sides of UTC. Every other fix re-probed rather than read.
+
+## V.1 Verdict
+
+**G2 can be signed off from a security standpoint.** Nothing blocks it.
+
+The finding that blocked it — R-1, a fresh non-UTC install left unable to ingest — is fixed, and I
+verified it independently: after `0001…0010` under `ALTER DATABASE … SET TimeZone='America/New_York'`
+every partition is UTC-aligned (0 misaligned of 5) and a detection at `00:30Z` lands in the partition
+named for its own UTC day. The cause is removed as well: every connection now pins `TimeZone=UTC`,
+the database itself is pinned, and a recurrence raises an actionable error instead of a bare overlap.
+
+One real defect remains in 0010's repair path (V-1): the branch that moves rows out of a misaligned
+partition **cannot work**, for two independent reasons. I am not treating it as a blocker, and I want
+the reasoning on the record so it can be overruled: the branch is reachable only from a database that
+was migrated to 0009-or-earlier under a non-UTC zone *and then accumulated detections*. GeoNerva has
+no deployed instance, the development and CI databases are UTC, migrations 0001→0010 run in one pass
+on an empty database, and from this commit onward every connection pins UTC — so that state does not
+exist and can no longer be created. It is a broken path with no reachable caller, not a live failure.
+It must still be fixed, because a migration is immutable once applied and this one's comment promises
+a capability it does not have.
+
+## V.2 Findings
+
+| Sev | ID | Location | Summary |
+|---|---|---|---|
+| MEDIUM | V-1 | `migrations/0010_partition_bounds_repair.sql:63-76` | The row-preserving repair fails, twice over: (a) `INSERT … SELECT *` includes the `GENERATED ALWAYS` columns and raises `428C9 cannot insert a non-DEFAULT value into column "lat_e4"`; (b) with that corrected, the single ascending pass creates neighbour partitions with `ensure_fire_detection_partition`, which returns early because the neighbour still exists **misaligned**, leaving a routing gap — `23514 no partition of relation "fire_detections" found for row`. Reproduced in both `America/New_York` and `Europe/Berlin`. |
+| LOW | V-2 | `connection-url.ts:85-87` | R-9 is half fixed. `_test` matching is now case-insensitive (verified), but `databaseNameOf` still does **not** percent-decode, contrary to the change summary. `…/scratch%5Ftest` (really `scratch_test`) is refused; `…/prod%2F_test` (really `prod/_test`) is accepted. Both fail safe. |
+| LOW | V-3 | `repositories/fire.ts:160` | R-3 is documented, not enforced: Kysely's `Transaction<DB>` **extends** `Kysely<DB>`, so narrowing the parameter type does not stop a caller passing a transaction, and the 25P02 poisoning stays reachable with no compile error. |
+| LOW | V-4 | `migrations/0010:145` | `ALTER DEFAULT PRIVILEGES … REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC` is a **no-op** in PostgreSQL 17. Proved: after migration there is no `f` row in `pg_default_acl`, a newly created function has `proacl = null`, and `has_function_privilege('public', …, 'EXECUTE')` is `true`. Running the statement standalone, and again after an `ALTER DEFAULT PRIVILEGES … GRANT`, changes nothing. R-10 is not fixed — and a fix that silently does nothing is worse than a known gap. |
+| LOW | V-5 | `eslint.config.js:91-101` | The computed-access selector works for the case it names but has a false-positive class — a plain `payload['raw']` data access is reported as a SQL-injection violation — and still misses a variable key (`sql[key](…)`). |
+| LOW | V-6 | `connection-url.ts:66-72` | Duplicated `sslmode` still reads only the first value: `?sslmode=verify-full&sslmode=disable` is accepted while the operator's last word was `disable`. Fails safe; carried over from R-8. |
+| LOW | V-7 | `migrations/0010:131-140` | `ALTER DATABASE … SET TimeZone` changes the default for **every** connection to that database, not just GeoNerva's, and the handler catches only `insufficient_privilege`. See V.4 for the Supabase answer. |
+| LOW | V-8 | `migrations/0010:79` | `ensure_fire_detection_partitions(current_date - 1, 5)` evaluates `current_date` in the *session's* zone, which at that point is still the old one — so on a non-UTC server the recreated window can be offset by a day. Harmless, but inconsistent with the explicit UTC anchoring everywhere else in the file. |
+
+No HIGH or CRITICAL findings.
+
+## V.3 Findings in detail
+
+### V-1 — MEDIUM — the row-preserving repair path does not work
+
+**Location:** `packages/db/migrations/0010_partition_bounds_repair.sql:63-76`.
+
+**Setup:** migrate `0001…0009` on a fresh database under `ALTER DATABASE … SET TimeZone=<zone>`, seed
+one detection per UTC hour across every partition day, record a digest of every row, then apply 0010
+and compare. Two zones, on opposite sides of UTC.
+
+**(a) Generated columns.** `INSERT INTO geonerva.fire_detections SELECT * FROM geonerva.%I` selects
+every column of the detached table, including `lat_e4` and `lon_e4`, which are
+`GENERATED ALWAYS AS … STORED`:
+
+```text
+America/New_York  8 partitions, 188 rows seeded
+  NOTICE: repairing fire_detections_20260916 (… , 24 rows)
+  *** 0010 FAILED *** 428C9 cannot insert a non-DEFAULT value into column "lat_e4"
+
+Europe/Berlin     8 partitions, 190 rows seeded
+  NOTICE: repairing fire_detections_20260917 (… , 22 rows)
+  *** 0010 FAILED *** 428C9 cannot insert a non-DEFAULT value into column "lat_e4"
+```
+
+The migration is transactional, so it rolls back: **no data is lost**, but the repair can never
+complete and the database stays on 0009 — which is exactly the state that cannot ingest.
+
+**(b) Ordering.** With the generated columns excluded (I patched a scratch copy of 0010 to name the
+18 non-generated columns explicitly, to see what lay behind (a)) the next failure appears
+immediately, in **both** zones:
+
+```text
+America/New_York  *** FAILED *** 23514 no partition of relation "fire_detections" found for row
+Europe/Berlin     *** FAILED *** 23514 no partition of relation "fire_detections" found for row
+```
+
+The cause is that the loop repairs one partition at a time while its neighbours are still attached
+and still misaligned. A local-midnight partition for day *D* holds rows that belong to two UTC days,
+and the spill day's partition already exists under the right *name* — so
+`ensure_fire_detection_partition` takes its early `IF EXISTS … RETURN` branch and never creates the
+UTC-aligned range. The spill rows then have nowhere to go:
+
+- west of UTC (`America/New_York`, UTC−4): partition `20260916` covers `[16T04:00Z, 17T04:00Z)`; its
+  rows from `[17T00:00Z, 17T04:00Z)` need an aligned `20260917`, which is still the old local one
+  starting at `17T04:00Z`;
+- east of UTC (`Europe/Berlin`, UTC+2): partition `20260917` covers `[16T22:00Z, 17T22:00Z)`; its
+  rows from `[16T22:00Z, 17T00:00Z)` need an aligned `20260916`, which still ends at `16T22:00Z`.
+
+So neither ascending nor descending order is sufficient — the spill always points at a partition that
+has not been repaired yet in one of the two directions.
+
+**On the "two old partitions mapping onto the same UTC day" question:** they cannot. The day is
+derived from the partition *name* (`to_date(right(relname,8),'YYYYMMDD')`), names are unique, and
+local days map one-to-one onto names. What does happen is the converse — one old partition's rows
+span **two** UTC days — which is (b).
+
+**Fix.** Make the repair two-phase, so no rows are re-inserted while any misaligned partition is
+still attached:
+
+1. collect every misaligned partition; `DETACH` them all;
+2. move their rows into one staging table (`CREATE TEMP TABLE … AS SELECT …`), then drop the
+   detached tables;
+3. `ensure_fire_detection_partition` for every UTC day the staged rows touch;
+4. re-insert from staging with an **explicit column list** that excludes `lat_e4`/`lon_e4` — build it
+   from `information_schema.columns WHERE is_generated = 'NEVER'` so a future column cannot
+   reintroduce (a);
+5. assert `count(*)` before and after, and `RAISE EXCEPTION` on any difference. A repair that can
+   silently lose detections should refuse to be silent.
+
+A regression test should migrate to 0009 under a non-UTC zone, insert detections on every UTC hour,
+apply 0010 and assert both the row digest and that every row sits in the partition named for its own
+UTC day. The new tests in `security-fixes.int.test.ts` cover partition *creation* and routing under a
+non-UTC session, which is the fixed half; they do not touch the repair block, which is why the suite
+is green.
+
+### V-2 — LOW — `databaseNameOf` still does not percent-decode
+
+`packages/db/src/connection-url.ts:85-87` is unchanged:
+
+```ts
+export function databaseNameOf(url: string, variableName = 'DATABASE_URL'): string {
+  return parse(url, variableName).pathname.replace(/^\//, '');
+}
+```
+
+Measured: `…/scratch%5Ftest → "scratch%5Ftest"`, `…/prod%2F_test → "prod%2F_test"`,
+`…/X_TEST → "X_TEST"`. Consequences for the F-6 guard, both fail-safe: `scratch%5Ftest` — a database
+genuinely named `scratch_test` — is **refused**, and `prod%2F_test` — genuinely `prod/_test` — is
+**accepted** (though `ensureTestDatabase` would then create a database under a name pg does not
+connect to, which errors rather than damaging anything). The case-insensitivity half of R-9 *is*
+fixed: `…/X_TEST` is now accepted.
+
+### V-3 — LOW — the `Kysely<DB>` narrowing does not exclude a transaction
+
+`packages/db/src/repositories/fire.ts:160`. Kysely declares `class Transaction<DB> extends Kysely<DB>`,
+so a transaction satisfies the narrowed parameter. Verified by compiling
+`const asKysely: Kysely<DB> = trx;` inside `db.transaction().execute(…)` — no cast needed, no
+type error, `true` at runtime. The comment is right about the hazard; the type does not prevent it.
+
+**Fix:** a runtime guard is the only thing that actually holds — e.g. check `isTransaction`/the
+connection provider and throw, or restructure so retention takes a `pg.Pool` and opens its own
+connection. Failing that, the comment is the whole control and should say so.
+
+### V-4 — LOW — the default-privilege revoke is a no-op
+
+`packages/db/migrations/0010:145`. Measured after migration:
+
+```text
+new function ACL:                    {"proname":"probe_fn","proacl":null}
+pg_default_acl rows:                 sequences and tables only — no 'f' row
+PUBLIC can execute the new function: true
+```
+
+and running the statement by hand changes nothing:
+
+```text
+as shipped in 0010                            defacl_f=[]  newfn={acl:null, pub:true}
+after running the same statement standalone   defacl_f=[]  newfn={acl:null, pub:true}
+after also GRANTing to geonerva_worker        defacl_f=[{geonerva_worker=X/geonerva}]  newfn pub=true
+then REVOKE FROM PUBLIC again                 defacl_f=[{geonerva_worker=X/geonerva}]  newfn pub=true
+```
+
+`ALTER DEFAULT PRIVILEGES … REVOKE` removes grants that `ALTER DEFAULT PRIVILEGES … GRANT` added; it
+does not displace PostgreSQL's built-in `EXECUTE TO PUBLIC` default for functions. The four existing
+maintenance functions *are* correctly revoked (0009), so nothing regressed — but the guard against
+the *next* function is not there.
+
+**Fix:** end each migration that creates a function with
+`REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA geonerva FROM PUBLIC`, and add a migration test asserting
+that no function in the schema is `PUBLIC`-executable. A test is the only form of this that cannot
+silently stop working.
+
+### LOW findings
+
+**V-5** — the extended rule hits its stated target and has one false-positive class. Probed:
+
+```text
+sql`SELECT ${sql.raw(column)}`              -> error   OK
+sql.raw('SELECT 1')                         -> error   OK
+const alias = sql.raw; alias('SELECT 2')    -> error   OK
+(sql as never)['raw']('SELECT 3')           -> error   OK   (R-11's target, now closed)
+const key='raw'; (sql as never)[key]('…')   -> no error      (variable key)
+const { raw: d } = sql; d('SELECT 5')       -> only unbound-method
+payload['raw']                              -> error   FALSE POSITIVE
+```
+
+`MemberExpression[computed=true][property.value='raw']` matches any `x['raw']`, so a data object with
+a `raw` key now needs an `eslint-disable`. The rule is still net-positive; consider scoping it to
+`[object.name='sql']` plus a cast-aware variant, and note that `ImportSpecifier[imported.name='raw']`
+bans importing *any* symbol called `raw` from *any* module — currently harmless, but broad.
+
+**V-6** — `sslModeOf` now scans case-insensitively but still returns on the first match, so
+`?sslmode=verify-full&sslmode=disable` is accepted (and resolves to `rejectUnauthorized: true`,
+because both copies are stripped) while `?sslmode=disable&sslmode=verify-full` is refused. Safe, but
+lenient about a contradiction. Reject a duplicated `sslmode` outright.
+
+**V-7, V-8** — see V.4.
+
+## V.4 The two judgement calls
+
+**Pinning `TimeZone=UTC` on the database — safe for Supabase?** Yes, with one change I would make.
+
+- It will not usually take the error path you handle: on Supabase the migration role is `postgres`,
+  which owns the database, so `ALTER DATABASE postgres SET TimeZone TO 'UTC'` **succeeds**. The
+  `insufficient_privilege` handler is a reasonable belt, not the expected path.
+- The value is a no-op in effect — Supabase already defaults to UTC — so there is no behaviour change
+  to be surprised by.
+- The thing worth narrowing is blast radius, not risk: `ALTER DATABASE` changes the default for
+  *every* connection to that database, including PostgREST, the SQL editor, `pg_cron` and anything
+  else in the project. An application migration claiming a database-wide default is a wider reach
+  than it needs. `ALTER ROLE <app role> IN DATABASE <db> SET TimeZone TO 'UTC'` gets the same
+  protection scoped to GeoNerva's roles, and the per-connection pin in `client.ts` and `cli.ts`
+  already covers the requirement on its own.
+- One robustness point: catch `OTHERS` with a `NOTICE`, not just `insufficient_privilege`. A managed
+  host that refuses this with `feature_not_supported` (or anything else) would fail the whole
+  migration, and the per-connection pin means nothing is actually lost by tolerating it. Verified
+  that the statement runs correctly inside the migration's transaction.
+
+**Recreating the deployment window in 0010 — surprising?** No, and it is the right call.
+
+- 0005 already does exactly this, so it is consistent rather than novel, and the repair may legitimately
+  have dropped every partition, so leaving a fresh database with none would be worse.
+- It is a convenience rather than a correctness requirement — `ensurePartitionsForDays` runs before
+  every batch — which is worth one sentence in the comment so a future reader does not think the
+  window is load-bearing.
+- The one wrinkle is V-8: `current_date` is evaluated in the session's zone, which at that point in
+  0010 is still the old one (`ALTER DATABASE … SET` only affects new sessions). Use
+  `(now() AT TIME ZONE 'UTC')::date` so the whole file speaks UTC. Note also that this makes the
+  migration's effect depend on *when* it runs, which is already true of 0005 but slightly weakens
+  "the same migrations produce the same schema".
+
+## V.5 Verified fixed
+
+| Finding | Evidence |
+|---|---|
+| **R-1** (fresh installs — the blocker) | Independently redone: fresh database, `ALTER DATABASE … SET TimeZone='America/New_York'`, migrated `0001…0010`. **0 misaligned of 5 partitions**, each bound at UTC midnight (`FROM ('2026-09-17 20:00:00-04')` = `2026-09-18T00:00:00Z`, displayed in the session's zone). A detection at `00:30Z` landed in `fire_detections_20260920`, the partition named for its own UTC day. The repair loop ran and corrected all eight partitions 0005 had created (`NOTICE: repairing fire_detections_20260916 … 0 rows`, ×8). The seam that used to raise `42P17` is gone. |
+| **R-1** (cause removed) | `client.ts` pins `-c TimeZone=UTC` in the startup options *and* in the per-connection `SET`; `migrator/cli.ts` does the same; `ALTER DATABASE` recorded `setconfig = ["TimeZone=UTC"]`, and a pool that sets no zone of its own reports `TimeZone = UTC`. `ensure_fire_detection_partition` now catches `invalid_object_definition` and re-raises naming the cause and the remedy. |
+| **R-2** | Four consecutive `MISSING_FROM_SOURCE` reconciles with no caller hash: `inserted:true` once, then `inserted:false` three times — **exactly one tombstone version** (`1/ACTIVE 2/MISSING_FROM_SOURCE`), record invisible. Escalation works: `→ DELETED` writes version 3, a repeat of `DELETED` is a no-op, `→ MISSING_FROM_SOURCE` writes version 4 (correct — the status genuinely changed). The USGS stable-hash path stays idempotent (`inserted:true`, then false, false). |
+| **R-4** | `migrator/cli.ts` now builds its client from `driverConnectionString` + `sslConfigFor`, with `-c search_path=… -c TimeZone=UTC`. The highest-privilege connection and `createPool` now agree about what a URL means. |
+| **R-5 / R-8** | Stronger than I asked for. Every `ssl*` parameter in any case, plus `uselibpqcompat` and `requiressl`, is **refused** rather than stripped: `sslnegotiation`, `SSLNEGOTIATION`, `SslNegotiation`, `sslrootcert`, `SSLROOTCERT`, `sslcompression`, `sslsni`, `requiressl`, `uselibpqcompat`, `USELIBPQCOMPAT`, `ssl`, `SSL`. `sslmode` is read case-insensitively, so `?SSLMODE=verify-full` and `?SslMode=verify-full` are now accepted and resolve to `{"rejectUnauthorized":true,"ca":"PINNED-CA"}` instead of failing closed. The pinned CA survives in every accepted case, and unrelated parameters (`application_name`, `options`) pass through untouched. The prefix rule means a parameter libpq adds in future is refused by default, which is the right direction. |
+| **R-6** | `preparedStatements` removed from `CreatePoolOptions`, `createDb`, `workerPoolOptions` and `webPoolOptions`. The §3a S-15b entry now states the requirement holds by construction and that Kysely has no such option — accurate. |
+| **R-11** | `(sql as never)['raw']('…')` is now an error, which was the stated target. See V-5 for the residuals. |
+| **S-11** | `sql.lit(decimals)` is gone. Compiled: `ST_AsGeoJSON("v"."centroid"::geometry, $1)` with `PARAMS=[6]` for `asGeoJson`, and `$1 / [3]` for `expressionAsGeoJson`. **Every value in the spatial layer is now a bound parameter**, without exception — the file's own rule 1 finally holds as written. |
+| **F-6 guard** (re-probed) | The development database, `…/postgres`, a tunnelled `…@127.0.0.1:5433/supabase_prod` and `0.0.0.0/x_test` are all refused; `X_TEST` is now accepted thanks to the case-insensitive match. |
+
+**Project checks:** `pnpm typecheck` clean; `pnpm lint --max-warnings=0` clean; `pnpm depcruise` clean
+(103 modules, 298 dependencies); `pnpm test:unit` 297/297; `pnpm test:integration` 136/136 against
+PostgreSQL 17.0 / PostGIS 3.4.3.
+
+All probing used throwaway databases (`geonerva_v1_test` … `geonerva_v7_test`), which have been
+dropped, and a scratch copy of 0010 that was never written into the repository. The development
+database was not touched.
+
+## V.6 Gate G2
+
+**Signed off from a security standpoint. Nothing blocks it.**
+
+- No CRITICAL or HIGH finding is open. Every finding from the first review and the re-review that was
+  a defect in reachable code is fixed and independently verified.
+- Both §3a exit criteria, F-6 and F-7, are met, and F-7 is now met in a stronger form than the
+  criterion asks: GeoNerva — not the URL — configures the driver's TLS, on every connection including
+  the migrator.
+- V-1 is a genuine defect that must be fixed, but its only caller is a database state that does not
+  exist and can no longer arise. It should be a tracked follow-up, not a gate item. If the orchestrator
+  disagrees with that reachability argument, the fix is half a day's work and V.3 describes it.
+
+Recommended follow-ups, in order: V-1 (two-phase repair with an explicit column list and a row-count
+assertion, plus the regression test that would have caught it), V-4 (replace the no-op revoke with an
+end-of-migration `REVOKE` and a test), V-2 and V-3 (small, and both are cases where a summary claims
+more than the code does), then V-5 to V-8. None of them needs to precede P3.
