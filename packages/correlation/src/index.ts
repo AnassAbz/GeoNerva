@@ -52,3 +52,6 @@ export type {
 
 export { calibrate, scorePair, vetoStatistics } from './calibration.ts';
 export type { CalibrationResult, LabelledPair, LabelledSet, PairOutcome } from './calibration.ts';
+
+export { AGREEMENT_THRESHOLDS, assessAgreement, chooseHeadlineMagnitude } from './agreement.ts';
+export type { AgreementResult, MemberSolution } from './agreement.ts';
