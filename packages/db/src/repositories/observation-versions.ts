@@ -92,6 +92,61 @@ export class VersionRejectedError extends Error {
 }
 
 /**
+ * Retention: drops earthquake versions below a magnitude, older than a cutoff (ADR-035).
+ *
+ * "Keep normalized facts forever" and "poll an all-magnitude feed" are individually reasonable
+ * and jointly unaffordable: the live feed adds **238 MiB a year** of small earthquakes, which
+ * consumes the whole EMSC reserve in about six months. `M >= keepAboveMagnitude` is kept forever;
+ * everything below it has a replay horizon.
+ *
+ * Whole records go, not individual versions: deleting some versions of a record and keeping
+ * others would leave a history with holes in it, which is worse than a history that stops. A
+ * record is removed only when **every** version of it is below the magnitude and older than the
+ * cutoff, so an event that was later revised upward past the threshold is kept entire.
+ *
+ * `magnitude IS NULL` counts as below the threshold: a sonic boom is exactly the kind of record
+ * this is for. Returns the number of records removed, so the job can report rather than assume.
+ */
+export async function pruneSmallMagnitudeVersionsBefore(
+  db: Transaction<DB> | Kysely<DB>,
+  cutoff: Date,
+  keepAboveMagnitude: number,
+): Promise<number> {
+  const result = await sql`
+    WITH prunable AS (
+      SELECT r.id
+      FROM geonerva.source_records r
+      WHERE r.hazard_type = 'EARTHQUAKE'
+        AND NOT EXISTS (
+          -- Any version at or above the threshold, or any recent one, keeps the whole record.
+          SELECT 1 FROM geonerva.observation_versions v
+          WHERE v.source_record_id = r.id
+            AND (v.magnitude >= ${keepAboveMagnitude} OR v.observed_at >= ${cutoff})
+        )
+        AND EXISTS (SELECT 1 FROM geonerva.observation_versions v WHERE v.source_record_id = r.id)
+    ),
+    dropped_heads AS (
+      DELETE FROM geonerva.source_record_heads h USING prunable p WHERE h.source_record_id = p.id
+    ),
+    dropped_geometries AS (
+      DELETE FROM geonerva.observation_geometries g
+      USING geonerva.observation_versions v, prunable p
+      WHERE g.observation_version_id = v.id AND v.source_record_id = p.id
+    ),
+    dropped_versions AS (
+      DELETE FROM geonerva.observation_versions v USING prunable p
+      WHERE v.source_record_id = p.id
+    ),
+    dropped_aliases AS (
+      DELETE FROM geonerva.source_record_aliases a USING prunable p
+      WHERE a.source_record_id = p.id
+    )
+    DELETE FROM geonerva.source_records r USING prunable p WHERE r.id = p.id
+  `.execute(db);
+  return Number(result.numAffectedRows ?? 0n);
+}
+
+/**
  * The current head content hash for each of these records, for callers that need to know what
  * *will* change before they write anything.
  *

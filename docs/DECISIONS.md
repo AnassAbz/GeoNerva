@@ -442,6 +442,43 @@ Turborepo is not adopted until build times justify it.
   | **Subtotal** | **~375** |
   | **Reserved for EMSC (P5)** | **~125** |
 
-  P5 must measure EMSC against that 125 MB line and narrow its own backfill to fit; it does not get to overspend and leave the next phase to discover it.
+  P5 must measure EMSC against that line and narrow its own backfill to fit; it does not get to overspend and leave the next phase to discover it.
+
+  > **Corrected by ADR-035.** The "all magnitudes, last 30 d — 20 MB" row above is a **rate presented as a stock**: with facts kept forever it is 0.65 MiB/day, or **238 MiB/year**, which consumes the whole EMSC reserve in about six months. ADR-035 adds a magnitude-tiered replay horizon that makes the 20 MB row true, and revises the EMSC reserve to **~70 MB**. Read ADR-035's budget table, not this one.
 - **Caveat, stated because it cuts the other way:** 1,865 B/event was measured on a 2,266-row table, where index pages are lumpy and partly empty. At 80,000 rows the per-row cost usually falls as pages fill, so 142 MB is a **conservative** ceiling rather than a best guess. It is re-measured after the real backfill runs, and this ADR is revisited if the true figure differs by more than 15 %.
 - **Trade-offs:** GeoNerva's earthquake history starts in 2016 on the lean profile, and a user asking about 2011 Tōhoku gets "outside the indexed window" rather than a record. That is a visible, explainable limit — which is the kind this project accepts — and it is one configuration change away from the full catalogue on `standard`.
+
+## ADR-035 — Small-magnitude earthquake facts have a replay horizon; M ≥ 4.5 is kept forever
+- **Date:** 2026-09-20 (P4 review; corrects an arithmetic error in ADR-034)
+- **Context:** ADR-034's budget lists "all magnitudes, last 30 days — 20 MB" as a line item, and the ~375 MB subtotal treats it as a fixed stock. **It is a rate.** The live adapter polls `all_day`, which is all magnitudes, and ADR-034's own measured count says that is 11,015 events per 30 days — **367/day**. At the measured 1,865 B/event, and with ADR-033 keeping normalized facts **forever**, that is:
+
+  | | |
+  |---|---|
+  | Permanent growth, live all-magnitude | **0.65 MiB/day = 238 MiB/year** |
+  | Permanent growth, M ≥ 4.5 only | 7,456 events/year = **13.3 MiB/year** |
+
+  So the ~125 MB ADR-034 reserved for EMSC is consumed by USGS live ingestion alone in **roughly six months**, before EMSC writes a row. ADR-034's conclusion is true on day one and false by about month six — which is precisely the class of unchecked arithmetic that ADR-034 was itself written to catch.
+- **The real question this exposes:** "keep normalized facts forever" and "poll an all-magnitude feed" are individually reasonable and jointly unaffordable on a 500 MB budget. One of them has to give.
+- **Alternatives:**
+  - *Stop polling all magnitudes* (poll `4.5_day` instead) — rejected. A user in Los Angeles or Reykjavík cares about an M2.8 three kilometres away, and the "notable for here" baseline in a moderately active region is built from exactly that band. Discarding it globally to save storage would gut the product in the places it is most useful.
+  - *Keep everything and move to the `standard` profile* — rejected: the owner chose lean and ruled out paid storage (Q2).
+  - *Chosen:* **retention by magnitude tier.** `M ≥ 4.5` facts are kept **forever**. Facts below M4.5 are kept for a bounded window — **30 days on `lean`**, 2 years on `standard`, which is what ARCHITECTURE §12 already says the standard profile keeps ("2 y small-EQ history", implying lean does not).
+- **Why this is retention and not a breach of the append-only rule.** ADR-002 forbids *mutating* a fact. Dropping old data wholesale is a different thing, and this architecture already does it: fire detections are dropped by partition on a 72-hour horizon, and §12 speaks of "batched deletes for the rest". What that design owes the user is a **stated replay horizon**, not an unbounded archive.
+- **The consequence that must be surfaced, not swallowed.** After 30 days a replay on the lean profile will not show small earthquakes. That must be reported as *"outside the indexed window for this magnitude"*, never as an empty result — an empty list here would be the system saying nothing happened when what it means is that it no longer remembers. The replay horizon is already an API-exposed concept for fire (§12); earthquakes now have a magnitude-dependent one and it is exposed the same way.
+- **Corrected budget** (lean, measured):
+
+  | Item | MB |
+  |---|---|
+  | USGS M ≥ 4.5 from 2016 (one-off backfill) | 142 |
+  | USGS M ≥ 4.5 ongoing, 3 years | 40 |
+  | USGS below M4.5, rolling 30 days | 20 |
+  | Live raw payload bodies, rolling 30 days (ADR-033) | 15 |
+  | Fire detections, 72 h (P2 measured) | 143 |
+  | `places` | ~40 |
+  | Operational | ~30 |
+  | **Subtotal** | **~430** |
+  | **Reserved for EMSC (P5)** | **~70** |
+
+  The EMSC reserve falls from 125 MB to **~70 MB**, which is the honest number and is P5's constraint. If EMSC cannot be made useful within it, the levers in order are: shorten the small-magnitude window, narrow the USGS backfill to M ≥ 5.0 (frees 57 MB), and only then touch fire retention — which is what the replay horizon is built on.
+- **Implementation:** `pruneSmallMagnitudeVersionsBefore` in `packages/db`, alongside the existing `prunePayloadsBefore` and `dropDetectionPartitionsBefore`. Like those, the **function** exists and is tested; **scheduling** all three as a nightly job is P10, and until that job runs the growth is real. That is stated here so it cannot be mistaken for solved.
+- **Trade-offs:** the lean profile forgets small earthquakes after a month, and a replay from last year shows only M ≥ 4.5. It is a visible, explainable, configurable limit — and it is the difference between a system that fits its deployment and one that silently stops fitting in month six.

@@ -30,7 +30,12 @@ import {
   resolveCanonicalEvent,
 } from './canonical.ts';
 import { findProductByCode } from './sources.ts';
-import { insertTombstone, listVersions, rebuildHeads } from './observation-versions.ts';
+import {
+  insertTombstone,
+  listVersions,
+  pruneSmallMagnitudeVersionsBefore,
+  rebuildHeads,
+} from './observation-versions.ts';
 import { findSourceRecord, listAliases, resolveSourceRecord } from './source-records.ts';
 import { upsertRawRecords, findRawPayload, prunePayloadsBefore } from './raw-records.ts';
 
@@ -360,6 +365,93 @@ describe('version insertion (DOMAIN_MODEL §4.7)', () => {
     `.execute(db);
     expect(head.rows[0]?.latest_version_seq, 'the highest seq is the head').toBe(2);
     expect(Number(head.rows[0]?.magnitude)).toBe(4.9);
+  });
+
+  it('prunes only small, old earthquakes, and prunes them whole (ADR-035)', async () => {
+    /*
+     * "Keep facts forever" and "poll an all-magnitude feed" are jointly unaffordable: the live
+     * feed adds 238 MiB a year of small earthquakes. M >= 4.5 is kept forever; below that has a
+     * replay horizon.
+     */
+    const old = new Date(T0.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const small = await seedObservation(db, {
+      primaryKey: 'us-small-old',
+      ingestedAt: T0,
+      observedAt: old,
+      magnitude: 2.1,
+      centroid: PLACES.suva,
+    });
+    const big = await seedObservation(db, {
+      primaryKey: 'us-big-old',
+      ingestedAt: T0,
+      observedAt: old,
+      magnitude: 5.2,
+      centroid: PLACES.suva,
+    });
+    const recent = await seedObservation(db, {
+      primaryKey: 'us-small-recent',
+      ingestedAt: T0,
+      observedAt: T0,
+      magnitude: 1.4,
+      centroid: PLACES.suva,
+    });
+
+    const cutoff = new Date(T0.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const pruned = await db
+      .transaction()
+      .execute((trx) => pruneSmallMagnitudeVersionsBefore(trx, cutoff, 4.5));
+
+    expect(pruned, 'only the small old one').toBe(1);
+
+    const remaining = await sql<{ primary_key: string }>`
+      SELECT primary_key FROM geonerva.source_records ORDER BY primary_key
+    `.execute(db);
+    expect(remaining.rows.map((row) => row.primary_key)).toStrictEqual([
+      'us-big-old',
+      'us-small-recent',
+    ]);
+
+    // Pruned whole: no orphan versions, aliases or head rows left behind.
+    for (const table of ['observation_versions', 'source_record_aliases'] as const) {
+      const orphans = await sql<{ n: string }>`
+        SELECT count(*)::text AS n FROM geonerva.${sql.table(table)} t
+        WHERE NOT EXISTS (SELECT 1 FROM geonerva.source_records r WHERE r.id = t.source_record_id)
+      `.execute(db);
+      expect(orphans.rows[0]?.n, `${table} has orphans`).toBe('0');
+    }
+    expect(big.sourceRecordId).not.toBe(small.sourceRecordId);
+    expect(recent.sourceRecordId).not.toBe(small.sourceRecordId);
+  });
+
+  it('keeps a record entire when any version reached the threshold', async () => {
+    // An event revised upward past M4.5 is kept whole. Deleting some versions and keeping others
+    // would leave a history with holes, which is worse than one that stops.
+    const old = new Date(T0.getTime() - 90 * 24 * 60 * 60 * 1000);
+    await seedObservation(db, {
+      primaryKey: 'us-revised-up',
+      ingestedAt: T0,
+      observedAt: old,
+      magnitude: 3.9,
+      centroid: PLACES.suva,
+    });
+    await seedObservation(db, {
+      primaryKey: 'us-revised-up',
+      ingestedAt: minutes(5),
+      observedAt: old,
+      magnitude: 4.8,
+      centroid: PLACES.suva,
+    });
+
+    const cutoff = new Date(T0.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const pruned = await db
+      .transaction()
+      .execute((trx) => pruneSmallMagnitudeVersionsBefore(trx, cutoff, 4.5));
+
+    expect(pruned).toBe(0);
+    const versions = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM geonerva.observation_versions
+    `.execute(db);
+    expect(versions.rows[0]?.n, 'both versions survive').toBe('2');
   });
 
   it('rejects a version observed more than five minutes in the future (I13)', async () => {

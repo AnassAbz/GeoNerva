@@ -82,6 +82,7 @@ export {
   headContentHashes,
   insertTombstone,
   insertVersionIfChanged,
+  pruneSmallMagnitudeVersionsBefore,
   listVersions,
   rebuildHeads,
 } from './observation-versions.ts';

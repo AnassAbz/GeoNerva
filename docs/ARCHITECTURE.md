@@ -779,7 +779,19 @@ ADR-033 works: 1,865 B against P3's 2,735 B with payload bodies, a **32 % reduct
 raw table drops from 1,269 B/event to 231. What it does not do is make the *planned* catalogue
 fit — the FDSN `count` endpoint says M ≥ 4.5 since 2000 is **187,173 events**, or **333 MB for one
 source**. **ADR-034** therefore narrows the lean v1 catalogue to **M ≥ 4.5 from 2016** (79,929
-events, 142 MB) and reserves ~125 MB for EMSC, which P5 must measure against.
+events, 142 MB).
+
+**And the live feed is a rate, not a line item [ADR-035].** `all_day` is all magnitudes — 367
+events/day measured — and with facts kept forever that is **0.65 MiB/day, 238 MiB/year**. Polling
+all magnitudes and keeping facts forever are individually reasonable and jointly unaffordable
+here. ADR-035 keeps **M ≥ 4.5 forever** and gives everything below it a **replay horizon**: 30 days
+on `lean`, 2 years on `standard`. After that window a replay must report *"outside the indexed
+window for this magnitude"*, never an empty result. The corrected lean budget is **~430 MB**, with
+**~70 MB** reserved for EMSC.
+
+The retention *functions* exist (`prunePayloadsBefore`, `dropDetectionPartitionsBefore`,
+`pruneSmallMagnitudeVersionsBefore`) and are tested; **scheduling them as a nightly job is P10**,
+and until that job runs the growth above is real.
 
 Not yet included, because P2 does not populate them: `places` (GeoNames `cities15000`, 34,146
 rows), `fire_cluster_versions` and `fire_daily_cells` at steady state, snapshots and caches.
