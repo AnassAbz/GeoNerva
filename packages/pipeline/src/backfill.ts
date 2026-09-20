@@ -160,6 +160,7 @@ export async function runBackfill<TRaw>(
 
   let intervalsProcessed = 0;
   let intervalsSplit = 0;
+  let leaseHeld = false;
   let newVersions = 0;
   let unchanged = 0;
 
@@ -186,6 +187,25 @@ export async function runBackfill<TRaw>(
       }
 
       const outcome = await ingestWindow(options, plan.id, interval, window, mode, logger);
+
+      /*
+       * Another worker holds this product's ingestion lease.
+       *
+       * Nothing was fetched and nothing was written, so `beforeCommit` never ran and the interval
+       * is still PENDING — which means claiming again would hand back the *same* interval, and
+       * the loop would spin on it for as long as the other worker held the lease. Stopping is the
+       * correct response: the plan stays open and the next invocation resumes it.
+       */
+      if (outcome.status === 'LEASE_HELD') {
+        leaseHeld = true;
+        logger.log('info', 'backfill.lease_held', {
+          ...base,
+          runId: plan.id,
+          detail: 'another run holds this product; leaving the plan open',
+        });
+        break;
+      }
+
       intervalsProcessed += 1;
       newVersions += outcome.counts.newVersions;
       unchanged += outcome.counts.unchanged;
@@ -277,7 +297,9 @@ export async function runBackfill<TRaw>(
     status = 'INCOMPLETE';
     detail = aborted
       ? 'cancelled; the plan is left open and resumes where it stopped'
-      : `${progress.pending} interval(s) still pending`;
+      : leaseHeld
+        ? 'another run holds this product; the plan is left open'
+        : `${progress.pending} interval(s) still pending`;
   }
 
   logger.log(status === 'FAILED' ? 'error' : 'info', 'backfill.finished', {

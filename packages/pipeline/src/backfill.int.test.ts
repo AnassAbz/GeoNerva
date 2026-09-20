@@ -11,8 +11,10 @@ import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  acquireRunLease,
   backfillProgress,
   createDb,
+  findProductByCode,
   findBackfillPlan,
   listRecentRuns,
   observationsAsOf,
@@ -440,6 +442,30 @@ describe('crash recovery', () => {
     const recovered = await backfill(scriptedClient().client);
     expect(recovered.status).toBe('COMPLETED');
     expect(await countOf('observation_versions')).toBe(230);
+  });
+
+  it('stops instead of spinning when another worker holds the lease', async () => {
+    /*
+     * A LEASE_HELD outcome means nothing was fetched and nothing was written, so `beforeCommit`
+     * never ran and the interval is still PENDING. Claiming again hands back the *same* interval,
+     * so without this the loop spins on it for as long as the other worker holds the lease.
+     */
+    const held = await acquireRunLease(db, {
+      sourceId: usgsAdapter.descriptor.sourceId,
+      productId: (await findProductByCode(db, 'usgs', 'comcat'))?.id ?? null,
+      trigger: 'SCHEDULE',
+    });
+    expect(held.acquired).toBe(true);
+
+    const { client, queries } = scriptedClient();
+    const outcome = await backfill(client);
+
+    expect(outcome.status).toBe('INCOMPLETE');
+    expect(outcome.detail).toMatch(/another run holds this product/);
+    expect(queries.length, 'it stops rather than re-fetching the same window').toBeLessThanOrEqual(
+      1,
+    );
+    expect(outcome.progress.pending, 'every window is still there to resume').toBe(3);
   });
 
   it('stops cleanly when cancelled and leaves the plan resumable', async () => {
