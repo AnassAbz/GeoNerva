@@ -418,6 +418,63 @@ describe('window splitting', () => {
   });
 });
 
+describe('the count is a cross-check, not just a planning signal', () => {
+  it('fails the interval when the provider returns fewer events than it counted', async () => {
+    /*
+     * FDSN answering 200 with an empty body for a window it just said holds 4,000 events - a
+     * proxy, a cache, a parameter quietly ignored. Without the cross-check the interval is DONE
+     * with n_received = 0, the run is SUCCEEDED, the plan reaches COMPLETED, and the catalogue
+     * has a permanent hole nothing will ever report.
+     */
+    const { client } = scriptedClient({
+      query: () => new Response(fdsnBody([])),
+      count: () =>
+        new Response(JSON.stringify({ count: 4000, maxAllowed: 20_000 }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+
+    const outcome = await backfill(client, { maxIntervals: 1 });
+
+    expect(outcome.status).toBe('FAILED');
+    expect(outcome.progress.done, 'the window is not marked done').toBe(0);
+    expect(outcome.progress.failed).toBe(1);
+
+    const interval = await sql<{ error_class: string; error_message: string }>`
+      SELECT error_class, error_message FROM geonerva.backfill_intervals
+      WHERE plan_id = ${outcome.planId}::uuid AND status = 'FAILED'
+    `.execute(db);
+    expect(interval.rows[0]?.error_class).toBe('SCHEMA_DRIFT');
+    expect(interval.rows[0]?.error_message).toMatch(/counted 4000 .* but returned 0/);
+  });
+
+  it('accepts receiving more than the count, because the catalogue grows between requests', async () => {
+    // The count and the query are two requests. More is normal; fewer is the dangerous direction.
+    const { client } = scriptedClient({
+      count: () =>
+        new Response(JSON.stringify({ count: 5, maxAllowed: 20_000 }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    const outcome = await backfill(client, { maxIntervals: 1 });
+    expect(outcome.status).toBe('INCOMPLETE');
+    expect(outcome.progress.done).toBe(1);
+    expect(outcome.progress.failed).toBe(0);
+  });
+
+  it('accepts a genuinely empty window when the count agrees', async () => {
+    const { client } = scriptedClient({
+      query: () => new Response(fdsnBody([])),
+      count: () =>
+        new Response(JSON.stringify({ count: 0, maxAllowed: 20_000 }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    const outcome = await backfill(client);
+    expect(outcome.status).toBe('COMPLETED');
+  });
+});
+
 describe('crash recovery', () => {
   it('resumes where it stopped when the process is bounded mid-plan', async () => {
     // `maxIntervals` is the same shape as a crash from the plan's point of view: some intervals

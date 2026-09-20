@@ -40,6 +40,7 @@ function run(
     committedAt,
     newestObservedAt: null,
     errorClass: status === 'FAILED' ? 'HTTP_5XX' : null,
+    trigger: 'SCHEDULE',
     ...extra,
   };
 }
@@ -203,6 +204,48 @@ describe('deriveSourceHealth', () => {
       const result = health([run('PARTIAL', 25 * MINUTE_MS), run('FAILED', 2 * MINUTE_MS)]);
       expect(result.status).toBe('DEGRADED');
       expect(result.reasons).toStrictEqual(['POLL_AGEING', 'LAST_POLL_FAILED', 'PARTIAL_BATCH']);
+    });
+  });
+
+  describe('a backfill is not evidence about the live feed', () => {
+    it('does not let backfill successes hide a live feed that is failing', () => {
+      /*
+       * The scenario: a six-hour backfill commits a window every twenty seconds while the live
+       * poll fails every five minutes. Every live FAILED run has an earlier committed_at than the
+       * most recent backfill success, so without filtering there are zero failures "since the
+       * last success" and the source reads FRESH for six hours while no live data arrives.
+       */
+      const result = health([
+        run('SUCCEEDED', 120 * MINUTE_MS),
+        run('FAILED', 10 * MINUTE_MS),
+        run('SUCCEEDED', 1 * MINUTE_MS, { trigger: 'BACKFILL' }),
+      ]);
+      expect(result.status, 'the live feed has not succeeded in two hours').not.toBe('FRESH');
+      expect(result.reasons).toContain('LAST_POLL_FAILED');
+      expect(result.consecutiveFailures).toBe(1);
+    });
+
+    it('does not let backfill failures degrade a healthy live feed either', () => {
+      // Symmetric: a backfill hitting bad windows must not open the live source's breaker.
+      const result = health([
+        run('SUCCEEDED', 2 * MINUTE_MS),
+        run('FAILED', 1 * MINUTE_MS, { trigger: 'BACKFILL' }),
+      ]);
+      expect(result.status).toBe('FRESH');
+      expect(result.consecutiveFailures).toBe(0);
+    });
+
+    it('counts a manual poll, because that really is a live poll', () => {
+      const result = health([run('SUCCEEDED', 5 * MINUTE_MS, { trigger: 'MANUAL' })]);
+      expect(result.status).toBe('FRESH');
+      expect(result.reasons).toStrictEqual(['OK']);
+    });
+
+    it('does not let a deletion sweep stand in for a poll', () => {
+      // A sweep proves FDSN answered, not that the live feed is reachable.
+      const result = health([run('SUCCEEDED', 1 * MINUTE_MS, { trigger: 'RECONCILE' })]);
+      expect(result.status).toBe('UNAVAILABLE');
+      expect(result.reasons).toStrictEqual(['NEVER_SUCCEEDED']);
     });
   });
 

@@ -329,13 +329,25 @@ export async function markIntervalFailed(
   errorClass: string,
   errorMessage: string,
 ): Promise<void> {
-  await sql`
+  const result = await sql`
     UPDATE geonerva.backfill_intervals
-    SET status = 'FAILED', error_class = ${errorClass}, error_message = ${errorMessage}
+    SET status = 'FAILED',
+        -- Cleared, because the CHECK ties completed_at to DONE/SPLIT and an interval can be
+        -- failed *after* being marked done: the count cross-check runs once the batch has already
+        -- committed its checkpoint. Leaving the stamp behind violates the constraint, and the
+        -- failure to record the failure was surfacing as a retry rather than as an error.
+        completed_at = NULL,
+        error_class = ${errorClass},
+        error_message = ${errorMessage}
     WHERE plan_id = ${planId}::uuid
       AND interval_from = ${interval.from}
       AND interval_to = ${interval.to}
   `.execute(db);
+  if (Number(result.numAffectedRows ?? 0n) !== 1) {
+    throw new Error(
+      `could not mark interval ${interval.from.toISOString()}–${interval.to.toISOString()} of plan ${planId} as failed`,
+    );
+  }
 }
 
 export interface BackfillProgress {

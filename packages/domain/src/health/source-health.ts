@@ -21,6 +21,7 @@ import {
   SUCCESSFUL_RUN_STATUSES,
   type ErrorClass,
   type RunStatus,
+  type RunTrigger,
   type SourceHealthStatus,
 } from '../enums.ts';
 import { evidenceId, type EvidenceId } from '../evidence/evidence-id.ts';
@@ -39,6 +40,28 @@ export interface IngestionRunFact {
   /** Newest provider `observed_at` this run saw, for the data-currency dimension. */
   readonly newestObservedAt: Date | null;
   readonly errorClass: ErrorClass | null;
+  /**
+   * Why the run started.
+   *
+   * Load-bearing: a backfill window and a live poll are both successful `usgs/comcat` runs, so
+   * without this a six-hour backfill committing a window every twenty seconds makes a live feed
+   * that has been failing the whole time read `FRESH` with zero consecutive failures. That is
+   * absence rendered as everything-is-fine, which is the failure this project exists to prevent.
+   */
+  readonly trigger: RunTrigger;
+}
+
+/**
+ * Triggers that are evidence about whether *polling* works.
+ *
+ * `SCHEDULE` and `MANUAL` are both live polls of the current feed. `BACKFILL` asks a bounded
+ * historical question and `RECONCILE` sweeps deletions; neither says anything about whether the
+ * live feed is reachable, so neither can make a source look fresh or make it look broken.
+ */
+export const LIVE_POLL_TRIGGERS = ['SCHEDULE', 'MANUAL'] as const;
+
+export function isLivePoll(trigger: RunTrigger): boolean {
+  return (LIVE_POLL_TRIGGERS as readonly RunTrigger[]).includes(trigger);
 }
 
 /** Why a source is in the state it is in. Reasons are shown on `/data-status`, never hidden. */
@@ -156,7 +179,9 @@ function visibleRuns(
 export function deriveSourceHealth(input: DeriveSourceHealthInput): SourceHealth {
   const { sourceId, enabled, policy, asOf } = input;
   const productId = input.productId ?? null;
-  const runs = visibleRuns(input.runs, asOf);
+  // Only live polls are evidence about the live feed. A backfill running alongside a broken one
+  // must not stand in for it, in either direction.
+  const runs = visibleRuns(input.runs, asOf).filter((run) => isLivePoll(run.trigger));
 
   const lastRun = runs.at(-1) ?? null;
   const lastAttemptAt = runs.reduce<Date | null>(

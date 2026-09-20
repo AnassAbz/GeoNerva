@@ -169,13 +169,18 @@ export function isWindowTooLarge(error: SourceFetchError, bodyText?: string): bo
   if (bodyText === undefined) {
     /*
      * The hardened client discards a non-2xx body rather than risk putting provider bytes into an
-     * error, so at the call site the words are usually gone. A status-only decision is safe
-     * *here* precisely because the parameters are typed, validated and closed: a caller cannot
-     * produce a malformed FDSN query, so a 400 on a window that passed the count check is a
-     * disagreement about size rather than a bad request. If it somehow is not, the window splits
-     * to the floor and is reported FAILED with the status — visible either way.
+     * error, so at the call site the words are usually gone.
+     *
+     * A **400** is still safe to read as "too many rows": the parameters are typed, validated and
+     * closed, so a caller cannot produce a malformed FDSN query, and a 400 on a window that
+     * passed the count check is a disagreement about size.
+     *
+     * A **503** is not. P0 did see `table is full` arrive as one, but 503 is also the ordinary
+     * "the provider is busy", and splitting on it would halve a healthy window permanently — the
+     * parent stays SPLIT, so a transient outage leaves a distortion that resuming never repairs.
+     * Without the body to tell them apart, a 503 goes to the ordinary retry path.
      */
-    return true;
+    return status === 400;
   }
 
   const text = bodyText.toLowerCase();
@@ -262,6 +267,24 @@ export function parseDeletionSweep(body: Uint8Array): DeletionSweep {
       );
     }
     const feature = parsed.data;
+
+    /*
+     * Assert the entry really is a deletion.
+     *
+     * Everything here becomes a tombstone instruction, so the whole sweep rests on
+     * `includedeleted=only` having been honoured. If that parameter were ever ignored, renamed,
+     * cached or served stale, a body of *live* earthquakes would mass-tombstone every record it
+     * touched — every affected head would read "no longer stands", which is the false "nothing
+     * here" this project treats as its worst failure. USGS sends the discriminator on every
+     * feature, so checking it costs nothing.
+     */
+    if (feature.properties.status !== 'deleted') {
+      throw new FdsnQueryError(
+        `the deletion sweep returned a feature with status "${feature.properties.status}"; ` +
+          'refusing to tombstone records from a body that is not a deletion list',
+      );
+    }
+
     const aliases = aliasesOf(feature.properties.ids, feature.id);
     // The first alias doubles as the identity check: no alias means USGS stripped this entry.
     const fallbackKey = aliases[0];

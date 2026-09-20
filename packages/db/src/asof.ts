@@ -31,6 +31,7 @@ import {
   deriveSourceHealth,
   freshnessPolicySchema,
   type ErrorClass,
+  type RunTrigger,
   type FreshnessPolicy,
   type IngestionRunFact,
   type LatLon,
@@ -537,6 +538,7 @@ interface RunRow {
   readonly committed_at: Date | null;
   readonly newest_observed_at: Date | null;
   readonly error_class: string | null;
+  readonly trigger: string;
 }
 
 /** Health of one source or product, plus which product it describes. */
@@ -595,7 +597,7 @@ export async function healthAsOf(
 
   const runResult = await sql<RunRow>`
     SELECT r.id::text AS id, r.source_id, r.product_id, r.status, r.started_at,
-           r.committed_at, r.newest_observed_at, r.error_class
+           r.committed_at, r.newest_observed_at, r.error_class, r.trigger
     FROM geonerva.ingestion_runs r
     JOIN geonerva.sources s ON s.id = r.source_id
     WHERE r.committed_at IS NOT NULL
@@ -615,6 +617,7 @@ export async function healthAsOf(
       committedAt: row.committed_at,
       newestObservedAt: row.newest_observed_at,
       errorClass: row.error_class as ErrorClass | null,
+      trigger: row.trigger as RunTrigger,
     };
     const existing = runsByProduct.get(key);
     if (existing === undefined) runsByProduct.set(key, [fact]);

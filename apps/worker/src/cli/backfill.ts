@@ -8,7 +8,13 @@
 
 import { ConfigError, loadWorkerConfig } from '@geonerva/config';
 import { createDatabase, workerPoolOptions } from '@geonerva/db';
-import { createJsonLogger, runBackfill, type BackfillOutcome } from '@geonerva/pipeline';
+import {
+  createJsonLogger,
+  runBackfill,
+  runDeletionSweep,
+  type BackfillOutcome,
+  type DeletionSweepOutcome,
+} from '@geonerva/pipeline';
 import {
   DEFAULT_WINDOW_PLAN,
   createSourceClient,
@@ -185,6 +191,17 @@ export function describeBackfill(outcome: BackfillOutcome): string {
   );
 }
 
+/** What a sweep did, including the parts it deliberately could not do. */
+export function describeSweep(outcome: DeletionSweepOutcome): string {
+  return (
+    `${outcome.status}: ${outcome.tombstoned} tombstoned, ` +
+    `${outcome.alreadyTombstoned} already tombstoned, ` +
+    `${outcome.unknownToUs} for events not held, ` +
+    `${outcome.unidentifiable} stripped of identity by the provider` +
+    (outcome.detail === null || outcome.status === 'SUCCEEDED' ? '' : ` (${outcome.detail})`)
+  );
+}
+
 /** 0 completed, 2 work remains (resume by re-running), 1 the worker itself could not run. */
 export function backfillExitCode(outcome: BackfillOutcome): number {
   return outcome.status === 'COMPLETED' ? 0 : 2;
@@ -228,6 +245,31 @@ export async function runBackfillCommand(
 
   const handle = createDatabase(workerPoolOptions(config.DATABASE_URL_WORKER, config.NODE_ENV));
   try {
+    /*
+     * A deletion sweep is a different operation, not a mode of the same one.
+     *
+     * Routing `--deleted-only` through `runBackfill` sent the `includedeleted=only` body down the
+     * ordinary ingest path, where `resolveSourceRecord` **creates on a miss** — so a deletion for
+     * an event GeoNerva had never ingested produced a brand-new record whose only version said it
+     * was deleted, with a magnitude and a position taken from the deleted feature. That is a fact
+     * GeoNerva invented, and `findRecordByAliases` exists precisely to make it impossible.
+     */
+    if (args.deletedOnly) {
+      const sweep = await runDeletionSweep({
+        db: handle.db,
+        adapter,
+        client: createSourceClient(adapter.descriptor, {
+          userAgent: `GeoNerva/${config.NODE_ENV} (+https://github.com/geonerva)`,
+        }),
+        from,
+        to,
+        logger: createJsonLogger(),
+        ...(signal === undefined ? {} : { signal }),
+      });
+      console.error(describeSweep(sweep));
+      return sweep.status === 'SUCCEEDED' ? 0 : 2;
+    }
+
     const outcome = await runBackfill({
       db: handle.db,
       adapter,
@@ -249,7 +291,6 @@ export async function runBackfillCommand(
       logger: createJsonLogger(),
       ...(args.maxIntervals === undefined ? {} : { maxIntervals: args.maxIntervals }),
       ...(signal === undefined ? {} : { signal }),
-      ...(args.deletedOnly ? { mode: 'deleted-only' as const } : {}),
     });
     console.error(describeBackfill(outcome));
     return backfillExitCode(outcome);

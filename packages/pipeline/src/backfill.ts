@@ -179,7 +179,7 @@ export async function runBackfill<TRaw>(
 
   let intervalsProcessed = 0;
   let intervalsSplit = 0;
-  let leaseHeld = false;
+  let stoppedEarly: string | null = null;
   let newVersions = 0;
   let unchanged = 0;
 
@@ -207,6 +207,59 @@ export async function runBackfill<TRaw>(
 
       const outcome = await ingestWindow(options, plan.id, interval, window, mode, logger);
 
+      if (outcome.status === 'LEASE_HELD' || outcome.status === 'SKIPPED') {
+        /*
+         * Neither outcome wrote anything, so `beforeCommit` never ran and the interval is still
+         * PENDING — claiming again returns the *same* one and the loop spins on it.
+         *
+         * `LEASE_HELD` means another worker owns the product. `SKIPPED` means the product is
+         * disabled or retired, which an operator can set at any moment; without this the default
+         * CLI invocation (no `--max-intervals`) would spin until `attempts` overflowed, and with
+         * one it would report N windows processed having skipped the same window N times.
+         */
+        stoppedEarly =
+          outcome.status === 'LEASE_HELD'
+            ? 'another run holds this product; the plan is left open'
+            : 'this product is disabled or retired; the plan is left open';
+        logger.log('info', 'backfill.stopped_early', {
+          ...base,
+          runId: plan.id,
+          detail: stoppedEarly,
+        });
+        break;
+      }
+
+      /*
+       * The count is not just a planning signal: it is the only cross-check that the window we
+       * ingested is the window the provider said it had.
+       *
+       * Without it, FDSN answering HTTP 200 with an empty FeatureCollection for a window it has
+       * just said holds 4,000 events — a proxy, a cache, a partial outage, a parameter quietly
+       * ignored — marks the interval DONE with `n_received = 0`, commits a SUCCEEDED run, and
+       * lets the plan reach COMPLETED. The catalogue then has a permanent hole that nothing will
+       * ever report, and "we could not read it" has rendered as "there is nothing there".
+       *
+       * The check is deliberately one-sided. Receiving *more* than the count is normal: the count
+       * and the query are two requests, and the catalogue grows between them.
+       */
+      if (outcome.status !== 'FAILED' && count.count > 0 && outcome.counts.received < count.count) {
+        const detail =
+          `the provider counted ${count.count} events in ` +
+          `${interval.from.toISOString()}–${interval.to.toISOString()} but returned ` +
+          `${outcome.counts.received}`;
+        await markIntervalFailed(db, plan.id, interval, 'SCHEMA_DRIFT', sanitizeDetail(detail));
+        logger.log('error', 'backfill.count_mismatch', {
+          ...base,
+          runId: plan.id,
+          errorClass: 'SCHEMA_DRIFT',
+          received: outcome.counts.received,
+          declaredCount: count.count,
+          detail,
+        });
+        intervalsProcessed += 1;
+        continue;
+      }
+
       /*
        * Another worker holds this product's ingestion lease.
        *
@@ -215,16 +268,6 @@ export async function runBackfill<TRaw>(
        * the loop would spin on it for as long as the other worker held the lease. Stopping is the
        * correct response: the plan stays open and the next invocation resumes it.
        */
-      if (outcome.status === 'LEASE_HELD') {
-        leaseHeld = true;
-        logger.log('info', 'backfill.lease_held', {
-          ...base,
-          runId: plan.id,
-          detail: 'another run holds this product; leaving the plan open',
-        });
-        break;
-      }
-
       intervalsProcessed += 1;
       newVersions += outcome.counts.newVersions;
       unchanged += outcome.counts.unchanged;
@@ -262,11 +305,14 @@ export async function runBackfill<TRaw>(
        * disagreement about size.
        */
       const tooLarge = error instanceof SourceFetchError && isWindowTooLarge(error);
-      if (tooLarge) {
+      if (tooLarge && splittable(interval, options.plan)) {
         intervalsSplit += 1;
         await splitTooLargeWindow(db, plan.id, interval, options.plan, logger, base);
         continue;
       }
+      // A refusal at the floor is not splittable, and `splitWindow` would throw from inside this
+      // catch — straight out of a function whose contract says it never throws for an expected
+      // failure, leaving the interval PENDING and the plan RUNNING forever.
 
       const detail = describeBackfillFailure(error);
       // A window that cannot be split, or a shape we cannot parse, will fail identically on every
@@ -316,9 +362,7 @@ export async function runBackfill<TRaw>(
     status = 'INCOMPLETE';
     detail = aborted
       ? 'cancelled; the plan is left open and resumes where it stopped'
-      : leaseHeld
-        ? 'another run holds this product; the plan is left open'
-        : `${progress.pending} interval(s) still pending`;
+      : (stoppedEarly ?? `${progress.pending} interval(s) still pending`);
   }
 
   logger.log(status === 'FAILED' ? 'error' : 'info', 'backfill.finished', {
@@ -414,7 +458,17 @@ async function splitTooLargeWindow(
  * the parameters are typed and closed, so a malformed query is not reachable.
  */
 function isSizeRefusal(httpStatus: number | null): boolean {
-  return httpStatus === 400 || httpStatus === 503;
+  /*
+   * 400 only.
+   *
+   * P0 did see a 503 "table is full" mean "too many rows", but 503 is *also* the ordinary
+   * "provider is busy", and by the time an outcome exists the body that told them apart is gone.
+   * Treating every 503 as a size refusal splits a perfectly good 30-day window in half
+   * permanently — the parent stays SPLIT, so a transient outage leaves a distortion that resume
+   * never repairs. A 400 is safe to read this way because the parameters are typed and closed,
+   * so a malformed query is not reachable; a 503 is left to the ordinary retry path.
+   */
+  return httpStatus === 400;
 }
 
 /** Whether a window can still be halved, so a refusal at the floor is reported instead of looped. */
