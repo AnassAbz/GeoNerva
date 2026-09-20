@@ -1,8 +1,10 @@
 # G4 — Historical earthquake ingestion and reconciliation
 
 - **Date:** 2026-09-20
-- **Verdict:** *pending the two independent reviews; this section is completed when they are.*
-- **Commits:** `5f913d1` → `f33e73e` (11)
+- **Verdict: PASS.** Two independent reviews ran; every CRITICAL and HIGH is fixed with a
+  regression test, and the MEDIUMs are fixed or recorded with a reason (§5).
+- **Commits:** `a17fd09` → `41e227d` — 15, plus this report
+- **Tests:** 501 unit, 238 integration, green across three consecutive full runs.
 
 ## 1. The gate criteria, item by item
 
@@ -16,7 +18,7 @@
 | Representative storage measurement | **1,865 B/event**, measured from the real backfill (§3) |
 | Projected storage acceptable | Only after **ADR-034** narrowed the catalogue. The documented one did not fit (§3) |
 | No CRITICAL/HIGH remaining | §5 |
-| All tests green | **495 unit, 225 integration** against PostgreSQL 17 / PostGIS 3.4.3 |
+| All tests green | **501 unit, 238 integration** against PostgreSQL 17 / PostGIS 3.4.3 |
 
 ## 2. What was built
 
@@ -81,7 +83,83 @@ in which *nothing* is identifiable does fail, because that means we are blind to
 
 ## 5. Review findings
 
-*Completed when the two independent reviews report.*
+Two independent reviewers: **A** on correctness and reliability, **B** on security and
+architecture. Between them **8 HIGH** and **14 MEDIUM/LOW**. All HIGH are fixed. The reviews were
+worth more than the implementation that preceded them.
+
+### HIGH — all fixed, all with a regression test
+
+| # | Found by | What was wrong |
+|---|---|---|
+| 1 | A, B | **`--deleted-only` ran the wrong code.** It routed to `runBackfill`, which sends the `includedeleted=only` body down the ordinary ingest path where `resolveSourceRecord` **creates on a miss** — so a deletion for an event GeoNerva had never ingested produced a new record whose only version said it was deleted, with a magnitude and position taken from the deleted feature. A fact invented from nothing. The reconcile was also unreachable from the worker at all |
+| 2 | A, B | **A backfill made a dead live feed read `FRESH`.** A backfill window and a live poll are both successful `usgs/comcat` runs, so a long backfill reset `lastSuccessAt` while the live poll failed throughout. Health now carries the run trigger and counts only `SCHEDULE`/`MANUAL` |
+| 3 | B | **The `count` was fetched and then ignored.** FDSN answering 200 with an empty body for a window it had just said held 4,000 events marked the interval `DONE` with `n_received = 0`, and the plan could reach `COMPLETED` over a permanent hole |
+| 4 | B | **The sweep never checked the entries were deletions.** Every feature became a tombstone instruction, so a body of *live* earthquakes would have mass-tombstoned every record it touched |
+| 5 | A | **A `SKIPPED` window spun forever** — a disabled product writes nothing, so the interval stays `PENDING` and claiming returns the same one |
+| 6 | self | **A `LEASE_HELD` outcome spun forever**, same shape. Without the fix the test runs to a 30 s timeout |
+| 7 | self | Re-requesting a range with a different `--window-days` merged a second, overlapping interval set into the same plan |
+| 8 | G3 | `rebuildHeads` ordered by `ingested_at` before `version_seq` |
+
+### MEDIUM — fixed
+
+- **A 503 was read as "window too large".** P0 did see `table is full` arrive as one, but 503 is
+  also the ordinary "provider is busy", and splitting on it halves a healthy window *permanently*
+  — the parent stays `SPLIT`, so a transient outage left a distortion resume never repaired.
+- **The budget treated a rate as a stock.** ADR-034 listed "all magnitudes, last 30 days — 20 MB"
+  as a fixed line. With facts kept forever it is 0.65 MiB/day — **238 MiB/year** — so the EMSC
+  reserve was consumed in about six months. **ADR-035** gives small-magnitude facts a replay
+  horizon and revises the reserve to ~70 MB. This is the one finding that changed a decision.
+- **Error details were bounded in characters, not bytes**, while the CHECK is
+  `octet_length <= 1024`. The failure path — the one path that exists to record that something
+  went wrong — was where the write broke. Now trimmed by grapheme via `Intl.Segmenter`.
+- **Raw driver text could reach `ingestion_runs.error_message` and stdout** from the outer catch
+  (SECURITY.md M7). `lastPayloadDigest` is a database call with no inner handler.
+- **The sweep's transaction was unwrapped**, so a failure left the run `RUNNING` and the product
+  leased for half an hour — six live polls leaving no health evidence.
+- **An ambiguous alias match was resolved by picking one**, leaving the other record `ACTIVE`
+  forever; and since row order is not stable, a second sweep could pick the other — so it was not
+  even idempotent. Now an explicit `AMBIGUOUS` answer with a reject row.
+- **The sweep's counts did not reconcile**: 98 received, 55 accounted for. Deletions for events
+  never held now leave reject rows, so `received = tombstoned + already + rejected`.
+- **Raw payload storage was order-dependent.** A backfill writing first meant a live body was
+  never stored, so ADR-033's 30-day window silently did not apply to those records.
+- **`usgsDescriptor` did not declare `HISTORICAL_EVENTS` or `DELETIONS`**, which the seeded
+  product has declared since P2 — code and database disagreed precisely about the two things P4
+  built. `runBackfill` now checks the capability.
+- **`backfill_intervals.error_class` was unconstrained** (migration 0013), **plans were not
+  attached to their product**, and **`--window-days` accepted fractions** that the `bigint` column
+  rejects with a raw SQLSTATE.
+
+### Recorded, not fixed
+
+| Finding | Why |
+|---|---|
+| `claimNextInterval`'s `SKIP LOCKED` does not reserve | The row lock ends with the claiming transaction, before any fetch. The per-product ingestion lease is what actually serialises workers; the second gets `LEASE_HELD` and stops. Reserving properly needs a second lease for a case that does not arise while one worker runs a plan. **The misleading comment was corrected** |
+| A version can in principle be written with `raw_record_id = NULL` | Needs the head to move between the snapshot and the row lock, which the lease prevents. The lazy re-upsert already covers the reachable case |
+| `emptyBatchIsSuspicious` is not tied to `trigger === 'BACKFILL'` | Nothing else passes it; making the rule structural is worth doing when a second caller exists |
+| The pipeline imports FDSN functions directly | The capability check closes the safety half. The *interface* belongs with the second historical source, in P5, where there is something to abstract over |
+
+### A flake worth naming
+
+Two full integration runs failed on unrelated tests while every file passed in isolation. The
+cause was **not** data interference: vitest's default `hookTimeout` is 10 s, and
+`partition-repair.int.test.ts`'s `afterEach` creates databases, runs every migration and drops
+them. As the suite grew past 100 s that cleanup began crossing the line, and a timed-out
+`afterEach` leaves state behind that fails whichever file runs next — presenting as random,
+unrelated failures. Integration hooks now get 120 s; three consecutive full runs are clean.
+
+### Two tests that were vacuous
+
+Caught by deliberately breaking the code:
+
+1. **The window-boundary test.** It placed an event where two adjacent windows could both claim it
+   and asserted one record, one version — which holds either way, because if both windows return
+   it the content hash makes the second `unchanged`. Removing the -1 ms bridge left the test
+   passing. What double-claiming corrupts is the *accounting*, so it now asserts
+   `progress.received`, and fails with "expected 2 to be 1" without the bridge.
+2. **The `rebuildHeads` test** (G3 carry-over) originally used two versions sharing one
+   `ingested_at`, where both orderings agree. It now uses an older window arriving after a newer
+   one, which is what a backfill following a live poll actually does.
 
 ## 6. G3 carry-overs closed here
 
