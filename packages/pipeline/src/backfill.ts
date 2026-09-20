@@ -143,6 +143,25 @@ export async function runBackfill<TRaw>(
     windowMs: options.plan.windowMs,
     minWindowMs: options.plan.minWindowMs,
   });
+  /*
+   * A plan's identity is the *question* — range, magnitude, mode — and not the window size used
+   * to answer it. So a resumed plan keeps the windows it was planned with, and a request that
+   * asks for different ones is refused rather than merged.
+   *
+   * Merging is what happens without this check, and it is quietly wrong: re-running a 30-day
+   * plan with `--window-days 7` would add thirteen fresh PENDING intervals overlapping four that
+   * are already DONE. Nothing would be corrupted — the content hash sees to that — but the plan
+   * would describe a shape no one asked for, the progress counts would be meaningless, and the
+   * backfill would re-walk work it had already finished.
+   */
+  if (!created && plan.windowMs !== options.plan.windowMs) {
+    throw new WindowPlanError(
+      `this range is already planned with ${plan.windowMs / 86_400_000}-day windows; ` +
+        `re-run it with that size, or use a different range. Requested ` +
+        `${options.plan.windowMs / 86_400_000} days.`,
+    );
+  }
+
   await addBackfillIntervals(db, plan.id, windows);
   // Re-requesting a range is an explicit instruction to try again, so previously failed windows
   // go back to PENDING. Without this one bad window would make the plan permanently

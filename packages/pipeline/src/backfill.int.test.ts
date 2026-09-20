@@ -302,6 +302,28 @@ describe('idempotency', () => {
     expect(second.status).toBe('COMPLETED');
   });
 
+  it('refuses to re-plan an existing range with a different window size', async () => {
+    /*
+     * Without this, re-running a 30-day plan with 7-day windows adds thirteen fresh PENDING
+     * intervals overlapping four already DONE. The facts would survive - the content hash sees
+     * to that - but the plan would describe a shape nobody asked for and would re-walk finished
+     * work, while its progress counts became meaningless.
+     */
+    await backfill(scriptedClient().client, { maxIntervals: 1 });
+
+    await expect(
+      backfill(scriptedClient().client, {
+        plan: { windowMs: 12 * 60 * 60 * 1000, minWindowMs: 60_000 },
+      }),
+    ).rejects.toThrow(/already planned with 1-day windows/);
+
+    // And the original plan is untouched.
+    const plans = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM geonerva.backfill_intervals
+    `.execute(db);
+    expect(plans.rows[0]?.n).toBe('3');
+  });
+
   it('writes no duplicate facts when two ranges overlap', async () => {
     await backfill(scriptedClient().client);
     const digest = await factDigest();
