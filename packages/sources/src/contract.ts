@@ -24,10 +24,12 @@ import { createHash } from 'node:crypto';
 
 import type {
   GeometryKind,
+  GeometryRole,
   HazardType,
   LatLon,
   LifecycleStatus,
   RejectReasonCode,
+  SeverityScheme,
   SourceCapability,
 } from '@geonerva/domain';
 import { HttpClient, type HttpClientOptions } from '@geonerva/http';
@@ -171,16 +173,71 @@ export interface NormalizedRecord {
   /** The agency credited with this solution, for the independence rule (ADR-030). */
   readonly contributor: string | null;
   readonly providerStatus: string | null;
-  readonly severityScheme: string | null;
+  /**
+   * Which provider scale `severityValue` is on, from the frozen vocabulary.
+   *
+   * Typed rather than `string`, which is what it was until a GDACS batch of 79 wildfires was
+   * refused by the database at the end of a successful fetch, parse and normalize because the
+   * scheme had been written as `GDACS` and the column's CHECK says `GDACS_ALERT`. Every other
+   * value in this interface that the database constrains — `lifecycleStatus`, `geometryKind`,
+   * `hazardType` — was already a union; this one was the exception, and the exception cost a
+   * whole batch and a live run to find something the compiler now refuses to build.
+   */
+  readonly severityScheme: SeverityScheme | null;
   readonly severityValue: string | null;
   readonly title: string | null;
   readonly sourceUrl: string | null;
+  /**
+   * What this observation restates, when it restates something GeoNerva also holds directly.
+   *
+   * `{ source, ref }` — e.g. `{ source: 'usgs', ref: 'us7000tikb' }` for a GDACS earthquake,
+   * which is a copy of the USGS solution rather than a second opinion about it. Correlation
+   * attaches a record with this set as a DERIVED_COPY instead of counting it as agreement, which
+   * is the difference between "two sources agree" and "one source quoted twice" (ADR-030).
+   *
+   * Absent means "not known to be derived", never "independent". A source with no upstream field
+   * at all and a source whose upstream field happened to be empty are the same absence here, and
+   * neither is evidence of independence.
+   */
+  readonly derivedFrom?: { readonly source: string; readonly ref: string };
   readonly attributes: Record<string, unknown>;
+  /**
+   * Role-tagged shapes beyond the centroid: a flood's modelled area, a cyclone's track and wind
+   * buffers, a wildfire's burnt area.
+   *
+   * Optional because most sources have none — an earthquake is a point and a thermal detection is
+   * a pixel — and absent must mean "this source publishes no area", never "we did not fetch one".
+   * An adapter that *can* fetch an area and chose not to has to say so in its attributes, which
+   * is why `FloodAttributes.has_area_geometry` exists as a required field rather than being
+   * inferred from this array being empty.
+   *
+   * The shapes are part of the content hash: a flood whose modelled area moved is a revision, and
+   * it is frequently the *only* thing that moved.
+   */
+  readonly geometries?: readonly NormalizedGeometry[];
   /** Hash of the normalized content — the only change detector (ADR-029). */
   readonly contentSha256: Buffer;
   /** Exactly what the provider sent for this record, stored verbatim for provenance. */
   readonly rawPayload: unknown;
   readonly rawPayloadSha256: Buffer;
+}
+
+/**
+ * One role-tagged shape, in the form `observation_geometries` stores.
+ *
+ * Deliberately GeoJSON rather than WKT or a parsed type: it is what every provider here sends, it
+ * survives being written to `raw_source_records` and read back years later, and PostGIS takes it
+ * directly through `ST_GeomFromGeoJSON`. Nothing in the adapter layer simplifies or reprojects —
+ * a shape GeoNerva altered is no longer the shape the provider published.
+ */
+export interface NormalizedGeometry {
+  readonly role: GeometryRole;
+  /** Distinguishes several shapes sharing a role, e.g. successive forecast positions. */
+  readonly seq: number;
+  readonly geoJson: unknown;
+  /** For forecast geometry: the time this shape applies to. Never a future `observedAt`. */
+  readonly validAt?: Date | null;
+  readonly isForecast?: boolean;
 }
 
 export interface SourceAdapter<TRaw> {

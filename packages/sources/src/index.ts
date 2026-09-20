@@ -105,3 +105,28 @@ export type {
   HistoricalInterface,
   HistoricalRequestOptions,
 } from './historical.ts';
+
+export {
+  GDACS_POLL_LOOKBACK_MS,
+  gdacsAdapter,
+  gdacsDescriptor,
+  parseGdacsList,
+} from './gdacs/adapter.ts';
+export type { GdacsRecord } from './gdacs/adapter.ts';
+export {
+  GDACS_EVENT_TYPES,
+  GDACS_HOST,
+  GDACS_MAX_PAGES,
+  GDACS_PAGE_SIZE,
+  gdacsEndpoint,
+  gdacsEventDataUrl,
+  gdacsFetchEventData,
+  gdacsFetchList,
+  gdacsInstant,
+  gdacsSearchUrl,
+  isGdacsEventType,
+} from './gdacs/api.ts';
+export type { GdacsEventType, GdacsWindow } from './gdacs/api.ts';
+export { GDACS_HAZARD_TYPES, gdacsPrimaryKey, normalizeGdacsFeature } from './gdacs/normalize.ts';
+export { gdacsFeatureSchema, gdacsPropertiesSchema } from './gdacs/schema.ts';
+export type { GdacsFeature, GdacsProperties } from './gdacs/schema.ts';

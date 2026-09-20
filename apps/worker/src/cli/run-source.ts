@@ -24,18 +24,34 @@ import { createDatabase, workerPoolOptions } from '@geonerva/db';
 import { ConfigError, loadWorkerConfig } from '@geonerva/config';
 import { createJsonLogger, runIngestion, type RunOutcome } from '@geonerva/pipeline';
 import {
+  GDACS_EVENT_TYPES,
   USGS_FEEDS,
   createSourceClient,
   emscAdapter,
+  gdacsAdapter,
   isUsgsFeed,
   usgsAdapter,
   type SourceAdapter,
 } from '@geonerva/sources';
 
-/** The adapters this build can run. */
+/**
+ * The adapters this build can run, keyed by what an operator types.
+ *
+ * GDACS appears six times, as `gdacs:EQ` … `gdacs:DR`, because it *is* six products: the database
+ * has had one `source_products` row per event type since P2, each with its own hazard type,
+ * capabilities and latency class. One key called `gdacs` would have to mean "all of them", which
+ * is a different operation with a different failure mode — and a partial failure across six
+ * products has no single run row to record it in.
+ */
 const ADAPTERS: Readonly<Record<string, SourceAdapter<never>>> = {
   usgs: usgsAdapter as SourceAdapter<never>,
   emsc: emscAdapter as SourceAdapter<never>,
+  ...Object.fromEntries(
+    GDACS_EVENT_TYPES.map((eventType) => [
+      `gdacs:${eventType}`,
+      gdacsAdapter(eventType) as unknown as SourceAdapter<never>,
+    ]),
+  ),
 };
 
 /**
@@ -56,6 +72,17 @@ const FEED_VALIDATORS: Readonly<Record<string, (feed: string) => string | null>>
       ? null
       : `unknown feed: ${feed} (EMSC takes a lookback in whole minutes, 1 to 10080)`;
   },
+  ...Object.fromEntries(
+    GDACS_EVENT_TYPES.map((eventType) => [
+      `gdacs:${eventType}`,
+      (feed: string) => {
+        const hours = Number(feed);
+        return Number.isInteger(hours) && hours >= 1 && hours <= 2_160
+          ? null
+          : `unknown feed: ${feed} (GDACS takes a lookback in whole hours, 1 to 2160)`;
+      },
+    ]),
+  ),
 };
 
 export const AVAILABLE_SOURCES = Object.keys(ADAPTERS);

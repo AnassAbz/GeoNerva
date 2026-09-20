@@ -346,6 +346,12 @@ async function persistBatch(
       lifecycleStatus: record.lifecycleStatus,
       severityScheme: record.severityScheme,
       severityValue: record.severityValue,
+      // `{ source, ref }` when this observation restates one GeoNerva also holds directly, so
+      // correlation can attach it as a derived copy rather than as agreement (ADR-030).
+      ...(record.derivedFrom === undefined ? {} : { derivedFrom: record.derivedFrom }),
+      // Role-tagged shapes (a flood's modelled area, a cyclone's track). Written in the same
+      // transaction as the version they belong to, so a shape can never outlive its version.
+      ...(record.geometries === undefined ? {} : { geometries: record.geometries }),
       providerStatus: record.providerStatus,
       contributor: record.contributor,
       magnitude: record.magnitude,
