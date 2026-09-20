@@ -25,6 +25,7 @@ const outcome = (over: Partial<RunOutcome> = {}): RunOutcome => ({
   },
   stageMs: { fetchMs: 1, parseMs: 2, normalizeMs: 3, persistMs: 4, totalMs: 10 },
   committedAt: new Date('2026-09-19T12:00:00.000Z'),
+  httpStatus: 200,
   ...over,
 });
 

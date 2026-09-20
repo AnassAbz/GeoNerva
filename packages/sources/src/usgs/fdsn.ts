@@ -164,13 +164,26 @@ export function parseFdsnCount(body: Uint8Array): FdsnCount {
  */
 export function isWindowTooLarge(error: SourceFetchError, bodyText?: string): boolean {
   const status = error.context.status;
-  const text = (bodyText ?? '').toLowerCase();
+  if (status !== 400 && status !== 503) return false;
+
+  if (bodyText === undefined) {
+    /*
+     * The hardened client discards a non-2xx body rather than risk putting provider bytes into an
+     * error, so at the call site the words are usually gone. A status-only decision is safe
+     * *here* precisely because the parameters are typed, validated and closed: a caller cannot
+     * produce a malformed FDSN query, so a 400 on a window that passed the count check is a
+     * disagreement about size rather than a bad request. If it somehow is not, the window splits
+     * to the floor and is reported FAILED with the status — visible either way.
+     */
+    return true;
+  }
+
+  const text = bodyText.toLowerCase();
   if (status === 400) {
-    // A 400 for any other reason is a bug in our parameters, not a window to split.
+    // With the body in hand, be exact: a 400 for any other reason is a bug in our parameters.
     return text.includes('exceeds search limit') || text.includes('modify the search');
   }
-  if (status === 503) return text.includes('table is full');
-  return false;
+  return text.includes('table is full');
 }
 
 /** A deleted event that still carries enough identity to tombstone the right record. */

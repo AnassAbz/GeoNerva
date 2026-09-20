@@ -40,10 +40,12 @@ import { SourceFetchError, type HttpClient } from '@geonerva/http';
 import {
   NormalizationError,
   batchVerdict,
+  type FetchContext,
   type FetchResult,
   type NormalizedRecord,
   type RejectedRecord,
   type SourceAdapter,
+  type SourceDescriptor,
 } from '@geonerva/sources';
 
 import { createJsonLogger, sanitizeDetail, type Logger } from './logging.ts';
@@ -59,6 +61,48 @@ export interface RunIngestionOptions<TRaw> {
   readonly workerVersion?: string;
   /** Injected so tests can assert timings without a real clock. */
   readonly monotonic?: () => number;
+  /**
+   * Fetches this run's body instead of `adapter.fetch`.
+   *
+   * A historical backfill asks a bounded question — one window of the FDSN catalogue — which is
+   * not something a feed descriptor can express. Everything after the fetch is deliberately
+   * identical: same parse, same normalize, same persist. That is what makes a backfilled event
+   * and a live one reconcile to the same record instead of merely being expected to.
+   */
+  readonly fetchOverride?: (ctx: FetchContext) => Promise<FetchResult>;
+  /**
+   * Runs inside the persist transaction, immediately before the run is finished.
+   *
+   * A backfill checkpoints here, so the checkpoint and the window's facts commit together and no
+   * crash can land between them.
+   */
+  readonly beforeCommit?: (trx: Transaction<DB>, context: BatchCommitContext) => Promise<void>;
+  /**
+   * Whether to store provider payload bodies (ADR-033).
+   *
+   * `false` stores the raw row and its digest with a null body, which is what a backfill does:
+   * the audit chain and `raw_record_id` survive, and 315 MB of JSON that duplicates the
+   * normalized facts does not. Live polling leaves this `true`, because those bytes are a
+   * snapshot of something the provider will not serve again.
+   */
+  readonly retainRawPayload?: boolean;
+  /**
+   * Overrides the descriptor's `emptyBatchIsSuspicious` for this run.
+   *
+   * The two ingestion modes disagree about what nothing means, and both are right. An empty
+   * *live* `all_day` is a broken feed — the window is 24 hours over ~400 events/day. An empty
+   * *historical* window is ordinary: a quiet Tuesday in a narrow magnitude band really did
+   * contain no earthquakes, and failing the interval would stall a backfill on the truth.
+   */
+  readonly emptyBatchIsSuspicious?: boolean;
+}
+
+/** What `beforeCommit` is told about the batch it is committing alongside. */
+export interface BatchCommitContext {
+  readonly runId: string;
+  readonly received: number;
+  readonly accepted: number;
+  readonly ingestedAt: Date;
 }
 
 export interface RunCounts {
@@ -86,6 +130,15 @@ export interface RunOutcome {
     readonly totalMs: number;
   };
   readonly committedAt: Date | null;
+  /**
+   * The provider's HTTP status, when there was one.
+   *
+   * Carried on the outcome because `runIngestion` deliberately converts a fetch failure into a
+   * committed FAILED run rather than throwing — so a caller that needs to *act* on the status,
+   * like the backfill deciding whether a 400 means "this window is too big", has no other way to
+   * see it.
+   */
+  readonly httpStatus: number | null;
 }
 
 const EMPTY_COUNTS: RunCounts = {
@@ -171,6 +224,21 @@ interface PersistResult {
  * disagreed there would be an instant where a batch's facts are visible but the run that produced
  * them is not — a replay inconsistent with its own provenance.
  */
+interface PersistOptions {
+  /**
+   * The *effective* descriptor for this run, not `adapter.descriptor`.
+   *
+   * The post-persist drift re-check evaluates the same rules as parse, so it has to see the same
+   * descriptor — including an `emptyBatchIsSuspicious` override. Using the adapter's own here
+   * made an empty historical window fail as EMPTY_SUSPICIOUS *after* parse had correctly allowed
+   * it: two copies of one rule disagreeing, which is the failure this project keeps finding.
+   */
+  readonly descriptor: SourceDescriptor;
+  readonly retainRawPayload: boolean;
+  readonly beforeCommit:
+    ((trx: Transaction<DB>, context: BatchCommitContext) => Promise<void>) | undefined;
+}
+
 async function persistBatch(
   trx: Transaction<DB>,
   runId: string,
@@ -180,6 +248,7 @@ async function persistBatch(
   rejects: readonly RejectedRecord[],
   fetched: Extract<FetchResult, { kind: 'FETCHED' }>,
   receivedCount: number,
+  persistOptions: PersistOptions,
 ): Promise<PersistResult> {
   const ingestedAt = await batchTimestamp(trx);
 
@@ -226,7 +295,9 @@ async function persistBatch(
   const rawInput = (record: NormalizedRecord) => ({
     sourceId: adapter.descriptor.sourceId,
     payloadSha256: record.rawPayloadSha256,
-    payload: record.rawPayload,
+    // ADR-033: a backfill keeps the row and the digest, not the body.
+    payload: persistOptions.retainRawPayload ? record.rawPayload : null,
+    pruned: !persistOptions.retainRawPayload,
     firstSeenAt: ingestedAt,
   });
 
@@ -323,7 +394,11 @@ async function persistBatch(
    * commit as PARTIAL with 230 rejects and zero facts, store the payload digest so the next
    * identical body is SKIPPED, and report itself as merely degraded.
    */
-  const verdict = batchVerdict(adapter.descriptor, records.length - persistRejects, rejected);
+  const verdict = batchVerdict(
+    persistOptions.descriptor,
+    records.length - persistRejects,
+    rejected,
+  );
   if (!verdict.ok) throw new BatchRejectedError(verdict.errorClass, verdict.detail);
 
   const accepted = records.length - persistRejects;
@@ -336,6 +411,21 @@ async function persistBatch(
     unchanged,
     mergedRecords,
   };
+
+  /*
+   * The caller's own work, inside this transaction and before it closes.
+   *
+   * A backfill checkpoints here. If it throws, the whole batch rolls back — which is the safe
+   * direction, because the window stays PENDING and redoing it is idempotent.
+   */
+  if (persistOptions.beforeCommit !== undefined) {
+    await persistOptions.beforeCommit(trx, {
+      runId,
+      received: receivedCount,
+      accepted,
+      ingestedAt,
+    });
+  }
 
   // Last statement of the transaction, with the stamp the versions already carry.
   const committedAt = await finishRun(trx, {
@@ -366,6 +456,7 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
   const descriptor = adapter.descriptor;
   const startedAt = monotonic();
 
+  let httpStatus: number | null = null;
   let fetchMs = 0;
   let parseMs = 0;
   let normalizeMs = 0;
@@ -395,6 +486,7 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
         totalMs,
       },
       committedAt,
+      httpStatus,
     };
     logger.log(status === 'FAILED' ? 'error' : 'info', 'ingestion.run', {
       ...base,
@@ -516,7 +608,8 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
     const fetchStarted = monotonic();
     let fetched: FetchResult;
     try {
-      fetched = await adapter.fetch({
+      const fetcher = options.fetchOverride ?? ((ctx: FetchContext) => adapter.fetch(ctx));
+      fetched = await fetcher({
         client,
         lastPayloadSha256: previousDigest,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -525,6 +618,7 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
     } catch (error) {
       fetchMs = monotonic() - fetchStarted;
       if (!(error instanceof SourceFetchError)) throw error;
+      httpStatus = error.context.status ?? null;
       logger.log('error', 'ingestion.fetch_failed', {
         ...base,
         stage: 'fetch',
@@ -538,6 +632,7 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
       return await failRun(classifyFetchFailure(error), error.describe(), error.context.status);
     }
     fetchMs = monotonic() - fetchStarted;
+    httpStatus = fetched.httpStatus;
 
     logger.log('info', 'ingestion.fetched', {
       ...base,
@@ -572,7 +667,11 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
 
     // ── 3. Parse ──────────────────────────────────────────────────────────
     const parseStarted = monotonic();
-    const parsed = adapter.parse(fetched.body, { descriptor });
+    const parseDescriptor =
+      options.emptyBatchIsSuspicious === undefined
+        ? descriptor
+        : { ...descriptor, emptyBatchIsSuspicious: options.emptyBatchIsSuspicious };
+    const parsed = adapter.parse(fetched.body, { descriptor: parseDescriptor });
     parseMs = monotonic() - parseStarted;
 
     if (parsed.verdict === 'REJECTED') {
@@ -643,7 +742,7 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
     normalizeMs = monotonic() - normalizeStarted;
 
     // Rejects raised here count towards the same threshold as the ones parse produced.
-    const afterNormalize = batchVerdict(descriptor, normalized.length, rejects.length);
+    const afterNormalize = batchVerdict(parseDescriptor, normalized.length, rejects.length);
     if (!afterNormalize.ok) {
       logger.log('error', 'ingestion.batch_rejected', {
         ...base,
@@ -666,20 +765,23 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
     const persistStarted = monotonic();
     let result: PersistResult;
     try {
-      result = await db
-        .transaction()
-        .execute((trx) =>
-          persistBatch(
-            trx,
-            runId,
-            product.id,
-            adapter as SourceAdapter<unknown>,
-            normalized,
-            rejects,
-            fetched,
-            received,
-          ),
-        );
+      result = await db.transaction().execute((trx) =>
+        persistBatch(
+          trx,
+          runId,
+          product.id,
+          adapter as SourceAdapter<unknown>,
+          normalized,
+          rejects,
+          fetched,
+          received,
+          {
+            descriptor: parseDescriptor,
+            retainRawPayload: options.retainRawPayload ?? true,
+            beforeCommit: options.beforeCommit,
+          },
+        ),
+      );
     } catch (error) {
       persistMs = monotonic() - persistStarted;
       // The transaction rolled back, so no facts and no finished run. The run row is still

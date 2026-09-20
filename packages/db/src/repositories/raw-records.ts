@@ -24,6 +24,16 @@ export interface RawRecordInput {
   readonly payloadSha256: Buffer;
   readonly payload: unknown;
   readonly firstSeenAt?: Date;
+  /**
+   * Store the row and its digest without the body (ADR-033).
+   *
+   * A backfill does this from the outset: the audit chain and `raw_record_id` survive, but the
+   * ~315 MB of JSON that merely duplicates the normalized facts is never written. It is the same
+   * end state `prunePayloadsBefore` produces, reached immediately instead of after 30 days, and
+   * `payload_pruned` means exactly this already — so the API reports the absence rather than
+   * implying the payload never existed.
+   */
+  readonly pruned?: boolean;
 }
 
 /**
@@ -45,9 +55,12 @@ export async function upsertRawRecords(
   }
 
   for (const record of unique.values()) {
+    const pruned = record.pruned === true;
     const result = await sql<{ id: string }>`
-      INSERT INTO geonerva.raw_source_records (source_id, payload_sha256, payload, first_seen_at)
-      VALUES (${record.sourceId}, ${record.payloadSha256}, ${JSON.stringify(record.payload)}::jsonb,
+      INSERT INTO geonerva.raw_source_records
+        (source_id, payload_sha256, payload, payload_pruned, first_seen_at)
+      VALUES (${record.sourceId}, ${record.payloadSha256},
+              ${pruned ? null : JSON.stringify(record.payload)}::jsonb, ${pruned},
               ${record.firstSeenAt ?? new Date()})
       ON CONFLICT (source_id, payload_sha256) DO UPDATE
         SET source_id = EXCLUDED.source_id

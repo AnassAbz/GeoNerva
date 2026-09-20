@@ -35,6 +35,7 @@ function outcome(over: Partial<RunOutcome> = {}): RunOutcome {
     counts: EMPTY_COUNTS,
     stageMs: { fetchMs: 1, parseMs: 1, normalizeMs: 1, persistMs: 1, totalMs: 4 },
     committedAt: new Date('2026-09-19T12:00:00.000Z'),
+    httpStatus: 200,
     ...over,
   };
 }

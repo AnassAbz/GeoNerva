@@ -5,8 +5,11 @@
  * See docs/ARCHITECTURE.md §3 for this package's responsibility and allowed dependencies.
  */
 
-export { classifyFetchFailure, runIngestion } from './run.ts';
-export type { RunCounts, RunIngestionOptions, RunOutcome } from './run.ts';
+export { describeBackfillFailure, runBackfill } from './backfill.ts';
+export type { BackfillOutcome, BackfillRequest, RunBackfillOptions } from './backfill.ts';
+
+export { classifyFetchFailure, describeDatabaseFailure, runIngestion } from './run.ts';
+export type { BatchCommitContext, RunCounts, RunIngestionOptions, RunOutcome } from './run.ts';
 
 export { DEFAULT_BREAKER, countsAsFailure, jitteredDelay, runScheduler } from './scheduler.ts';
 export type {

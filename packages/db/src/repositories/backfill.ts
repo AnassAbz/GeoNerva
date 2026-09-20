@@ -305,6 +305,22 @@ export async function splitBackfillInterval(
   await addBackfillIntervals(db, planId, children);
 }
 
+/**
+ * Returns previously FAILED intervals to PENDING, and says how many.
+ *
+ * Re-requesting a range is an explicit instruction to try again, so a failed window is retried
+ * rather than inherited forever — otherwise one bad window would make a plan permanently
+ * un-completable and the only remedy would be editing the database by hand.
+ */
+export async function resetFailedIntervals(db: Db, planId: string): Promise<number> {
+  const result = await sql`
+    UPDATE geonerva.backfill_intervals
+    SET status = 'PENDING', attempts = 0, error_class = NULL, error_message = NULL
+    WHERE plan_id = ${planId}::uuid AND status = 'FAILED'
+  `.execute(db);
+  return Number(result.numAffectedRows ?? 0n);
+}
+
 /** Records an interval that failed for a reason splitting will not fix. */
 export async function markIntervalFailed(
   db: Db,

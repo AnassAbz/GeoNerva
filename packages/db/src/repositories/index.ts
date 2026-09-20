@@ -45,6 +45,7 @@ export {
   markIntervalFailed,
   openBackfillPlan,
   recordIntervalAttempt,
+  resetFailedIntervals,
   splitBackfillInterval,
 } from './backfill.ts';
 export type {
