@@ -61,6 +61,7 @@ export type {
 export {
   clusterVersionsAsOf,
   clusterVersionsNow,
+  derivationsAsOf,
   healthAsOf,
   linksAsOf,
   observationsAsOf,
@@ -69,6 +70,7 @@ export {
 } from './asof.ts';
 export type {
   ClusterVersionRow,
+  DerivationStatusAsOf,
   LinkRow,
   ObservationRow,
   ObservationsAsOfOptions,

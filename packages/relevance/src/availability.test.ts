@@ -13,6 +13,7 @@ import {
   resolveAvailability,
   resolveDataConfidence,
   highestRelevance,
+  type DerivationStateInput,
   type SourceAvailabilityInput,
 } from './index.ts';
 
@@ -273,5 +274,116 @@ describe('highestRelevance', () => {
      * facts, and `SnapshotOverall.headlineRelevance` is typed nullable for exactly this reason.
      */
     expect(highestRelevance([])).toBeNull();
+  });
+});
+
+describe('a family whose items are derived, not ingested', () => {
+  /*
+   * The live defect this was written against: 235,707 FIRMS detections were ingested and the
+   * clustering derivation had never run, so the as-of read returned zero fire clusters while
+   * every source was healthy and the coverage was complete. Without this axis the model reports
+   * AVAILABLE / NOTHING_TO_REPORT, and the product tells a user next to a wildfire that there is
+   * nothing to report.
+   */
+  const ingestedAt = new Date('2026-09-20T12:00:00Z');
+  const derivation = (overrides: Partial<DerivationStateInput> = {}): DerivationStateInput => ({
+    kind: 'CLUSTERING',
+    lastSucceededAt: new Date('2026-09-20T12:30:00Z'),
+    newestInputAt: ingestedAt,
+    ...overrides,
+  });
+
+  it('is UNAVAILABLE when the derivation has never run over data that exists', () => {
+    const verdict = resolveAvailability({
+      coverage: 'COVERED',
+      sources: [fresh('firms')],
+      itemCount: 0,
+      derivation: derivation({ lastSucceededAt: null }),
+    });
+    expect(verdict.availability).toBe('UNAVAILABLE');
+    expect(verdict.reason).toBe('DERIVATION_NOT_RUN');
+    expect(verdict.mayRenderZero).toBe(false);
+  });
+
+  it('is unchanged when the derivation has never run and there is no data to derive from', () => {
+    // Nothing was ingested, so nothing failed to be derived. This is an ordinary quiet family.
+    const verdict = resolveAvailability({
+      coverage: 'COVERED',
+      sources: [fresh('firms')],
+      itemCount: 0,
+      derivation: derivation({ lastSucceededAt: null, newestInputAt: null }),
+    });
+    expect(verdict.availability).toBe('AVAILABLE');
+    expect(verdict.reason).toBe('NOTHING_TO_REPORT');
+    expect(verdict.mayRenderZero).toBe(true);
+  });
+
+  it('shows the items a stale derivation produced, but refuses to render its zero', () => {
+    /*
+     * Behind is not wrong. The clusters it did produce are real and withholding them would be the
+     * worse error — but "0 active fires" from a derivation that has not seen the last six hours of
+     * detections is a claim about a world it never looked at.
+     */
+    const verdict = resolveAvailability({
+      coverage: 'COVERED',
+      sources: [fresh('firms')],
+      itemCount: 3,
+      derivation: derivation({
+        lastSucceededAt: new Date(ingestedAt.getTime() - 60_000),
+        newestInputAt: ingestedAt,
+      }),
+    });
+    expect(verdict.availability).toBe('AVAILABLE');
+    expect(verdict.reason).toBe('DERIVATION_STALE');
+    expect(verdict.mayRenderZero).toBe(false);
+  });
+
+  it('is an ordinary AVAILABLE family when the derivation is current', () => {
+    const verdict = resolveAvailability({
+      coverage: 'COVERED',
+      sources: [fresh('firms')],
+      itemCount: 2,
+      derivation: derivation(),
+    });
+    expect(verdict.availability).toBe('AVAILABLE');
+    expect(verdict.reason).toBe('OK');
+  });
+
+  it('treats a derivation that ran at exactly the newest input as current', () => {
+    // The boundary is `<`, not `<=`: a derivation that read the newest fact is not behind it.
+    const verdict = resolveAvailability({
+      coverage: 'COVERED',
+      sources: [fresh('firms')],
+      itemCount: 0,
+      derivation: derivation({ lastSucceededAt: ingestedAt, newestInputAt: ingestedAt }),
+    });
+    expect(verdict.reason).toBe('NOTHING_TO_REPORT');
+    expect(verdict.mayRenderZero).toBe(true);
+  });
+
+  it('names the source outage rather than the derivation when both are broken', () => {
+    /*
+     * A derivation cannot run over data that was never ingested, so when every source is down the
+     * outage is the cause and the un-run derivation is its symptom. Reporting DERIVATION_NOT_RUN
+     * here would point an operator at GeoNerva's own pipeline for a provider failure.
+     */
+    const verdict = resolveAvailability({
+      coverage: 'COVERED',
+      sources: [withStatus('firms', 'UNAVAILABLE')],
+      itemCount: 0,
+      derivation: derivation({ lastSucceededAt: null }),
+    });
+    expect(verdict.availability).toBe('UNAVAILABLE');
+    expect(verdict.reason).toBe('ALL_SOURCES_UNUSABLE');
+  });
+
+  it('leaves families without a derivation exactly as they were', () => {
+    const verdict = resolveAvailability({
+      coverage: 'COVERED',
+      sources: [fresh('usgs')],
+      itemCount: 0,
+    });
+    expect(verdict.reason).toBe('NOTHING_TO_REPORT');
+    expect(verdict.mayRenderZero).toBe(true);
   });
 });

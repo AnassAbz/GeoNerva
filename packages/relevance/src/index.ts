@@ -18,6 +18,7 @@ export type {
   AvailabilityReason,
   AvailabilityVerdict,
   DataConfidenceInput,
+  DerivationStateInput,
   SourceAvailabilityInput,
 } from './availability.ts';
 

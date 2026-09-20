@@ -116,6 +116,20 @@ export type {
 } from './fire.ts';
 
 export {
+  ANALYSIS_RUN_KINDS,
+  finishAnalysisRun,
+  listAnalysisRuns,
+  startAnalysisRun,
+} from './analysis-runs.ts';
+export type {
+  AnalysisRunKind,
+  AnalysisRunRow,
+  AnalysisRunStatus,
+  FinishAnalysisRunInput,
+  StartAnalysisRunInput,
+} from './analysis-runs.ts';
+
+export {
   createCanonicalEvent,
   insertCorrelationCandidate,
   linkRecord,

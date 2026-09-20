@@ -700,3 +700,103 @@ export async function sourceCutoffsAsOf(
   for (const row of result.rows) cutoffs[row.source_id] = row.committed_at;
   return cutoffs;
 }
+
+/** The state of one derivation kind at a knowledge time. */
+export interface DerivationStatusAsOf {
+  readonly kind: string;
+  readonly locationKey: string | null;
+  /** The most recent run of any outcome that had finished by `asOf`. */
+  readonly latestFinishedAt: Date | null;
+  readonly latestStatus: string | null;
+  readonly latestEngineVersion: string | null;
+  /**
+   * The most recent **`SUCCEEDED`** run that had finished by `asOf`.
+   *
+   * `PARTIAL` deliberately does not count. A partial derivation produced *some* results, and
+   * nothing in the row says which — so it cannot be assumed to cover the location being asked
+   * about. Falling back to the last complete run reports a family as behind rather than current,
+   * which is the direction that fails loudly. A system that only ever manages `PARTIAL` therefore
+   * reports its derivations as un-run, and that is the intended noise.
+   */
+  readonly lastSucceededAt: Date | null;
+  readonly lastSucceededEngineVersion: string | null;
+}
+
+/**
+ * Derivation state at `asOf` — the fourth as-of reader, alongside observations, links and health.
+ *
+ * **A derivation's knowledge time is `finished_at`, not `started_at`.** A run in flight has
+ * produced nothing a reader can see, and a replay at a `T` inside that run must not credit it
+ * with results that did not exist yet. `RUNNING` rows are therefore invisible here by
+ * construction, not by a status filter: `finished_at IS NULL` makes `finished_at <= asOf`
+ * evaluate to NULL, which `WHERE` discards. An explicit `finished_at IS NOT NULL` stood here
+ * until a mutation control showed that removing it changed no test — it could not, because the
+ * comparison already does the work — and a predicate no test can distinguish is worse
+ * documentation than this sentence.
+ *
+ * This exists so that `resolveAvailability` can tell "derived nothing" from "did not derive". No
+ * other reader in the system can: an un-run derivation and a quiet world produce byte-identical
+ * empty results.
+ */
+export async function derivationsAsOf(
+  db: Kysely<DB>,
+  options: {
+    readonly asOf: Date;
+    readonly kinds?: readonly string[];
+    /** `null` selects the global (location-independent) runs, which is the default. */
+    readonly locationKey?: string | null;
+  },
+): Promise<DerivationStatusAsOf[]> {
+  const locationKey = options.locationKey ?? null;
+  const kindFilter =
+    options.kinds === undefined ? sql`TRUE` : sql`kind = ANY(${sql.val(options.kinds)}::text[])`;
+  const locationFilter =
+    locationKey === null ? sql`location_key IS NULL` : sql`location_key = ${locationKey}`;
+
+  const result = await sql<{
+    kind: string;
+    latest_finished_at: Date | null;
+    latest_status: string | null;
+    latest_engine_version: string | null;
+    last_succeeded_at: Date | null;
+    last_succeeded_engine_version: string | null;
+  }>`
+    WITH visible AS (
+      SELECT kind, finished_at, status, engine_version
+      FROM geonerva.analysis_runs
+      WHERE finished_at <= ${options.asOf}
+        AND ${locationFilter}
+        AND ${kindFilter}
+    ),
+    latest AS (
+      SELECT DISTINCT ON (kind) kind, finished_at, status, engine_version
+      FROM visible
+      ORDER BY kind, finished_at DESC, status
+    ),
+    succeeded AS (
+      SELECT DISTINCT ON (kind) kind, finished_at, engine_version
+      FROM visible
+      WHERE status = 'SUCCEEDED'
+      ORDER BY kind, finished_at DESC
+    )
+    SELECT l.kind,
+           l.finished_at    AS latest_finished_at,
+           l.status         AS latest_status,
+           l.engine_version AS latest_engine_version,
+           s.finished_at    AS last_succeeded_at,
+           s.engine_version AS last_succeeded_engine_version
+    FROM latest l
+    LEFT JOIN succeeded s ON s.kind = l.kind
+    ORDER BY l.kind
+  `.execute(db);
+
+  return result.rows.map((row) => ({
+    kind: row.kind,
+    locationKey,
+    latestFinishedAt: row.latest_finished_at,
+    latestStatus: row.latest_status,
+    latestEngineVersion: row.latest_engine_version,
+    lastSucceededAt: row.last_succeeded_at,
+    lastSucceededEngineVersion: row.last_succeeded_engine_version,
+  }));
+}

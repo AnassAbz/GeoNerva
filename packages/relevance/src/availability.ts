@@ -78,6 +78,13 @@ export const AVAILABILITY_REASONS = [
   'SOME_SOURCES_UNUSABLE',
   /** A source exists and is covered, but has never produced a successful run we can see. */
   'NEVER_SUCCEEDED',
+  /**
+   * The family's items are produced by a derivation (clustering, correlation) that has not
+   * produced a result visible at `asOf`. The raw data may be present in full.
+   */
+  'DERIVATION_NOT_RUN',
+  /** The derivation ran, but data has been ingested since; its items are behind the facts. */
+  'DERIVATION_STALE',
   /** The family is covered and healthy, and there is genuinely nothing to report. */
   'NOTHING_TO_REPORT',
   /** Coverage here is incomplete in a way that changes what an absence means. */
@@ -96,12 +103,40 @@ export interface SourceAvailabilityInput {
   readonly hasEverSucceeded: boolean;
 }
 
+/**
+ * The state of the derivation that produces a family's items, for families that have one.
+ *
+ * Fire activity is the case that forced this. FIRMS detections are ingested raw — 235,707 of them
+ * at the time of writing — and a fire *cluster* is not a fact anybody sent us: it is computed
+ * from those detections by a derivation that runs separately. If the detections are ingested and
+ * the clustering has not run, every source is healthy, the coverage is complete, and the as-of
+ * read returns zero clusters. Every input the model had before this one says `AVAILABLE` and
+ * `NOTHING_TO_REPORT`, and the product tells a user standing next to a wildfire that there is
+ * nothing to report.
+ *
+ * That is the same class of lie as an outage rendered as reassurance, arriving through a gap the
+ * source-health axis cannot see: the pipeline that failed is GeoNerva's own.
+ */
+export interface DerivationStateInput {
+  /** `CORRELATION`, `CLUSTERING` — matches `analysis_runs.kind`. */
+  readonly kind: string;
+  /** When the derivation last succeeded, as known at `asOf`. `null` = never, visibly. */
+  readonly lastSucceededAt: Date | null;
+  /**
+   * The newest fact the derivation would have to read, as known at `asOf`. `null` when there is
+   * no such data, which makes a derivation that has never run harmless rather than an outage.
+   */
+  readonly newestInputAt: Date | null;
+}
+
 export interface AvailabilityInput {
   readonly coverage: CoverageLevel;
   /** Every source that feeds this family *for this place*. Empty means nothing covers it. */
   readonly sources: readonly SourceAvailabilityInput[];
   /** How many items the as-of read returned. Never the sole input — see the header. */
   readonly itemCount: number;
+  /** Omitted for families read straight from the fact store, which is most of them. */
+  readonly derivation?: DerivationStateInput;
 }
 
 export interface AvailabilityVerdict {
@@ -173,6 +208,15 @@ export function resolveAvailability(input: AvailabilityInput): AvailabilityVerdi
   }
 
   /*
+   * The sources are usable, so the facts are here. Whether the *derivation* over them has run is
+   * a separate question, and it is checked after health rather than before it: a derivation
+   * cannot run over data that was never ingested, so when every source is down the outage is the
+   * honest cause and naming the derivation instead would point at the wrong thing.
+   */
+  const derived = derivationVerdict(input, unusableSources);
+  if (derived !== null) return derived;
+
+  /*
    * At least one source answered, so data may be shown. What is left is *which* qualified kind of
    * available this is — and every one of these still permits a zero, because a usable source
    * reporting nothing is an observation.
@@ -209,6 +253,52 @@ export function resolveAvailability(input: AvailabilityInput): AvailabilityVerdi
     mayRenderZero: true,
     unusableSources,
   };
+}
+
+/**
+ * The derivation axis, or `null` when it has nothing to say.
+ *
+ * Two outcomes, and the difference between them is whether the items on screen are *wrong* or
+ * merely *behind*:
+ *
+ *  - **Never produced a result** — `UNAVAILABLE`. There is nothing to show and, critically, no
+ *    zero to render: the absence of clusters is the absence of a computation, not an observation
+ *    that nothing is burning.
+ *  - **Ran, but facts have arrived since** — `AVAILABLE`, because the items it did produce are
+ *    real and withholding them would be worse, but `mayRenderZero` is false. "0 active fires" from
+ *    a derivation that has not seen the last six hours of detections is a claim about a world the
+ *    derivation never looked at. The items stand; the count does not.
+ *
+ * A derivation that has never run over a family with no input data at all is *not* an outage —
+ * there was nothing to derive — so `newestInputAt === null` leaves the normal path alone.
+ */
+function derivationVerdict(
+  input: AvailabilityInput,
+  unusableSources: readonly string[],
+): AvailabilityVerdict | null {
+  const derivation = input.derivation;
+  if (derivation === undefined) return null;
+  if (derivation.newestInputAt === null) return null;
+
+  if (derivation.lastSucceededAt === null) {
+    return {
+      availability: 'UNAVAILABLE',
+      reason: 'DERIVATION_NOT_RUN',
+      mayRenderZero: false,
+      unusableSources,
+    };
+  }
+
+  if (derivation.lastSucceededAt.getTime() < derivation.newestInputAt.getTime()) {
+    return {
+      availability: 'AVAILABLE',
+      reason: 'DERIVATION_STALE',
+      mayRenderZero: false,
+      unusableSources,
+    };
+  }
+
+  return null;
 }
 
 /**
