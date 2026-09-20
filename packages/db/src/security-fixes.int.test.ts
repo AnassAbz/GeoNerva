@@ -167,6 +167,72 @@ describe('S-4 — partition bounds are anchored to UTC', () => {
   });
 });
 
+describe('R-1 — partition bounds stay UTC-aligned whatever the session zone', () => {
+  it('creates UTC bounds from a session in a non-UTC zone', async () => {
+    // The re-review's scenario: a connection in a local zone creating a partition. Bounds that
+    // followed the session would overlap the UTC-aligned ones and stop ingestion permanently.
+    await sql`SELECT set_config('TimeZone', 'America/New_York', false)`.execute(db);
+    try {
+      await ensurePartitionsForDays(db, [new Date('2026-05-20T12:00:00.000Z')]);
+      // Compare the bounds as *instants*, not as text: pg_get_expr renders them in the session's
+      // zone, so a correct bound reads '2026-05-19 20:00:00-04' under America/New_York — which is
+      // the same moment as 2026-05-20T00:00:00Z. Asserting on the text would fail a correct fix.
+      // Where a row lands is the property that matters, and the server decides it from the
+      // bounds — so route both ends of the UTC day and read back the partition. Asserting on
+      // `pg_get_expr` text would fail a correct fix, because it renders in the session's zone:
+      // a correct bound reads '2026-05-19 20:00:00-04' under America/New_York.
+      const product = await sql<{ id: number }>`
+        SELECT id FROM geonerva.source_products WHERE code = 'VIIRS_NOAA20_NRT'
+      `.execute(db);
+      const productId = product.rows[0]?.id ?? 1;
+
+      for (const instant of ['2026-05-20T00:00:00.000Z', '2026-05-20T23:59:59.000Z']) {
+        const acquiredAt = new Date(instant);
+        await sql`
+          INSERT INTO geonerva.fire_detections
+            (product_id, acquired_at, lat, lon, geog, provider_version, ingested_at)
+          VALUES (${productId}, ${acquiredAt}, 10.5, 20.5,
+                  ST_SetSRID(ST_MakePoint(20.5, 10.5), 4326)::geography, '2.0NRT',
+                  ${new Date(acquiredAt.getTime() + 3 * 3600_000)})
+          ON CONFLICT DO NOTHING
+        `.execute(db);
+        const placed = await sql<{ partition: string }>`
+          SELECT tableoid::regclass::text AS partition
+          FROM geonerva.fire_detections WHERE acquired_at = ${acquiredAt}
+        `.execute(db);
+        expect(placed.rows[0]?.partition, `${instant} must be in the 20 May partition`).toContain(
+          'fire_detections_20260520',
+        );
+      }
+    } finally {
+      await sql`SELECT set_config('TimeZone', 'UTC', false)`.execute(db);
+    }
+  });
+
+  it('routes a detection just after UTC midnight into its own day', async () => {
+    const acquiredAt = new Date('2026-05-20T00:30:00.000Z');
+    await ensurePartitionsForDays(db, [acquiredAt]);
+    const product = await sql<{ id: number }>`
+        SELECT id FROM geonerva.source_products WHERE code = 'VIIRS_NOAA21_NRT'
+      `.execute(db);
+    await sql`
+        INSERT INTO geonerva.fire_detections
+          (product_id, acquired_at, lat, lon, geog, provider_version, ingested_at)
+        VALUES (${product.rows[0]?.id ?? 1}, ${acquiredAt}, 31.6, -8.0,
+                ST_SetSRID(ST_MakePoint(-8.0, 31.6), 4326)::geography, '2.0NRT',
+                ${new Date(acquiredAt.getTime() + 3 * 3600_000)})
+        ON CONFLICT DO NOTHING
+      `.execute(db);
+    const placed = await sql<{ partition: string }>`
+        SELECT tableoid::regclass::text AS partition
+        FROM geonerva.fire_detections WHERE acquired_at = ${acquiredAt}
+      `.execute(db);
+    // Retention selects partitions by the date in their name, so a row in the wrong one would
+    // be deleted a day early.
+    expect(placed.rows[0]?.partition).toContain('fire_detections_20260520');
+  });
+});
+
 describe('S-5 — row-level security covers partitions created at runtime', () => {
   it('enables RLS on a new partition', async () => {
     await ensurePartitionsForDays(db, [new Date('2026-08-15T00:00:00.000Z')]);
