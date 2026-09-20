@@ -9,7 +9,8 @@
 import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { createDb, type DB } from '../client.ts';
+import { createDb } from '../client.ts';
+import type { DB } from '../generated/database.ts';
 import { setupTestDatabase, type TestDatabase } from '../testing/test-database.ts';
 import {
   addBackfillIntervals,
