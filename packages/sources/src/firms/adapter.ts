@@ -148,7 +148,7 @@ export async function fetchFirms(options: FirmsFetchOptions): Promise<FirmsBody>
           { host: FIRMS_HOST, status },
         );
       }
-      throw new SourceFetchError(error.errorClass, redactFirmsUrl(error.describe()), {
+      throw new SourceFetchError(error.errorClass, redactFirmsUrl(error.describe(), mapKey), {
         host: FIRMS_HOST,
         ...(status === undefined ? {} : { status }),
       });

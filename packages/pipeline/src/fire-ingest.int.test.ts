@@ -76,10 +76,142 @@ describe('ingesting detections', () => {
     const outcome = await ingest('j1-24h-slice.csv');
 
     expect(outcome.status).toBe('SUCCEEDED');
-    expect(outcome.counts.received).toBe(outcome.counts.inserted + outcome.counts.duplicates);
+    /*
+     * The real invariant is `received = inserted + duplicates + rejected`.
+     *
+     * This asserted `received = inserted + duplicates`, which is *arithmetically unfalsifiable*
+     * for a reject-free fixture: `duplicates` is defined as `detections.length - inserted`, so
+     * the sum is `detections.length` by construction and the assertion only says
+     * `received === detections.length` — true whenever nothing was rejected, whatever the insert
+     * did. A G5 reviewer pointed it out. The full form is checked here, and the reject term is
+     * exercised by the drifted-row test below.
+     */
+    expect(outcome.counts.received).toBe(
+      outcome.counts.inserted + outcome.counts.duplicates + outcome.counts.rejected,
+    );
     expect(outcome.counts.inserted).toBeGreaterThan(100);
     expect(await detectionCount()).toBe(outcome.counts.inserted);
     expect(outcome.keyless).toBe(true);
+  });
+
+  it('keeps the counts reconciled when some rows are rejected', async () => {
+    /*
+     * The reject term, with a real value in it. The identity above is trivially true when
+     * `rejected` is zero, which is why the reject-free fixture could not test it.
+     */
+    const good =
+      '-13.66386,17.06811,296.27,0.38,0.36,2026-09-18,0013,N20,nominal,2.0NRT,285.89,0.35,N';
+    const bad = '999,17.06811,296.27,0.38,0.36,2026-09-18,0013,N20,nominal,2.0NRT,285.89,0.35,N';
+    const header =
+      'latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,version,bright_ti5,frp,daynight';
+    const rows = [header];
+    /*
+     * Four-decimal longitudes, distinct at the precision the identity key keeps.
+     *
+     * The first attempt used five-decimal values, which `roundCoordinate` collapsed onto five
+     * distinct pixels — so 40 rows became 5 detections. That is the identity key working exactly
+     * as designed, and a useful reminder that a test fixture has to respect it.
+     */
+    for (let index = 0; index < 40; index += 1) {
+      rows.push(good.replace('17.06811', `17.${String(6000 + index)}`));
+    }
+    rows.push(bad, bad);
+
+    const outcome = await runFireIngestion({
+      db,
+      client: clientServing(new TextEncoder().encode(rows.join('\n'))),
+      sensor: 'VIIRS_NOAA20_NRT',
+      trigger: 'MANUAL',
+      logger: createMemoryLogger(),
+    });
+
+    // 2 of 42 is under the drift threshold, so the batch stands — as PARTIAL, not SUCCEEDED.
+    expect(outcome.status).toBe('PARTIAL');
+    expect(outcome.counts.rejected).toBe(2);
+    expect(outcome.counts.received).toBe(
+      outcome.counts.inserted + outcome.counts.duplicates + outcome.counts.rejected,
+    );
+    expect(await detectionCount()).toBe(40);
+  });
+
+  it('refuses a batch that would create a partition per row', async () => {
+    /*
+     * `ensurePartitionsForDays` issues a `CREATE TABLE ... PARTITION OF` plus an `ALTER TABLE`
+     * per distinct day, **before** the insert — and the DDL is not rolled back by a later
+     * failure, while retention only drops days *older* than its cutoff. A file with scattered
+     * dates would therefore accrete partitions permanently, on every poll.
+     *
+     * A real file spans two days; a keyed `DAY_RANGE=5` request spans six.
+     */
+    const header =
+      'latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,version,bright_ti5,frp,daynight';
+    const rows = [header];
+    for (let day = 1; day <= 20; day += 1) {
+      const date = `2026-03-${String(day).padStart(2, '0')}`;
+      rows.push(
+        `-13.6${String(day)},17.06811,296.27,0.38,0.36,${date},0013,N20,nominal,2.0NRT,285.89,0.35,N`,
+      );
+    }
+
+    const outcome = await runFireIngestion({
+      db,
+      client: clientServing(new TextEncoder().encode(rows.join('\n'))),
+      sensor: 'VIIRS_NOAA20_NRT',
+      trigger: 'MANUAL',
+      logger: createMemoryLogger(),
+    });
+
+    expect(outcome.status).toBe('FAILED');
+    expect(outcome.errorClass).toBe('SCHEMA_DRIFT');
+    expect(outcome.detail).toMatch(/distinct acquisition days/);
+    expect(await detectionCount()).toBe(0);
+    // And nothing was created: the guard runs before the insert, which is the whole point.
+    const partitions = await sql<{ relname: string }>`
+      SELECT c.relname FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'geonerva' AND c.relname LIKE 'fire_detections_202603%'
+    `.execute(db);
+    expect(partitions.rows).toHaveLength(0);
+  });
+
+  it('rejects a detection dated after now instead of partitioning the future', async () => {
+    /*
+     * The parser cannot judge this — it is pure, and "later than now" needs a clock. So the rule
+     * lives here: a detection more than five minutes ahead of the ingest clock is a
+     * `FUTURE_OBSERVATION` reject (matching invariant I13, which `observation_versions` enforces
+     * in the database and `fire_detections` has no CHECK for), and it never reaches the partition
+     * set — where it would have created a day that retention can never reclaim.
+     */
+    const header =
+      'latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,version,bright_ti5,frp,daynight';
+    const future = new Date(Date.now() + 40 * 24 * 60 * 60 * 1_000).toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
+    const rows = [
+      header,
+      `-13.66,17.06,296.27,0.38,0.36,${today},0013,N20,nominal,2.0NRT,285.89,0.35,N`,
+      `-13.67,17.07,296.27,0.38,0.36,${future},0013,N20,nominal,2.0NRT,285.89,0.35,N`,
+    ];
+
+    const outcome = await runFireIngestion({
+      db,
+      client: clientServing(new TextEncoder().encode(rows.join('\n'))),
+      sensor: 'VIIRS_NOAA20_NRT',
+      trigger: 'MANUAL',
+      logger: createMemoryLogger(),
+    });
+
+    expect(outcome.status).toBe('PARTIAL');
+    expect(outcome.counts.rejected).toBe(1);
+    expect(outcome.counts.inserted).toBe(1);
+    expect(await detectionCount()).toBe(1);
+
+    const partitions = await sql<{ relname: string }>`
+      SELECT c.relname FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'geonerva'
+        AND c.relname = ${'fire_detections_' + future.replaceAll('-', '')}
+    `.execute(db);
+    expect(partitions.rows).toHaveLength(0);
   });
 
   it('inserts nothing the second time, which is what makes an overlapping poll free', async () => {

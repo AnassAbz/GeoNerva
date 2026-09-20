@@ -143,6 +143,17 @@ export type ParseResult<TRaw> =
       readonly errorClass: 'SCHEMA_DRIFT' | 'EMPTY_SUSPICIOUS';
       readonly detail: string;
       readonly rejects: readonly RejectedRecord[];
+      /**
+       * How many records the provider sent, including the ones that parsed fine.
+       *
+       * Without it the run row reported `n_received = <rejects>`, so a batch of 100 good records
+       * and 30 bad ones — which trips the 20 % threshold and is correctly refused — was recorded
+       * as having received 30. `failRun` argues at length that a wrong `received` makes drift
+       * indistinguishable from an empty feed on `/data-status`, and then this shape made it
+       * unavoidable: the variant carried no way to say the number. Every adapter knows it at the
+       * point it builds the verdict.
+       */
+      readonly receivedCount: number;
     };
 
 export interface NormalizeContext {

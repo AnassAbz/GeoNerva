@@ -30,6 +30,7 @@ import {
   type RunOutcome,
 } from '@geonerva/pipeline';
 import {
+  FIRMS_MAX_DAY_RANGE,
   FIRMS_SENSORS,
   GDACS_EVENT_TYPES,
   USGS_FEEDS,
@@ -73,6 +74,17 @@ const ADAPTERS: Readonly<Record<string, SourceAdapter<never>>> = {
  * reaches, in minutes. A source with nothing to validate is absent from the map and its value
  * goes to the adapter, which refuses what it does not understand rather than defaulting.
  */
+/**
+ * Whether this process has a FIRMS credential.
+ *
+ * Read from the environment rather than the validated config, because argument parsing happens
+ * before the config is loaded and the answer changes what `--feed` is allowed to mean. A wrong
+ * answer here can only make the message wrong, never the behaviour: `fetchFirms` decides the mode
+ * from the key it is actually given.
+ */
+const keylessFirms =
+  process.env['FIRMS_MAP_KEY'] === undefined || process.env['FIRMS_MAP_KEY'].length === 0;
+
 const FEED_VALIDATORS: Readonly<Record<string, (feed: string) => string | null>> = {
   usgs: (feed) =>
     isUsgsFeed(feed) ? null : `unknown feed: ${feed} (available: ${USGS_FEEDS.join(', ')})`,
@@ -82,6 +94,34 @@ const FEED_VALIDATORS: Readonly<Record<string, (feed: string) => string | null>>
       ? null
       : `unknown feed: ${feed} (EMSC takes a lookback in whole minutes, 1 to 10080)`;
   },
+  /*
+   * FIRMS takes `--feed` as a `DAY_RANGE`, and refuses it outright without a key.
+   *
+   * There was no validator at all, so `FEED_VALIDATORS[source]?.(feed)` returned `undefined`, no
+   * error was raised, and the value was then dropped because `runFireIngestion` was called
+   * without it. An operator asking for five days after an outage got a normal two-day poll and a
+   * `SUCCEEDED` — which is precisely what the rule ten lines above says must not happen.
+   *
+   * In keyless mode it cannot mean anything at all: the public files are whatever they are, and
+   * pretending otherwise is the same lie in a different place.
+   */
+  ...Object.fromEntries(
+    FIRMS_SENSORS.map((sensor) => [
+      `firms:${sensor}`,
+      (feed: string) => {
+        if (keylessFirms) {
+          return (
+            `--feed is not available without a FIRMS_MAP_KEY: the keyless files are fixed ` +
+            `24-hour snapshots and cannot be widened`
+          );
+        }
+        const days = Number(feed);
+        return Number.isInteger(days) && days >= 1 && days <= FIRMS_MAX_DAY_RANGE
+          ? null
+          : `unknown feed: ${feed} (FIRMS takes a DAY_RANGE of 1 to ${FIRMS_MAX_DAY_RANGE})`;
+      },
+    ]),
+  ),
   ...Object.fromEntries(
     GDACS_EVENT_TYPES.map((eventType) => [
       `gdacs:${eventType}`,
@@ -273,6 +313,8 @@ export async function runSource(
         }),
         sensor,
         ...(config.FIRMS_MAP_KEY === undefined ? {} : { mapKey: config.FIRMS_MAP_KEY }),
+        // Validated above: a whole number of days in [1, 5], and refused without a key.
+        ...(args.feed === undefined ? {} : { dayRange: Number(args.feed) }),
         trigger: 'MANUAL',
         logger: createJsonLogger(),
         ...(signal === undefined ? {} : { signal }),

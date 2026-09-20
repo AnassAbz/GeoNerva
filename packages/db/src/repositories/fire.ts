@@ -52,6 +52,31 @@ export interface BulkInsertResult {
   readonly partitionsCreated: readonly string[];
 }
 
+/**
+ * Raised when a chunked insert fails partway, carrying how far it got.
+ *
+ * The `cause` is the driver's error and must never be quoted into a stored message — it can hold
+ * a connection string (SECURITY.md M7). The caller reads `inserted` and the SQLSTATE, not the text.
+ */
+export class PartialDetectionInsertError extends Error {
+  readonly inserted: number;
+  readonly received: number;
+  readonly partitionsCreated: readonly string[];
+
+  constructor(
+    inserted: number,
+    received: number,
+    partitionsCreated: readonly string[],
+    cause: unknown,
+  ) {
+    super(`the detection insert failed after ${inserted} of ${received} rows`, { cause });
+    this.name = 'PartialDetectionInsertError';
+    this.inserted = inserted;
+    this.received = received;
+    this.partitionsCreated = partitionsCreated;
+  }
+}
+
 /** Ensures the daily partitions for the days a batch touches exist. */
 export async function ensurePartitionsForDays(
   db: Db,
@@ -94,7 +119,9 @@ export async function bulkInsertDetections(
 
   for (let start = 0; start < detections.length; start += chunkSize) {
     const chunk = detections.slice(start, start + chunkSize);
-    const result = await sql<{ id: string }>`
+    let result;
+    try {
+      result = await sql<{ id: string }>`
       INSERT INTO geonerva.fire_detections (
         product_id, acquired_at, lat, lon, geog, confidence_class, confidence_raw, frp,
         bright_ti4, bright_ti5, scan, track, daynight, provider_version, ingestion_run_id,
@@ -136,7 +163,23 @@ export async function bulkInsertDetections(
              ingested_at)
       ON CONFLICT (product_id, acquired_at, lat_e4, lon_e4) DO NOTHING
       RETURNING id::text AS id
-    `.execute(db);
+      `.execute(db);
+    } catch (error) {
+      /*
+       * A chunk failed, and the rows before it are committed.
+       *
+       * This insert is deliberately *not* one transaction — 128,000 rows under one lock would
+       * park every other writer — so a failing chunk leaves the earlier ones in place. That is
+       * safe, because `ON CONFLICT DO NOTHING` makes the retry exact rather than merely
+       * idempotent. What it is not, by itself, is *honest*: the caller caught a bare error, had
+       * no idea how much had landed, and wrote `n_received = 0` on a run with 33,000 rows already
+       * stored under its id. A live NOAA-21 batch did exactly that.
+       *
+       * So the progress travels with the failure. The caller can then say "received 128,000,
+       * stored 33,000, failed", which is what happened.
+       */
+      throw new PartialDetectionInsertError(inserted, detections.length, partitionsCreated, error);
+    }
     inserted += result.rows.length;
   }
 

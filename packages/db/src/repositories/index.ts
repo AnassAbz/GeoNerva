@@ -96,6 +96,7 @@ export type {
 
 export {
   DETECTION_CHUNK_SIZE,
+  PartialDetectionInsertError,
   assignDetectionsToCluster,
   bulkInsertDetections,
   createCluster,

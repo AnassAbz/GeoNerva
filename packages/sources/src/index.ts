@@ -69,7 +69,15 @@ export {
 } from './fdsn/window-planner.ts';
 export type { PlannedWindow, WindowPlanOptions } from './fdsn/window-planner.ts';
 
-export { normalizeUsgsFeature, parseIds } from './usgs/normalize.ts';
+export {
+  DEPTH_KM_RANGE,
+  MAGNITUDE_RANGE,
+  normalizeUsgsFeature,
+  parseIds,
+  withinStoredRange,
+} from './usgs/normalize.ts';
+export { MAX_GEOMETRY_POSITIONS, validateGeoJsonGeometry } from './geojson.ts';
+export type { GeoJsonDefect, GeoJsonVerdict } from './geojson.ts';
 export { usgsFeatureSchema, usgsFeedSchema } from './usgs/schema.ts';
 export type { UsgsFeature } from './usgs/schema.ts';
 
@@ -148,6 +156,8 @@ export {
 export type { FirmsAreaRequest, FirmsSensor } from './firms/api.ts';
 export {
   FIRMS_REQUIRED_COLUMNS,
+  MAX_CSV_ROWS,
+  MAX_PARTITION_DAYS,
   confidenceClassOf,
   firmsInstant,
   parseFirmsCsv,

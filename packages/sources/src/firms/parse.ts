@@ -62,7 +62,18 @@ export type FirmsParseResult =
   | {
       readonly verdict: 'OK';
       readonly detections: readonly FirmsDetection[];
+      /** A **sample**. `rejectedTotal` is how many there actually were. */
       readonly rejects: readonly RejectedRecord[];
+      /**
+       * Every row that did not become a detection, counted before any sampling.
+       *
+       * Separate from `rejects.length` because the reject array is bounded — a drifted
+       * 128,000-row file must not try to write 128,000 reject rows — and because the *count* is
+       * what makes `received = accepted + rejected` true and what makes a slowly worsening
+       * provider visible. Reporting the sampled length instead understated both `n_received` and
+       * `n_rejected`, and left rows that became nothing with no trace of any kind.
+       */
+      readonly rejectedTotal: number;
       /**
        * Detections whose `frp` was negative and is therefore stored as absent.
        *
@@ -76,7 +87,11 @@ export type FirmsParseResult =
       readonly verdict: 'REJECTED';
       readonly errorClass: 'SCHEMA_DRIFT' | 'EMPTY_SUSPICIOUS';
       readonly detail: string;
+      /** A sample; `rejectedTotal` and `receivedTotal` are the real numbers. */
       readonly rejects: readonly RejectedRecord[];
+      readonly rejectedTotal: number;
+      /** Rows the provider sent, so a refused batch does not report `received = 0`. */
+      readonly receivedTotal: number;
     };
 
 /**
@@ -121,7 +136,9 @@ export function firmsInstant(acqDate: string, acqTime: string): Date | null {
   const parsed = new Date(
     `${acqDate.trim()}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00Z`,
   );
-  return Number.isFinite(parsed.getTime()) ? parsed : null;
+  const ms = parsed.getTime();
+  if (!Number.isFinite(ms) || ms < ACQUIRED_RANGE.min || ms >= ACQUIRED_RANGE.max) return null;
+  return parsed;
 }
 
 /**
@@ -134,6 +151,48 @@ export function firmsInstant(acqDate: string, acqTime: string): Date | null {
 export function roundCoordinate(value: number): number {
   return Math.round(value * 10_000) / 10_000;
 }
+
+/**
+ * The window an acquisition timestamp may fall in.
+ *
+ * `firmsInstant` validated only the *shape* `YYYY-MM-DD`, so `2099-01-01` and `0001-01-01` both
+ * parsed. That is not cosmetic: `ensurePartitionsForDays` creates one daily partition per distinct
+ * day in a batch, **before** the insert, and `drop_fire_detection_partitions_before` only reclaims
+ * days *older* than the cutoff — so a partition in 2099 is never dropped. A single poisoned row
+ * per poll would accrete catalogue bloat permanently while every poll reported FAILED.
+ *
+ * 2012 is before the first VIIRS product (Suomi-NPP, late 2011) and therefore before anything this
+ * adapter could legitimately be asked for. A satellite clock a few hours fast is possible; a
+ * satellite observing in 2099 is not.
+ */
+const ACQUIRED_RANGE = {
+  min: Date.UTC(2012, 0, 1),
+  max: Date.UTC(2100, 0, 1),
+} as const;
+
+/**
+ * How many distinct days one batch may touch before it is refused.
+ *
+ * Each one is a `CREATE TABLE ... PARTITION OF` plus an `ALTER TABLE`, issued before any row is
+ * inserted. A legitimate file spans two — the keyless "24 hour" files cross midnight — and a
+ * keyed request spans at most `DAY_RANGE` + 1. Ten is far above both and far below anything that
+ * could bloat the catalogue.
+ */
+export const MAX_PARTITION_DAYS = 10;
+
+/**
+ * The most rows one CSV will be read from.
+ *
+ * SECURITY.md M2 listed a "row-count cap" among the controls against oversized payloads, and for
+ * FIRMS there was not one — EMSC had `EMSC_MAX_ROWS` and GDACS had a page cap, and the one source
+ * that actually delivers six figures of rows had neither. The 64 MB body cap bounds the
+ * *download*; it does not bound the expansion, and a 64 MB CSV becomes a ~128 MB UTF-16 string
+ * plus a detection object per row plus a mapped insert row per detection.
+ *
+ * 400,000 is roughly three times the largest real file measured (128,046 rows) — room for the
+ * catalogue to grow, and far below anything that could exhaust a small worker.
+ */
+export const MAX_CSV_ROWS = 400_000;
 
 function reject(reasonCode: RejectReasonCode, line: number, detail: string): RejectedRecord {
   return { reasonCode, excerpt: { line }, detail: detail.slice(0, 500) };
@@ -191,6 +250,8 @@ export function parseFirmsCsv(body: Uint8Array, options: FirmsParseOptions): Fir
       errorClass: 'SCHEMA_DRIFT',
       detail: 'the response body is not valid UTF-8',
       rejects: [],
+      rejectedTotal: 0,
+      receivedTotal: 0,
     };
   }
 
@@ -208,6 +269,8 @@ export function parseFirmsCsv(body: Uint8Array, options: FirmsParseOptions): Fir
       errorClass: 'SCHEMA_DRIFT',
       detail: 'the response has no header row',
       rejects: [],
+      rejectedTotal: 0,
+      receivedTotal: 0,
     };
   }
 
@@ -227,6 +290,8 @@ export function parseFirmsCsv(body: Uint8Array, options: FirmsParseOptions): Fir
       errorClass: 'SCHEMA_DRIFT',
       detail: `the CSV header is missing ${missing.join(', ')}; the columns are ${header.slice(0, 20).join(',')}`,
       rejects: [],
+      rejectedTotal: 0,
+      receivedTotal: 0,
     };
   }
 
@@ -249,6 +314,24 @@ export function parseFirmsCsv(body: Uint8Array, options: FirmsParseOptions): Fir
     lineNumber += 1;
     if (line.trim().length === 0) continue;
 
+    if (detections.length + rejects.length >= MAX_CSV_ROWS) {
+      /*
+       * Refused, not truncated.
+       *
+       * Reading the first 400,000 rows and reporting success would be the silent-truncation
+       * failure this project refuses everywhere else — the same shape as EMSC's 20,000-row cap
+       * and GDACS's page cap, and the reason both of those refuse rather than trim.
+       */
+      return {
+        verdict: 'REJECTED',
+        errorClass: 'SCHEMA_DRIFT',
+        detail: `the CSV holds more than ${MAX_CSV_ROWS} rows, far above anything FIRMS publishes`,
+        rejects: rejects.slice(0, 100),
+        rejectedTotal: rejects.length,
+        receivedTotal: detections.length + rejects.length,
+      };
+    }
+
     const fields = splitRow(line);
     if (fields.length !== header.length) {
       rejects.push(
@@ -261,12 +344,29 @@ export function parseFirmsCsv(body: Uint8Array, options: FirmsParseOptions): Fir
       continue;
     }
 
-    const lat = numberOrNull(at(fields, 'latitude'));
-    const lon = numberOrNull(at(fields, 'longitude'));
-    if (lat === null || lon === null || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    /*
+     * Rounded first, then checked — and checked against the column's *half-open* longitude.
+     *
+     * The column is `CHECK (lon >= -180 AND lon < 180)`, so +180 is excluded, and rounding can
+     * **manufacture** a 180 from a value that was legal: `roundCoordinate(179.99996)` is exactly
+     * 180. Checking before rounding therefore admitted every longitude in (179.99995, 180], and
+     * VIIRS swaths cross the antimeridian on every orbit — one such pixel in a 128,000-row file
+     * would have failed the chunk, and with it the whole poll, exactly as the negative `frp` did.
+     *
+     * The order matters as much as the bound: what must be storable is the value that is stored.
+     */
+    const rawLat = numberOrNull(at(fields, 'latitude'));
+    const rawLon = numberOrNull(at(fields, 'longitude'));
+    if (rawLat === null || rawLon === null) {
       rejects.push(
-        reject('COORDINATES_INVALID', lineNumber, `lat=${String(lat)} lon=${String(lon)}`),
+        reject('COORDINATES_INVALID', lineNumber, `lat=${String(rawLat)} lon=${String(rawLon)}`),
       );
+      continue;
+    }
+    const lat = roundCoordinate(rawLat);
+    const lon = roundCoordinate(rawLon);
+    if (lat < -90 || lat > 90 || lon < -180 || lon >= 180) {
+      rejects.push(reject('COORDINATES_INVALID', lineNumber, `lat=${lat} lon=${lon}`));
       continue;
     }
 
@@ -323,8 +423,8 @@ export function parseFirmsCsv(body: Uint8Array, options: FirmsParseOptions): Fir
     const daynightRaw = at(fields, 'daynight')?.trim().toUpperCase();
     detections.push({
       acquiredAt,
-      lat: roundCoordinate(lat),
-      lon: roundCoordinate(lon),
+      lat,
+      lon,
       confidenceClass,
       confidenceRaw: confidenceRaw.length === 0 ? null : confidenceRaw,
       frp,
@@ -339,7 +439,9 @@ export function parseFirmsCsv(body: Uint8Array, options: FirmsParseOptions): Fir
 
   const total = detections.length + rejects.length;
   if (total === 0) {
-    if (!options.emptyIsSuspicious) return { verdict: 'OK', detections, rejects, frpDropped };
+    if (!options.emptyIsSuspicious) {
+      return { verdict: 'OK', detections, rejects, rejectedTotal: 0, frpDropped };
+    }
     /*
      * Zero detections worldwide.
      *
@@ -353,6 +455,8 @@ export function parseFirmsCsv(body: Uint8Array, options: FirmsParseOptions): Fir
       errorClass: 'EMPTY_SUSPICIOUS',
       detail: 'the global detection file held no rows, and nowhere on Earth is never burning',
       rejects,
+      rejectedTotal: rejects.length,
+      receivedTotal: 0,
     };
   }
 
@@ -367,9 +471,17 @@ export function parseFirmsCsv(body: Uint8Array, options: FirmsParseOptions): Fir
       // Bounded: a drifted 128,000-row file would otherwise try to carry 128,000 reject rows
       // into a failure path whose whole job is to stay writable.
       rejects: rejects.slice(0, 100),
+      rejectedTotal: rejects.length,
+      receivedTotal: total,
     };
   }
-  return { verdict: 'OK', detections, rejects: rejects.slice(0, 1_000), frpDropped };
+  return {
+    verdict: 'OK',
+    detections,
+    rejects: rejects.slice(0, 1_000),
+    rejectedTotal: rejects.length,
+    frpDropped,
+  };
 }
 
 export { OPTIONAL_COLUMNS };

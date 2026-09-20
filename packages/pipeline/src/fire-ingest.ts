@@ -27,6 +27,7 @@
 import type { Kysely } from 'kysely';
 
 import {
+  PartialDetectionInsertError,
   bulkInsertDetections,
   finishRun,
   findProductByCode,
@@ -38,6 +39,7 @@ import {
 import type { ErrorClass, RunTrigger } from '@geonerva/domain';
 import { SourceFetchError, type HttpClient } from '@geonerva/http';
 import {
+  MAX_PARTITION_DAYS,
   fetchFirms,
   firmsDescriptor,
   parseFirms,
@@ -90,6 +92,16 @@ const EMPTY = { received: 0, inserted: 0, duplicates: 0, rejected: 0 } as const;
  * bounds what it returns; this is the second bound, at the place that actually writes.
  */
 const MAX_REJECT_ROWS = 100;
+
+/**
+ * How far ahead of the ingest clock an acquisition may be.
+ *
+ * A satellite clock a few minutes fast is ordinary; a detection dated next week is not an
+ * observation. Five minutes matches invariant I13, which `observation_versions` enforces in the
+ * database — `fire_detections` has no equivalent CHECK, so the rule is applied here instead of
+ * being absent for the one high-volume table.
+ */
+const FUTURE_HORIZON_MS = 5 * 60 * 1_000;
 
 export async function runFireIngestion(
   options: RunFireIngestionOptions,
@@ -168,18 +180,35 @@ export async function runFireIngestion(
   ): Promise<FireIngestionOutcome> => {
     // Every path into a stored message goes through both: the ordinary sanitizer, and the FIRMS
     // one that removes anything shaped like a MAP_KEY wherever it appears.
-    const sanitized = sanitizeDetail(redactFirmsUrl(detail));
-    await finishRun(db, {
-      runId,
-      status: 'FAILED',
-      errorClass,
-      errorMessage: sanitized,
-      ...(httpStatus === undefined ? {} : { httpStatus }),
-      ...(bytes === undefined ? {} : { bytesReceived: bytes }),
-      ...(seen === undefined
-        ? {}
-        : { counts: { received: seen.received, rejected: seen.rejected } }),
-    });
+    const sanitized = sanitizeDetail(redactFirmsUrl(detail, options.mapKey));
+    /*
+     * The failure path must not have a failure path.
+     *
+     * `finishRun` refuses a run that is no longer `RUNNING` — which happens when the lease was
+     * expired underneath a slow poll — and it throws to say so. Called from inside a `catch`,
+     * that turned a recorded failure into an unhandled rejection with a stack trace and no run
+     * row at all. `run.ts` wraps its equivalent call for exactly this reason; this one did not.
+     */
+    try {
+      await finishRun(db, {
+        runId,
+        status: 'FAILED',
+        errorClass,
+        errorMessage: sanitized,
+        ...(httpStatus === undefined ? {} : { httpStatus }),
+        ...(bytes === undefined ? {} : { bytesReceived: bytes }),
+        ...(seen === undefined
+          ? {}
+          : { counts: { received: seen.received, rejected: seen.rejected } }),
+      });
+    } catch {
+      logger.log('error', 'ingestion.finish_failed', {
+        ...base,
+        runId,
+        errorClass: 'LEASE_EXPIRED',
+        detail: 'the run could not be finished; its lease was taken over',
+      });
+    }
     return finish('FAILED', runId, errorClass, sanitized, {
       ...EMPTY,
       ...(seen === undefined ? {} : { received: seen.received, rejected: seen.rejected }),
@@ -220,15 +249,64 @@ export async function runFireIngestion(
       for (const item of parsed.rejects.slice(0, MAX_REJECT_ROWS)) {
         await recordReject(db, runId, item.reasonCode, item.excerpt);
       }
+      /*
+       * `receivedTotal`, not `rejects.length`.
+       *
+       * The reject array is a bounded *sample*; reporting its length as `n_received` told
+       * `/data-status` that a drifted 128,000-row file had delivered 100 rows, which is the
+       * precise confusion `failRun` exists to prevent — a drift event and an empty feed must not
+       * look alike.
+       */
       return await failRun(parsed.errorClass, parsed.detail, fetched.httpStatus, fetched.bytes, {
-        received: parsed.rejects.length,
-        rejected: parsed.rejects.length,
+        received: parsed.receivedTotal,
+        rejected: parsed.rejectedTotal,
       });
     }
 
-    const received = parsed.detections.length + parsed.rejects.length;
+    const received = parsed.detections.length + parsed.rejectedTotal;
     const ingestedAt = new Date();
-    const rows: FireDetectionInput[] = parsed.detections.map((detection) => ({
+
+    /*
+     * Two guards that have to run before a single row is inserted, because the insert creates
+     * partitions first and a `CREATE TABLE` is not rolled back by the failure that follows it.
+     *
+     * **Forward-dated acquisitions.** The parser bounds `acq_date` to [2012, 2100) as a pure
+     * property of the value; only here is there a clock, so only here can "the future" be
+     * checked. `fire_detections` has no `observed_at <= ingested_at` CHECK of its own, but a
+     * detection dated next week is not an observation, and it would create a partition that
+     * retention never reclaims — it only drops days *older* than the cutoff.
+     *
+     * **Partition count.** A legitimate file spans two days; a keyed `DAY_RANGE=5` request spans
+     * six. A file with scattered dates would issue one `CREATE TABLE ... PARTITION OF` plus an
+     * `ALTER TABLE` per distinct day, permanently, on every poll.
+     */
+    const horizon = new Date(ingestedAt.getTime() + FUTURE_HORIZON_MS);
+    const futureDetections = parsed.detections.filter(
+      (detection) => detection.acquiredAt > horizon,
+    ).length;
+    const usable = parsed.detections.filter((detection) => detection.acquiredAt <= horizon);
+    const days = new Set(
+      usable.map((detection) => detection.acquiredAt.toISOString().slice(0, 10)),
+    );
+    if (days.size > MAX_PARTITION_DAYS) {
+      return await failRun(
+        'SCHEMA_DRIFT',
+        `the batch spans ${days.size} distinct acquisition days, above the ` +
+          `${MAX_PARTITION_DAYS} one file should ever touch`,
+        fetched.httpStatus,
+        fetched.bytes,
+        { received, rejected: parsed.rejectedTotal },
+      );
+    }
+    for (const detection of parsed.detections) {
+      if (detection.acquiredAt > horizon) {
+        await recordReject(db, runId, 'FUTURE_OBSERVATION', {
+          acquiredAt: detection.acquiredAt.toISOString(),
+        });
+        if (futureDetections >= MAX_REJECT_ROWS) break;
+      }
+    }
+    const rows: FireDetectionInput[] = usable.map((detection) => ({
       productId: product.id,
       acquiredAt: detection.acquiredAt,
       lat: detection.lat,
@@ -263,7 +341,7 @@ export async function runFireIngestion(
     }
 
     let newestAcquiredAt: Date | null = null;
-    for (const detection of parsed.detections) {
+    for (const detection of usable) {
       if (newestAcquiredAt === null || detection.acquiredAt > newestAcquiredAt) {
         newestAcquiredAt = detection.acquiredAt;
       }
@@ -274,7 +352,8 @@ export async function runFireIngestion(
      * was usable and some of it was not, and a reader must be able to tell that from a clean run
      * without opening the reject table.
      */
-    const status = parsed.rejects.length > 0 ? 'PARTIAL' : 'SUCCEEDED';
+    const rejectedTotal = parsed.rejectedTotal + futureDetections;
+    const status = rejectedTotal > 0 ? 'PARTIAL' : 'SUCCEEDED';
     await finishRun(db, {
       runId,
       status,
@@ -291,7 +370,7 @@ export async function runFireIngestion(
          */
         newRecords: result.inserted,
         unchanged: result.duplicates,
-        rejected: parsed.rejects.length,
+        rejected: rejectedTotal,
       },
     });
 
@@ -301,8 +380,8 @@ export async function runFireIngestion(
       runId,
       status,
       received,
-      accepted: parsed.detections.length,
-      rejected: parsed.rejects.length,
+      accepted: usable.length,
+      rejected: rejectedTotal,
       newRecords: result.inserted,
       unchanged: result.duplicates,
       // Surfaced, not swallowed: a rate that moves from one in a hundred thousand to one in ten
@@ -320,7 +399,7 @@ export async function runFireIngestion(
         received,
         inserted: result.inserted,
         duplicates: result.duplicates,
-        rejected: parsed.rejects.length,
+        rejected: rejectedTotal,
       },
       result.partitionsCreated,
       newestAcquiredAt,
@@ -332,7 +411,7 @@ export async function runFireIngestion(
         stage: 'fetch',
         runId,
         errorClass: error.errorClass,
-        detail: redactFirmsUrl(error.describe()),
+        detail: redactFirmsUrl(error.describe(), options.mapKey),
         endpoint: error.context.host,
         ...(error.context.status === undefined ? {} : { httpStatus: error.context.status }),
       });
@@ -369,7 +448,21 @@ export async function runFireIngestion(
      * rebuilding the call by hand outside the worker. A redaction that makes an operator
      * reconstruct the failure themselves is not a safe default, it is an unusable one.
      */
-    const dbError = error as { code?: unknown; constraint?: unknown; table?: unknown };
+    /*
+     * A partial insert says how far it got.
+     *
+     * Without this the run row read `n_received = 0` on a batch that had already stored 33,000
+     * rows under its own id — so any reconciliation between `fire_detections` and
+     * `ingestion_runs` was wrong, and the partitions the batch created went unreported. The
+     * retry is exact either way (`ON CONFLICT DO NOTHING`); this is about the *record* of what
+     * happened being true.
+     */
+    const partial = error instanceof PartialDetectionInsertError ? error : null;
+    const dbError = (partial?.cause ?? error) as {
+      code?: unknown;
+      constraint?: unknown;
+      table?: unknown;
+    };
     const sqlstate = typeof dbError.code === 'string' ? dbError.code : 'unknown';
     const constraint = typeof dbError.constraint === 'string' ? dbError.constraint : null;
     const table = typeof dbError.table === 'string' ? dbError.table : null;
@@ -377,13 +470,22 @@ export async function runFireIngestion(
       `SQLSTATE ${sqlstate}` +
       (constraint === null ? '' : ` on ${constraint}`) +
       (table === null ? '' : ` (${table})`);
+    const progress =
+      partial === null ? '' : `; stored ${partial.inserted} of ${partial.received} rows first`;
     logger.log('error', 'ingestion.failed', {
       ...base,
       stage: 'persist',
       runId,
       errorClass: 'DB_ERROR',
-      detail: `the batch could not be stored: ${where}`,
+      detail: `the batch could not be stored: ${where}${progress}`,
+      ...(partial === null ? {} : { received: partial.received, newRecords: partial.inserted }),
     });
-    return await failRun('DB_ERROR', `the batch could not be stored: ${where}`);
+    return await failRun(
+      'DB_ERROR',
+      `the batch could not be stored: ${where}${progress}`,
+      undefined,
+      undefined,
+      partial === null ? undefined : { received: partial.received, rejected: 0 },
+    );
   }
 }

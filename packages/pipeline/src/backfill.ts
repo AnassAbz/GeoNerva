@@ -247,8 +247,18 @@ export async function runBackfill<TRaw>(
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       if (count.overLimit) {
-        intervalsSplit += 1;
+        /*
+         * Counted after the split, and counted against the interval budget.
+         *
+         * `intervalsSplit` was incremented *before* `splitWindow`, which throws at the minimum
+         * window size — so the one window an operator was investigating reported a split that
+         * never happened. And a split that does not count against `maxIntervals` means a deeply
+         * splitting range can make far more requests than the operator asked for: `--max-intervals
+         * 3` over a decade could walk dozens of windows. Both numbers now mean what they say.
+         */
         await splitTooLargeWindow(db, plan.id, interval, options.plan, logger, base, count.count);
+        intervalsSplit += 1;
+        intervalsAttempted += 1;
         continue;
       }
 
@@ -331,8 +341,8 @@ export async function runBackfill<TRaw>(
         options.historical.isSizeRefusal(outcome.httpStatus) &&
         splittable(interval, options.plan)
       ) {
-        intervalsSplit += 1;
         await splitTooLargeWindow(db, plan.id, interval, options.plan, logger, base);
+        intervalsSplit += 1;
         continue;
       }
 
@@ -463,15 +473,44 @@ async function ingestWindow<TRaw>(
         client: ctx.client,
         ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
       });
-      return {
-        kind: 'FETCHED',
-        body: fetched.body,
+      const meta = {
         httpStatus: fetched.httpStatus,
         bytes: fetched.bytes,
-        payloadSha256: payloadHash(fetched.body),
         endpoint: options.historical.endpoint(),
         attempts: fetched.attempts,
         durationMs: fetched.durationMs,
+      } as const;
+
+      /*
+       * A window the provider says is empty is a *finished* window.
+       *
+       * EMSC's FDSN service runs the default `nodata=204`, so a historical window holding no
+       * events comes back 204 with a zero-byte body. Handing that to `parse` as a `FETCHED` body
+       * means `JSON.parse("")` throws and the window is recorded as `SCHEMA_DRIFT` — which is
+       * both a lie (nothing drifted; the hour was quiet) and *permanent*: resume resets the
+       * interval to PENDING and it fails identically forever, so the plan can never complete.
+       *
+       * `emptyBatchIsSuspicious: false` below exists precisely so a quiet historical window
+       * succeeds, and it never got the chance, because parse died first.
+       *
+       * A zero-byte body with any status is treated the same way. There is nothing to parse
+       * either way, and "the provider sent nothing" is the one reading that is true in both.
+       */
+      if (fetched.httpStatus === 204 || fetched.bytes === 0) {
+        return {
+          ...meta,
+          kind: 'NO_DATA',
+          // Never sha256(""), which would erase the previous run's digest.
+          payloadSha256: ctx.lastPayloadSha256 ?? payloadHash(fetched.body),
+          detail: `the provider reported no records in ${window.from.toISOString()}–${window.to.toISOString()}`,
+        };
+      }
+
+      return {
+        ...meta,
+        kind: 'FETCHED',
+        body: fetched.body,
+        payloadSha256: payloadHash(fetched.body),
       };
     },
     beforeCommit: async (trx, context) => {

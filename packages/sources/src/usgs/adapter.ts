@@ -109,6 +109,7 @@ export function parseUsgsFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
       errorClass: 'SCHEMA_DRIFT',
       detail: 'the response body is not valid UTF-8',
       rejects: [],
+      receivedCount: 0,
     };
   }
 
@@ -122,6 +123,7 @@ export function parseUsgsFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
       errorClass: 'SCHEMA_DRIFT',
       detail: `the response body is not JSON: ${error instanceof Error ? error.message : 'parse failed'}`,
       rejects: [],
+      receivedCount: 0,
     };
   }
 
@@ -135,6 +137,7 @@ export function parseUsgsFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
         .map((issue) => `${issue.path.map(String).join('.') || '(root)'}: ${issue.message}`)
         .join('; ')}`,
       rejects: [],
+      receivedCount: 0,
     };
   }
 
@@ -189,7 +192,13 @@ export function parseUsgsFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
 
   const verdict = batchVerdict(ctx.descriptor, records.length, rejects.length);
   if (!verdict.ok) {
-    return { verdict: 'REJECTED', errorClass: verdict.errorClass, detail: verdict.detail, rejects };
+    return {
+      verdict: 'REJECTED',
+      errorClass: verdict.errorClass,
+      detail: verdict.detail,
+      rejects,
+      receivedCount: records.length + rejects.length,
+    };
   }
   return { verdict: 'OK', records, rejects, declaredCount };
 }

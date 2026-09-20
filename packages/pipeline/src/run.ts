@@ -670,6 +670,24 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
         detail: fetched.detail,
         received: 0,
       });
+      /*
+       * The checkpoint still runs, and that is not a detail.
+       *
+       * `beforeCommit` is how a backfill records that a window is finished, and it normally runs
+       * inside the persist transaction. There is no persist transaction here — there is nothing
+       * to persist — so it gets one of its own. Without this the interval stays PENDING, claiming
+       * hands back the *same* window, and the backfill loops on it: the identical shape as the
+       * `LEASE_HELD` and `SKIPPED` holes that were HIGH findings at G4.
+       *
+       * An empty window is a *completed* window. It is not a gap, and it must not be re-walked
+       * forever because the provider had nothing to say about it.
+       */
+      if (options.beforeCommit !== undefined) {
+        const checkpoint = options.beforeCommit;
+        await db.transaction().execute(async (trx) => {
+          await checkpoint(trx, { runId, received: 0, accepted: 0, ingestedAt: new Date() });
+        });
+      }
       const committedAt = await finishRun(db, {
         runId,
         status: 'SUCCEEDED',
@@ -722,8 +740,16 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
         rejected: parsed.rejects.length,
         parseMs: Math.round(parseMs),
       });
+      /*
+       * `receivedCount`, not `rejects.length`.
+       *
+       * The `REJECTED` variant carries no records, so the ones that *did* parse were invisible and
+       * a batch of 100 good plus 30 bad was recorded as having received 30. The comment on
+       * `failRun` argues at length that a wrong `received` makes a drift event indistinguishable
+       * from an empty feed, and this was the line that made it so.
+       */
       return await failRun(parsed.errorClass, parsed.detail, fetched.httpStatus, fetched.bytes, {
-        received: parsed.rejects.length,
+        received: parsed.receivedCount,
         rejected: parsed.rejects.length,
       });
     }

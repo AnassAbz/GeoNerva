@@ -22,7 +22,13 @@ import {
   redactFirmsUrl,
 } from './api.ts';
 import { firmsDescriptor, parseFirms } from './adapter.ts';
-import { confidenceClassOf, firmsInstant, parseFirmsCsv, roundCoordinate } from './parse.ts';
+import {
+  MAX_CSV_ROWS,
+  confidenceClassOf,
+  firmsInstant,
+  parseFirmsCsv,
+  roundCoordinate,
+} from './parse.ts';
 
 /** A syntactically valid key, so the tests exercise the real path. Not a real credential. */
 const KEY = 'abcdef0123456789abcdef0123456789';
@@ -50,6 +56,23 @@ describe('the credential boundary', () => {
     // Not even a prefix: a partial key is a slow leak, and 32 characters do not need many
     // samples to become guessable.
     expect(endpoint).not.toContain(KEY.slice(0, 4));
+  });
+
+  it('redacts a key adjacent to a word character, which a \b boundary does not', () => {
+    /*
+     * Three confirmed bypasses, found by a G5 reviewer: `` treats `_` and alphanumerics as word
+     * characters, so `MAP_KEY_<key>`, `key=<key>x` and `X<key>` were all invisible to the old
+     * pattern. The built URL is slash-delimited and was never at risk — but this function exists
+     * precisely for the cases that are *not* the built URL, which is where it failed.
+     */
+    for (const shaped of [`MAP_KEY_${KEY}`, `key=${KEY}x`, `X${KEY}`, `${KEY}_suffix`]) {
+      expect(redactFirmsUrl(shaped)).not.toContain(KEY);
+    }
+
+    // And with the key to hand, no pattern trick can evade it at all.
+    expect(redactFirmsUrl(`prefix${KEY.toUpperCase()}suffix`, KEY.toUpperCase())).not.toContain(
+      KEY.toUpperCase(),
+    );
   });
 
   it('strips anything key-shaped out of text on its way to a log or a run row', () => {
@@ -297,14 +320,125 @@ describe('parsing', () => {
     ).toMatchObject({ frpDropped: 0 });
   });
 
-  it('is idempotent: the same bytes give the same detections', () => {
-    const body = readFixtureBytes('firms', 'j1-24h-slice.csv');
-    const first = parseFirms(body, 'VIIRS_NOAA20_NRT');
-    const second = parseFirms(body, 'VIIRS_NOAA20_NRT');
-    if (first.verdict !== 'OK' || second.verdict !== 'OK') throw new Error('should parse');
-    const key = (result: typeof first) =>
-      result.detections.map((d) => `${d.acquiredAt.toISOString()}|${d.lat}|${d.lon}`);
-    expect(key(second)).toStrictEqual(key(first));
+  it('derives the same identity from differently-formatted versions of one row', () => {
+    /*
+     * This used to parse the *same bytes* twice and assert the results matched, which no mutation
+     * of a clock-free, IO-free parser could ever fail — a tautology, as a G5 reviewer pointed
+     * out. The property worth pinning is that the **identity** is stable across the formatting
+     * differences a provider actually varies: `acq_time` zero-padded or not, and a coordinate
+     * written with more decimals than the key keeps.
+     *
+     * The identity is `(product, acquired_at, round(lat, 4), round(lon, 4))` — FIRMS publishes
+     * no id — so two spellings of one pixel must collapse to one row, or every poll reinserts.
+     */
+    const padded =
+      '-13.66386,17.06811,296.27,0.38,0.36,2026-09-18,0013,N20,nominal,2.0NRT,285.89,0.35,N';
+    const unpadded =
+      '-13.6638604,17.0681149,296.27,0.38,0.36,2026-09-18,13,N20,nominal,2.0NRT,285.89,0.35,N';
+    const result = parseFirmsCsv(csv([HEADER, padded, unpadded]), {
+      ...options,
+      emptyIsSuspicious: false,
+    });
+    if (result.verdict !== 'OK') throw new Error('both spellings must parse');
+    const key = (index: number) => {
+      const d = result.detections[index];
+      return `${d?.acquiredAt.toISOString() ?? ''}|${d?.lat ?? ''}|${d?.lon ?? ''}`;
+    };
+    expect(result.detections).toHaveLength(2);
+    expect(key(1)).toBe(key(0));
+  });
+
+  it('rejects a longitude the column would refuse, checked after rounding', () => {
+    /*
+     * The column is `CHECK (lon >= -180 AND lon < 180)` — half-open — and `roundCoordinate` can
+     * **manufacture** a 180 from a legal value: `roundCoordinate(179.99996)` is exactly 180. The
+     * check ran before the rounding and used an inclusive bound, so every longitude in
+     * (179.99995, 180] was accepted and then refused by the database, killing the poll. VIIRS
+     * swaths cross the antimeridian on every orbit.
+     */
+    expect(roundCoordinate(179.99996)).toBe(180);
+    const rows = [
+      HEADER,
+      ...Array.from({ length: 20 }, () => ROW),
+      '10.0,179.99996,296.27,0.38,0.36,2026-09-18,0013,N20,nominal,2.0NRT,285.89,0.35,N',
+      '10.0,180.0,296.27,0.38,0.36,2026-09-18,0013,N20,nominal,2.0NRT,285.89,0.35,N',
+    ];
+    const result = parseFirmsCsv(csv(rows), options);
+    if (result.verdict !== 'OK') throw new Error('two bad rows in 22 is not drift');
+    expect(result.rejectedTotal).toBe(2);
+    expect(result.rejects.every((item) => item.reasonCode === 'COORDINATES_INVALID')).toBe(true);
+    // And a longitude just inside the boundary is kept, so the bound is a bound and not a cliff.
+    expect(
+      parseFirmsCsv(
+        csv([
+          HEADER,
+          '10.0,179.9999,296.27,0.38,0.36,2026-09-18,0013,N20,nominal,2.0NRT,285.89,0.35,N',
+        ]),
+        { ...options, emptyIsSuspicious: false },
+      ),
+    ).toMatchObject({ verdict: 'OK', rejectedTotal: 0 });
+  });
+
+  it('refuses a file with more rows than FIRMS publishes, rather than reading a prefix', () => {
+    /*
+     * SECURITY.md M2 listed a "row-count cap" among the controls against oversized payloads, and
+     * FIRMS — the one source that delivers six figures of rows — had none. Reading the first
+     * 400,000 and reporting success would be the silent-truncation failure that EMSC's row cap
+     * and GDACS's page cap both refuse.
+     */
+    expect(MAX_CSV_ROWS).toBeGreaterThan(300_000);
+    const rows = [HEADER];
+    for (let index = 0; index <= MAX_CSV_ROWS; index += 1) rows.push(ROW);
+    const result = parseFirmsCsv(csv(rows), options);
+    expect(result.verdict).toBe('REJECTED');
+    if (result.verdict !== 'REJECTED') return;
+    expect(result.detail).toMatch(/more than/);
+  });
+
+  it('refuses an acquisition date outside any window VIIRS could have observed', () => {
+    /*
+     * `firmsInstant` validated only the shape, so `2099-01-01` parsed. That is not cosmetic:
+     * `ensurePartitionsForDays` creates a partition per distinct day **before** the insert, and
+     * retention only drops days *older* than its cutoff — so a partition in 2099 is never
+     * reclaimed. One poisoned row per poll would accrete catalogue bloat permanently.
+     */
+    expect(firmsInstant('0001-01-01', '0013')).toBeNull();
+    expect(firmsInstant('9999-12-31', '0013')).toBeNull();
+    // Suomi-NPP began late 2011, so 2012 onwards is the real window.
+    expect(firmsInstant('2011-06-01', '0013')).toBeNull();
+    expect(firmsInstant('2012-01-01', '0013')?.toISOString()).toBe('2012-01-01T00:13:00.000Z');
+
+    /*
+     * A date that is merely *ahead of now* still parses, deliberately.
+     *
+     * This function is pure — no clock — so it can only refuse what is impossible regardless of
+     * when it runs. "Later than now" is a judgement that needs a clock, and it is made in
+     * `runFireIngestion`, which rejects such a row as `FUTURE_OBSERVATION` and keeps it out of
+     * the partition set. Putting a clock in here to catch it would make replay depend on when it
+     * was replayed.
+     */
+    expect(firmsInstant('2099-01-01', '0013')).not.toBeNull();
+  });
+
+  it('counts every rejected row, even when it only samples a few of them', () => {
+    /*
+     * The reject array is a bounded sample — a drifted 128,000-row file must not try to write
+     * 128,000 reject rows — but the *count* was taken from the sample, so `n_received` and
+     * `n_rejected` both understated the batch and thousands of rows that became nothing left no
+     * trace at all. `received = accepted + rejected` has to be true of the real numbers.
+     */
+    const bad = '999,17.06811,296.27,0.38,0.36,2026-09-18,0013,N20,nominal,2.0NRT,285.89,0.35,N';
+    const rows = [
+      HEADER,
+      ...Array.from({ length: 9_000 }, () => ROW),
+      ...Array.from({ length: 1_500 }, () => bad),
+    ];
+    const result = parseFirmsCsv(csv(rows), options);
+    if (result.verdict !== 'OK') throw new Error('1,500 of 10,500 is 14 %, under the threshold');
+    expect(result.rejectedTotal).toBe(1_500);
+    // Sampled, and the sample is smaller than the truth. That is the point.
+    expect(result.rejects.length).toBeLessThan(result.rejectedTotal);
+    expect(result.detections.length + result.rejectedTotal).toBe(10_500);
   });
 });
 

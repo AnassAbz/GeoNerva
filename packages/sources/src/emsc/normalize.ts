@@ -59,7 +59,13 @@ import {
   type NormalizeContext,
   type NormalizedRecord,
 } from '../contract.ts';
-import { roundStored, wrapLongitude } from '../usgs/normalize.ts';
+import {
+  DEPTH_KM_RANGE,
+  MAGNITUDE_RANGE,
+  roundStored,
+  withinStoredRange,
+  wrapLongitude,
+} from '../usgs/normalize.ts';
 import type { EmscFeature } from './schema.ts';
 
 /**
@@ -203,6 +209,15 @@ export function normalizeEmscFeature(
    * EMSC sends it — it always has — its magnitude must be the depth's. Its *sign* must not be
    * read: RTS negates it and EMB does not.
    */
+  // Bounded before it can reach `numeric(6, 2)`, where an overflow is batch-fatal rather than a
+  // reject — see `DEPTH_KM_RANGE`.
+  if (p.depth !== null && !withinStoredRange(p.depth, DEPTH_KM_RANGE)) {
+    throw rejected(
+      unid,
+      'SCHEMA_INVALID',
+      `depth=${p.depth} km is outside [${DEPTH_KM_RANGE.min}, ${DEPTH_KM_RANGE.max}]`,
+    );
+  }
   const depthKm = p.depth === null ? null : roundStored(p.depth);
   if (p.depth !== null && geoZ !== undefined) {
     if (Math.abs(Math.abs(geoZ) - Math.abs(p.depth)) > DEPTH_AGREEMENT_KM) {
@@ -227,6 +242,13 @@ export function normalizeEmscFeature(
   const sourceUpdatedAt = p.lastupdate === null ? null : instant(unid, 'lastupdate', p.lastupdate);
   // An absent key and an explicit null are the same fact: EMSC has no magnitude for this event.
   // (They are *not* the same fact at batch level — see the drift check in the parser.)
+  if (p.mag !== null && p.mag !== undefined && !withinStoredRange(p.mag, MAGNITUDE_RANGE)) {
+    throw rejected(
+      unid,
+      'SCHEMA_INVALID',
+      `mag=${p.mag} is outside [${MAGNITUDE_RANGE.min}, ${MAGNITUDE_RANGE.max}]`,
+    );
+  }
   const magnitude = p.mag === null || p.mag === undefined ? null : roundStored(p.mag);
   const magnitudeType = optionalText(p.magtype)?.toLowerCase() ?? null;
   const contributor = optionalText(p.auth) ?? null;

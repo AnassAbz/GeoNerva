@@ -150,6 +150,7 @@ export function parseEmscFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
       errorClass: 'SCHEMA_DRIFT',
       detail: 'the response body is not valid UTF-8',
       rejects: [],
+      receivedCount: 0,
     };
   }
 
@@ -164,6 +165,7 @@ export function parseEmscFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
       errorClass: 'SCHEMA_DRIFT',
       detail: `the response body is not JSON: ${error instanceof Error ? error.message : 'parse failed'}`,
       rejects: [],
+      receivedCount: 0,
     };
   }
 
@@ -185,6 +187,7 @@ export function parseEmscFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
       errorClass: 'SCHEMA_DRIFT',
       detail: `the feed envelope changed shape: ${issuesOf(envelope.error).slice(0, 5).join('; ')}`,
       rejects: [],
+      receivedCount: 0,
     };
   }
 
@@ -205,6 +208,7 @@ export function parseEmscFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
       errorClass: 'SCHEMA_DRIFT',
       detail: `the response holds ${features.length} records, at the service's silent row cap, so it cannot be assumed complete`,
       rejects: [],
+      receivedCount: features.length,
     };
   }
 
@@ -235,7 +239,13 @@ export function parseEmscFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
 
   const verdict = batchVerdict(ctx.descriptor, records.length, rejects.length);
   if (!verdict.ok) {
-    return { verdict: 'REJECTED', errorClass: verdict.errorClass, detail: verdict.detail, rejects };
+    return {
+      verdict: 'REJECTED',
+      errorClass: verdict.errorClass,
+      detail: verdict.detail,
+      rejects,
+      receivedCount: records.length + rejects.length,
+    };
   }
 
   /*
@@ -263,6 +273,7 @@ export function parseEmscFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
           `${withoutMagnitude} of ${records.length} records have no magnitude ` +
           `(${(ratio * 100).toFixed(1)} %), which is a field that has gone rather than a quiet catalogue`,
         rejects,
+        receivedCount: records.length + rejects.length,
       };
     }
   }

@@ -147,6 +147,8 @@ export function gdacsInstant(value: string): Date | null {
 
 export interface GdacsPagedList {
   readonly kind: 'LIST';
+  /** The status of the request that ended the walk: 200 for a short page, 204 for no content. */
+  readonly httpStatus: number;
   /** Every distinct feature seen, in the order first seen. */
   readonly features: readonly unknown[];
   readonly pagesRead: number;
@@ -228,8 +230,34 @@ export async function gdacsFetchList(
     // window — `alertlevel=orange;red` for wildfires answered 204 on 2026-09-20, because there
     // were none. Whether that is believable for the whole poll is the batch verdict's decision,
     // not this function's.
-    if (response.status === 204 || response.bytes === 0) {
-      return { kind: 'LIST', features, pagesRead: page - 1, rows, attempts, durationMs };
+    /*
+     * A 204 is a clean end. A 200 with no body is not.
+     *
+     * They were treated alike, which meant a truncated or empty 200 from a proxy read as "this
+     * product has nothing" — and for FL, TC, VO and DR, whose `emptyBatchIsSuspicious` is false
+     * by design, that commits SUCCEEDED with zero received. "Unavailable" rendered as "empty",
+     * for four of six products, which is the one confusion this project is built to prevent.
+     */
+    if (response.status === 204) {
+      return {
+        kind: 'LIST',
+        httpStatus: 204,
+        features,
+        pagesRead: page - 1,
+        rows,
+        attempts,
+        durationMs,
+      };
+    }
+    if (response.bytes === 0) {
+      return {
+        kind: 'MALFORMED',
+        page,
+        body: response.body,
+        httpStatus: response.status,
+        attempts,
+        durationMs,
+      };
     }
 
     const page_ = featuresOf(response.body);
@@ -267,11 +295,40 @@ export async function gdacsFetchList(
     }
 
     if (page_.length < GDACS_PAGE_SIZE) {
-      return { kind: 'LIST', features, pagesRead: page, rows, attempts, durationMs };
+      return {
+        kind: 'LIST',
+        httpStatus: response.status,
+        features,
+        pagesRead: page,
+        rows,
+        attempts,
+        durationMs,
+      };
     }
     if (added === 0) {
-      // A full page of rows already seen. The sort has looped; more pages cannot help.
-      return { kind: 'LIST', features, pagesRead: page, rows, attempts, durationMs };
+      /*
+       * A full page of rows already seen.
+       *
+       * This used to return the list as if it were complete, on the reasoning that "the sort has
+       * looped, so more pages cannot help". That reasoning is exactly backwards. The header of
+       * this file says the ordering has heavy ties and the sort is therefore unstable, which
+       * means pages may overlap *or skip* — and a page that is 100/100 duplicates is the
+       * strongest available evidence that it is doing so. It is the moment to be least
+       * confident, not most.
+       *
+       * P0 measured 67 of 100 shared between two pages of one query; 100 of 100 is the same
+       * phenomenon at its limit. Returning it as an ordinary `LIST` committed, on such a day, 100
+       * wildfires as a complete catalogue when there were 258, with nothing anywhere reporting
+       * the 158 that were missing. Thirteen lines below, the page cap refuses for exactly this
+       * reason; the two must not disagree.
+       */
+      throw new SourceFetchError(
+        'TOO_LARGE',
+        `page ${page} of the ${eventType} list repeated rows already seen ` +
+          `(${rows} rows, ${features.length} distinct); the paging order has looped and the ` +
+          'list cannot be read completely',
+        { host: GDACS_HOST },
+      );
     }
   }
 

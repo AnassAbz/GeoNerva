@@ -46,7 +46,13 @@ import {
   type NormalizeContext,
   type NormalizedRecord,
 } from '../contract.ts';
-import { roundStored, wrapLongitude } from '../usgs/normalize.ts';
+import {
+  MAGNITUDE_RANGE,
+  roundStored,
+  withinStoredRange,
+  wrapLongitude,
+} from '../usgs/normalize.ts';
+import { validateGeoJsonGeometry } from '../geojson.ts';
 import { gdacsInstant, isGdacsEventType, type GdacsEventType } from './api.ts';
 import type { GdacsFeature, GdacsProperties } from './schema.ts';
 
@@ -62,6 +68,22 @@ export const GDACS_HAZARD_TYPES: Readonly<Record<GdacsEventType, HazardType>> = 
 
 /** The three levels GDACS publishes. A fourth would be drift worth seeing, so the set is closed. */
 const ALERT_LEVELS = new Set(['Green', 'Orange', 'Red']);
+
+/**
+ * GDACS geometry `Class` → the role GeoNerva stores it under.
+ *
+ * Closed, and everything not in it is dropped rather than guessed at. The classes are per hazard
+ * (DATA_SOURCES §2.5): floods publish `Poly_Affected` and `Poly_Global`, wildfires `Poly_area`,
+ * volcanoes a 30 km `Poly_Circle` and ash cones, cyclones wind buffers and an uncertainty cone.
+ * Only the flood and wildfire areas are ingested today; the rest are listed so that the *reason*
+ * they are absent is "not yet modelled" rather than "nobody thought of them", and so that adding
+ * one is a line here instead of a silent change in meaning.
+ */
+const GEOMETRY_ROLE_BY_CLASS: Readonly<Record<string, GeometryRole | undefined>> = {
+  Poly_Affected: 'affected_area',
+  Poly_Global: 'global_area',
+  Poly_area: 'affected_area',
+};
 
 function rejected(id: string, reasonCode: RejectReasonCode, message: string): NormalizationError {
   return new NormalizationError('value-in-range', id, message, reasonCode);
@@ -242,11 +264,25 @@ function hazardAttributes(
        * question could not be asked at all, which is a reject rather than a guess.
        */
       if (geometry === undefined) {
-        throw new NormalizationError(
-          'flood-needs-geometry',
+        /*
+         * A **record-level** reject, with a reason code — not a batch kill.
+         *
+         * This threw without a `reasonCode` until both G5 reviewers found it independently, which
+         * made `isRecordLevel` false and took the whole FL product dark whenever *one*
+         * `getgeometry` call failed: a timeout on one flood out of sixteen, or the 101st flood in
+         * a window past `MAX_GEOMETRY_REQUESTS`, killed every flood in the batch on every poll,
+         * permanently. The comments in this file and in the adapter both already claimed it was a
+         * reject; only the code disagreed.
+         *
+         * As a reject it is counted, it leaves a row with a reason, and `maxRejectRatio` decides
+         * the batch: one flood we could not ask about is one reject, and *most* floods failing is
+         * drift, which is the right shape for both.
+         */
+        throw rejected(
           key,
-          'a GDACS flood cannot be normalized without a getgeometry answer: has_area_geometry is ' +
-            'only knowable from it, and guessing would cap or uncap relevance wrongly',
+          'SCHEMA_INVALID',
+          'has_area_geometry is only knowable from getgeometry, and that answer is missing; ' +
+            'guessing it would cap or uncap this flood’s relevance wrongly',
         );
       }
       attributes['has_area_geometry'] = geometry.hasArea;
@@ -372,6 +408,27 @@ export function normalizeGdacsFeature(
   // `sourceid` is blank in the list; the detail call is the only place it exists.
   const upstream = text(input.detail?.sourceid) ?? text(p.sourceid);
 
+  /*
+   * The id shape decides whether a USGS lineage may be claimed.
+   *
+   * `{source: 'usgs', ref}` was written for every earthquake with any `sourceid` at all, on an
+   * inference from three observed networks (`NEIC`, `PRICO RS`, `ALASKA EC`). That is GeoNerva
+   * asserting a *provider statement* from a pattern — and if GDACS ever credits EMSC or a
+   * European regional network, correlation would attach a `DERIVED_COPY` to a USGS record that
+   * does not exist, or, if the id happened to collide with a real ComCat id, to the wrong
+   * earthquake.
+   *
+   * The contract says an absent `derivedFrom` means "not known to be derived, never independent".
+   * The symmetric rule has to hold for presence: a derivation asserted must be one the provider's
+   * own data supports. A ComCat id is a short network prefix followed by alphanumerics —
+   * `us7000tikb`, `pr2026261000`, `aka2026rcluqc`, `nc75426637` — so an id that does not look
+   * like one is kept as context (`upstream_event_ref`) with no lineage claimed for it.
+   */
+  const usgsRef =
+    upstream !== undefined && /^[a-z]{2,4}[0-9a-z]{6,20}$/.test(upstream)
+      ? upstream.slice(0, 200)
+      : null;
+
   const parsed = parseHazardAttributes(
     hazardType,
     hazardAttributes(hazardType, p, upstream, key, input.geometry),
@@ -405,6 +462,7 @@ export function normalizeGdacsFeature(
    * reprojected: a shape GeoNerva altered is no longer the shape the provider published.
    */
   const geometries: { role: GeometryRole; seq: number; geoJson: unknown }[] = [];
+  const seqByRole = new Map<GeometryRole, number>();
   for (const shape of input.geometry?.features ?? []) {
     if (typeof shape !== 'object' || shape === null) continue;
     const shapeGeometry = (shape as { geometry?: unknown }).geometry;
@@ -414,14 +472,58 @@ export function normalizeGdacsFeature(
       typeof properties === 'object' && properties !== null
         ? (properties as { Class?: unknown }).Class
         : undefined;
-    const role: GeometryRole = cls === 'Poly_Global' ? 'global_area' : 'affected_area';
-    geometries.push({
-      role,
-      seq: geometries.filter((g) => g.role === role).length,
-      geoJson: shapeGeometry,
-    });
+
+    /*
+     * The role comes from a known class, or the shape is not stored.
+     *
+     * This used to read `cls === 'Poly_Global' ? 'global_area' : 'affected_area'`, which meant
+     * *anything else* was asserted to be the affected area — and `isAreaFeature` deliberately
+     * admits every `Poly_`-prefixed class, so a cyclone wind buffer or a volcano ash cone would
+     * have been stored and rendered as the modelled impact zone of a flood. Everywhere else in
+     * this file an unknown provider token is refused or kept verbatim; this was the one place a
+     * guess was made, and it was a guess about physical extent.
+     */
+    const role = GEOMETRY_ROLE_BY_CLASS[typeof cls === 'string' ? cls : ''];
+    if (role === undefined) continue;
+
+    /*
+     * Validated before it can reach `ST_GeomFromGeoJSON`, where every failure mode aborts the
+     * transaction and loses the whole batch — and where a `crs` member would not fail at all, it
+     * would silently relabel the coordinates as WGS84. See `validateGeoJsonGeometry`.
+     */
+    const verdict = validateGeoJsonGeometry(shapeGeometry);
+    if (!verdict.ok) {
+      throw rejected(
+        key,
+        'COORDINATES_INVALID',
+        `the ${String(cls)} geometry is not usable: ${verdict.defect ?? 'invalid'}${
+          verdict.detail === undefined ? '' : ` (${verdict.detail})`
+        }`,
+      );
+    }
+
+    const seq = seqByRole.get(role) ?? 0;
+    seqByRole.set(role, seq + 1);
+    geometries.push({ role, seq, geoJson: shapeGeometry });
   }
-  const magnitude = hazardType === 'EARTHQUAKE' ? (severityIn(p, 'M') ?? null) : null;
+  /*
+   * Bounded before it can reach `numeric(4, 2)`.
+   *
+   * `severitydata.severity` is an unbounded `z.number()`, and this same function already
+   * range-checks `max_wind_kmh` and `burnt_area_ha` — because their Zod attribute schemas demand
+   * it — while leaving the one field that a *database* constraint bounds unchecked. A GDACS event
+   * publishing `{"severity": 150, "severityunit": "M"}` would overflow the column inside the
+   * persist transaction and take the whole batch with it.
+   */
+  const rawMagnitude = hazardType === 'EARTHQUAKE' ? (severityIn(p, 'M') ?? null) : null;
+  if (rawMagnitude !== null && !withinStoredRange(rawMagnitude, MAGNITUDE_RANGE)) {
+    throw rejected(
+      key,
+      'SCHEMA_INVALID',
+      `severity ${rawMagnitude} M is outside [${MAGNITUDE_RANGE.min}, ${MAGNITUDE_RANGE.max}]`,
+    );
+  }
+  const magnitude = rawMagnitude;
 
   /*
    * What a revision means for GDACS: the episode, the levels, the position, the facts.
@@ -519,8 +621,8 @@ export function normalizeGdacsFeature(
      * system, and claiming a lineage to a source that is not held would be a cross-reference to
      * nowhere. Those ids stay in the raw payload, which is where an unmodelled fact belongs.
      */
-    ...(hazardType === 'EARTHQUAKE' && upstream !== undefined
-      ? { derivedFrom: { source: 'usgs', ref: upstream } }
+    ...(hazardType === 'EARTHQUAKE' && usgsRef !== null
+      ? { derivedFrom: { source: 'usgs', ref: usgsRef } }
       : {}),
   };
 }

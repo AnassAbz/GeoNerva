@@ -108,3 +108,38 @@ describe('describeOutcome', () => {
     expect(describeOutcome(failed)).toBe('FAILED in 10 ms — upstream 503');
   });
 });
+
+describe('the FIRMS sources', () => {
+  it('lists each sensor as its own source', () => {
+    expect(AVAILABLE_SOURCES).toContain('firms:VIIRS_NOAA20_NRT');
+    expect(AVAILABLE_SOURCES).toContain('firms:VIIRS_NOAA21_NRT');
+    // Once each. The registry was briefly polluted by a misplaced spread that put the feed
+    // validators into `ADAPTERS`, which would have listed them twice.
+    expect(AVAILABLE_SOURCES.filter((source) => source === 'firms:VIIRS_NOAA20_NRT')).toHaveLength(
+      1,
+    );
+  });
+
+  it('refuses --feed without a MAP_KEY instead of dropping it', () => {
+    /*
+     * There was no validator for `firms:*` at all, so the optional-call returned `undefined`, no
+     * error was raised, and `runFireIngestion` was then called without the value. An operator
+     * asking for five days after an outage got a normal two-day poll and a `SUCCEEDED` — exactly
+     * what this file's own rule about unknown flags says must never happen.
+     *
+     * This test assumes no `FIRMS_MAP_KEY` in the environment, which is this build's state; with
+     * one, the same flag is validated as a DAY_RANGE of 1–5 instead.
+     */
+    const args = parseRunArgs(['--source', 'firms:VIIRS_NOAA20_NRT', '--feed', '5']);
+    expect(args.errors).toHaveLength(1);
+    expect(args.errors[0]).toMatch(/FIRMS_MAP_KEY/);
+  });
+
+  it('accepts a FIRMS sensor with no feed', () => {
+    expect(parseRunArgs(['--source', 'firms:VIIRS_NOAA21_NRT']).errors).toStrictEqual([]);
+  });
+
+  it('refuses a sensor that is not one of the two v1 products', () => {
+    expect(parseRunArgs(['--source', 'firms:MODIS_NRT']).errors[0]).toMatch(/unknown source/);
+  });
+});

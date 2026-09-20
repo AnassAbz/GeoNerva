@@ -59,6 +59,31 @@ const MAX_ALIASES = 50;
 
 /** `observation_versions.magnitude` and `.depth_km` are both `numeric(_, 2)`. */
 const STORED_DECIMALS = 2;
+/**
+ * The ranges the database actually accepts, checked in the adapter so that an absurd value is one
+ * reject row instead of a dead batch.
+ *
+ * `magnitude` is `numeric(4, 2)` (max 99.99) and `depth_km` is `numeric(6, 2)` (max 9999.99). A
+ * provider value outside those raises SQLSTATE 22003 *numeric field overflow* **inside the persist
+ * transaction**, where `run.ts` rescues only `VersionRejectedError` — so one impossible number
+ * loses every other record in the batch. This is the same shape as the two constraint failures
+ * that were found live during P5 (`severity_scheme`, `frp >= 0`), and the same answer: bound it
+ * here, where a failure is a counted reject with a reason.
+ *
+ * The bounds are physical rather than merely column-sized. No earthquake has a magnitude of 40,
+ * and the deepest recorded hypocentre is ~700 km; a value outside these is drift or corruption,
+ * not a very large earthquake, and calling it one would be worse than refusing it.
+ */
+export const MAGNITUDE_RANGE = { min: -2, max: 12 } as const;
+export const DEPTH_KM_RANGE = { min: -100, max: 7_000 } as const;
+
+/** True when a value is storable in the column it is destined for. */
+export function withinStoredRange(
+  value: number,
+  range: { readonly min: number; readonly max: number },
+): boolean {
+  return Number.isFinite(value) && value >= range.min && value <= range.max;
+}
 
 /**
  * Splits USGS's comma-wrapped `ids` (`",nc75438582,us7000tiar,"`) into an alias set.

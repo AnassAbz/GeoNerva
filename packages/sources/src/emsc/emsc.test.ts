@@ -506,15 +506,36 @@ describe('change detection', () => {
     expect(changed.length).toBeGreaterThan(0);
   });
 
-  it('is idempotent over a whole captured page', () => {
-    const first = parse('json-page.json');
-    const second = parse('json-page.json');
-    if (first.verdict !== 'OK' || second.verdict !== 'OK') throw new Error('fixture should parse');
+  it('gives the same hash to the same event served by EMSC’s two serializers', () => {
+    /*
+     * This used to parse the *same bytes* twice and assert the results matched — which, for a
+     * function with no clock, no IO and no randomness, no mutation of the parser or the
+     * normalizer could ever fail. It was a tautology, and a G5 reviewer said so.
+     *
+     * The real property, and the one that costs something: EMSC serializes the same event
+     * differently depending on whether `orderby` was sent — different member order, different
+     * whitespace — so the same record must hash alike across both. That is what makes a live
+     * poll and a backfill agree that they are looking at one earthquake rather than two.
+     */
+    const result = parse('json-page.json');
+    if (result.verdict !== 'OK') throw new Error('fixture should parse');
     const digest = (records: readonly EmscFeature[]) =>
       records.map((record) =>
         normalizeEmscFeature(record, normalizeCtx).contentSha256.toString('hex'),
       );
-    expect(digest(second.records)).toStrictEqual(digest(first.records));
+    const reserialized = result.records.map((record) =>
+      emscFeatureSchema.parse(
+        JSON.parse(
+          JSON.stringify({
+            geometry: record.geometry,
+            type: record.type,
+            properties: Object.fromEntries(Object.entries(record.properties).reverse()),
+            id: record.id,
+          }),
+        ),
+      ),
+    );
+    expect(digest(reserialized)).toStrictEqual(digest(result.records));
   });
 });
 

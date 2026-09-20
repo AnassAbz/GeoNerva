@@ -18,10 +18,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb, findProductByCode, listRecentRuns, type DB } from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import type { HttpClient } from '@geonerva/http';
-import { createSourceClient, emscAdapter, usgsAdapter } from '@geonerva/sources';
+import { createSourceClient, emscAdapter, emscHistorical, usgsAdapter } from '@geonerva/sources';
 import { readFixtureBytes } from '@geonerva/test-fixtures';
 
 import { createMemoryLogger } from './logging.ts';
+import { runBackfill } from './backfill.ts';
 import { runIngestion, type RunOutcome } from './run.ts';
 
 let testDb: TestDatabase;
@@ -256,5 +257,80 @@ describe('the seeded product', () => {
       [...emscAdapter.descriptor.capabilities].sort(),
     );
     expect(product?.capabilities).not.toContain('DELETIONS');
+  });
+});
+
+describe('an empty historical window', () => {
+  it('completes the backfill instead of failing it forever', async () => {
+    /*
+     * The defect both this test and the fix exist for, found by a G5 reviewer.
+     *
+     * EMSC's FDSN service runs the default `nodata=204`, so a historical window holding no events
+     * comes back **204 with a zero-byte body**. The backfill handed that to `parse` as an ordinary
+     * body, `JSON.parse("")` threw, and the window was recorded as `SCHEMA_DRIFT` — which is both
+     * a lie (nothing drifted; the range was quiet) and *permanent*: resume resets the interval to
+     * PENDING and it fails identically on every attempt, so the plan can never complete.
+     *
+     * `--min-magnitude 6` over a single day is an entirely ordinary way to ask for a quiet window.
+     *
+     * The second half matters as much as the first: the interval has to be marked **done**. An
+     * empty window writes no facts, so the checkpoint that normally rides inside the persist
+     * transaction has nothing to ride with — and without one the interval stays PENDING, claiming
+     * hands back the same window, and the loop spins on it. That is the same shape as the
+     * `LEASE_HELD` and `SKIPPED` holes that were HIGH findings at G4.
+     */
+    let queries = 0;
+    const client = createSourceClient(emscAdapter.descriptor, {
+      userAgent: 'GeoNerva-test/0.1',
+      resolveHost: () => Promise.resolve(['93.184.216.34']),
+      sleep: () => Promise.resolve(),
+      jitter: () => 1,
+      fetchImpl: ((input: string | URL) => {
+        const url = new URL(input);
+        if (url.pathname.endsWith('/count')) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ count: 0 }), {
+              headers: { 'content-type': 'application/json' },
+            }),
+          );
+        }
+        queries += 1;
+        // Exactly what EMSC sends for a window with nothing in it.
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }) as unknown as typeof fetch,
+    });
+
+    const outcome = await runBackfill({
+      db,
+      adapter: emscAdapter,
+      historical: emscHistorical,
+      client,
+      request: {
+        from: new Date('2010-01-01T00:00:00Z'),
+        to: new Date('2010-01-03T00:00:00Z'),
+        minMagnitude: 6,
+      },
+      plan: { windowMs: 24 * 60 * 60 * 1_000, minWindowMs: 60 * 60 * 1_000 },
+      logger: createMemoryLogger(),
+    });
+
+    expect(outcome.status).toBe('COMPLETED');
+    expect(outcome.progress.done).toBe(2);
+    expect(outcome.progress.failed).toBe(0);
+    expect(outcome.progress.pending).toBe(0);
+    expect(outcome.newVersions).toBe(0);
+    expect((await counts()).versions).toBe(0);
+
+    // Each window was asked once. A PENDING interval would have been re-claimed and re-fetched.
+    expect(queries).toBe(2);
+
+    // And the run rows say what happened: SUCCEEDED, nothing received, no error class at all.
+    const runs = await listRecentRuns(db, { sourceId: 'emsc', limit: 5 });
+    expect(runs).toHaveLength(2);
+    for (const run of runs) {
+      expect(run.status).toBe('SUCCEEDED');
+      expect(run.errorClass).toBeNull();
+      expect(run.counts.received).toBe(0);
+    }
   });
 });

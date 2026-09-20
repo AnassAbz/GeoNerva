@@ -251,16 +251,128 @@ describe('normalizing across hazard families', () => {
     expect(mislabelled.attributes['max_wind_kmh']).toBeUndefined();
   });
 
-  it('refuses a flood when getgeometry could not be asked', () => {
+  it('rejects one flood when getgeometry could not be asked, without killing the batch', () => {
     /*
      * `has_area_geometry` is required by the flood schema and is not knowable from the list —
      * every row says `Class: Point_Centroid` regardless of what `getgeometry` holds — and the
      * answer caps or uncaps the event's relevance (ARCHITECTURE §9.3). A flood whose geometry
-     * call failed is a reject, never a flood recorded as having no modelled area.
+     * call failed is a **reject**, never a flood recorded as having no modelled area.
+     *
+     * The assertion that matters is `isRecordLevel`, not the message. Both G5 reviewers found
+     * independently that this threw *without* a reason code, which made it batch-fatal: one
+     * timed-out `getgeometry` on one flood out of sixteen took the whole FL product dark, on
+     * every poll, permanently. The earlier version of this test asserted only the message text,
+     * so it passed either way — it was the one place the defect should have been caught.
      */
-    expect(() => normalizeOne(feature({ eventtype: 'FL', eventid: 3001 }), 'FL')).toThrow(
-      /only knowable from it/,
-    );
+    let thrown: unknown;
+    try {
+      normalizeOne(feature({ eventtype: 'FL', eventid: 3001 }), 'FL');
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(NormalizationError);
+    expect((thrown as NormalizationError).isRecordLevel).toBe(true);
+    expect((thrown as NormalizationError).reasonCode).toBe('SCHEMA_INVALID');
+  });
+
+  it('rejects a flood geometry that PostGIS would refuse, rather than losing the batch', () => {
+    /*
+     * `ST_GeomFromGeoJSON(...)::geography` raises on a coordinate outside WGS84, and that raise
+     * aborts the persist transaction — so every other record in the batch is lost with it. A
+     * flood polygon crossing the antimeridian is an ordinary way to get there.
+     */
+    const outOfRange = {
+      type: 'Feature',
+      properties: { Class: 'Poly_Affected' },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [200, 10],
+            [201, 10],
+            [201, 11],
+            [200, 10],
+          ],
+        ],
+      },
+    };
+    let thrown: unknown;
+    try {
+      normalizeOne(feature({ eventtype: 'FL', eventid: 3001 }), 'FL', undefined, {
+        hasArea: true,
+        features: [outOfRange],
+        oversized: false,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect((thrown as NormalizationError).reasonCode).toBe('COORDINATES_INVALID');
+    expect((thrown as Error).message).toMatch(/BAD_COORDINATES/);
+  });
+
+  it('refuses a geometry that declares its own crs, which would be silently relabelled', () => {
+    /*
+     * The one failure in this family that does **not** raise. `ST_GeomFromGeoJSON` honours an
+     * embedded CRS and `ST_SetSRID(..., 4326)` then overwrites the SRID *without reprojecting*,
+     * so the coordinates are stored as WGS84 when they are not: wrong positions, no error, no
+     * trace. RFC 7946 removed `crs`; the 2008 spec allowed it, and providers have not all noticed.
+     */
+    const withCrs = {
+      type: 'Feature',
+      properties: { Class: 'Poly_Affected' },
+      geometry: {
+        type: 'Polygon',
+        crs: { type: 'name', properties: { name: 'urn:ogc:def:crs:EPSG::3857' } },
+        coordinates: [
+          [
+            [10, 10],
+            [11, 10],
+            [11, 11],
+            [10, 10],
+          ],
+        ],
+      },
+    };
+    expect(() =>
+      normalizeOne(feature({ eventtype: 'FL', eventid: 3001 }), 'FL', undefined, {
+        hasArea: true,
+        features: [withCrs],
+        oversized: false,
+      }),
+    ).toThrow(/HAS_CRS/);
+  });
+
+  it('drops a geometry class it has no role for, rather than calling it the affected area', () => {
+    /*
+     * `isAreaFeature` deliberately admits every `Poly_`-prefixed class, and the role mapping used
+     * to send everything that was not `Poly_Global` to `affected_area`. That meant a cyclone wind
+     * buffer or a volcano ash cone would be stored and rendered as a flood's modelled impact
+     * zone — a guess about physical extent, in a file where every other unknown provider token is
+     * refused or kept verbatim.
+     */
+    const windBuffer = {
+      type: 'Feature',
+      properties: { Class: 'Poly_Red' },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [10, 10],
+            [11, 10],
+            [11, 11],
+            [10, 10],
+          ],
+        ],
+      },
+    };
+    const record = normalizeOne(feature({ eventtype: 'FL', eventid: 3001 }), 'FL', undefined, {
+      hasArea: true,
+      features: [windBuffer],
+      oversized: false,
+    });
+    expect(record.geometries).toBeUndefined();
+    // The provider still said an area exists; we simply store no shape for it.
+    expect(record.attributes['has_area_geometry']).toBe(true);
   });
 
   it('records a flood’s modelled area, under roles that keep the two apart', () => {

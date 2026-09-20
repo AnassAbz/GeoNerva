@@ -265,6 +265,7 @@ export function parseGdacsList(body: Uint8Array, ctx: ParseContext): ParseResult
       errorClass: 'SCHEMA_DRIFT',
       detail: `the response body is not JSON: ${error instanceof Error ? error.message : 'parse failed'}`,
       rejects: [],
+      receivedCount: 0,
     };
   }
 
@@ -275,6 +276,7 @@ export function parseGdacsList(body: Uint8Array, ctx: ParseContext): ParseResult
       errorClass: 'SCHEMA_DRIFT',
       detail: `the composed GDACS body changed shape: ${issuesOf(composed.error).slice(0, 5).join('; ')}`,
       rejects: [],
+      receivedCount: 0,
     };
   }
 
@@ -339,7 +341,13 @@ export function parseGdacsList(body: Uint8Array, ctx: ParseContext): ParseResult
 
   const verdict = batchVerdict(ctx.descriptor, records.length, rejects.length);
   if (!verdict.ok) {
-    return { verdict: 'REJECTED', errorClass: verdict.errorClass, detail: verdict.detail, rejects };
+    return {
+      verdict: 'REJECTED',
+      errorClass: verdict.errorClass,
+      detail: verdict.detail,
+      rejects,
+      receivedCount: records.length + rejects.length,
+    };
   }
 
   /*
@@ -398,7 +406,14 @@ async function fetchGdacs(eventType: GdacsEventType, ctx: FetchContext): Promise
   const details: Record<string, unknown> = {};
   const geometries: Record<string, unknown> = {};
   let attempts = list.attempts;
-  const durationMs = list.durationMs;
+  /*
+   * Accumulated across every request, not just the list pages.
+   *
+   * It reported only the list's duration while counting the detail and geometry calls in
+   * `attempts`, so a run could say 201 attempts in 300 ms. Two numbers describing the same work
+   * that cannot both be true is worse than either one being absent.
+   */
+  let durationMs = list.durationMs;
   const hazardType = GDACS_HAZARD_TYPES[eventType];
 
   const identified: { id: number; episodeId: number | null }[] = [];
@@ -419,20 +434,41 @@ async function fetchGdacs(eventType: GdacsEventType, ctx: FetchContext): Promise
 
   if (NEEDS_EVENT_DATA.has(hazardType)) {
     for (const { id } of identified.slice(0, MAX_DETAIL_REQUESTS)) {
+      const started = Date.now();
       const detail = await gdacsFetchEventData(ctx.client, eventType, id, {
         ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
       });
       attempts += 1;
+      durationMs += Date.now() - started;
       if (detail !== null) details[String(id)] = detail;
     }
   }
 
   if (NEEDS_GEOMETRY.has(hazardType)) {
-    for (const { id, episodeId } of identified.slice(0, MAX_GEOMETRY_REQUESTS)) {
+    /*
+     * Refused, not truncated.
+     *
+     * A flood without a geometry answer is a reject, and slicing the list at the cap would turn
+     * "we did not ask about floods 101 and up" into a reject storm that looks like provider
+     * drift. GDACS has had 258 concurrent wildfires in a day, so more than 100 concurrent floods
+     * is not fanciful — and when it happens the honest answer is that this poll cannot be
+     * completed at this cap, which is a `TOO_LARGE` for an operator to act on.
+     */
+    if (identified.length > MAX_GEOMETRY_REQUESTS) {
+      throw new SourceFetchError(
+        'TOO_LARGE',
+        `${identified.length} ${eventType} events need a geometry answer, above the ` +
+          `${MAX_GEOMETRY_REQUESTS} one poll will request; narrow the window or raise the cap`,
+        { host: GDACS_HOST },
+      );
+    }
+    for (const { id, episodeId } of identified) {
+      const started = Date.now();
       const geometry = await gdacsFetchGeometry(ctx.client, eventType, id, episodeId, {
         ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
       });
       attempts += 1;
+      durationMs += Date.now() - started;
       // `null` means the question could not be asked, which `normalize` turns into a reject. It
       // is deliberately not recorded as `hasArea: false` — that would be an answer we do not have.
       if (geometry !== null) geometries[String(id)] = geometry;
@@ -444,18 +480,57 @@ async function fetchGdacs(eventType: GdacsEventType, ctx: FetchContext): Promise
    * on what GDACS said and on nothing else — not on page order, not on the clock, not on which of
    * the detail requests happened to answer first.
    */
+  /*
+   * The overlap evidence, on the only line that can carry it.
+   *
+   * `gdacsFetchList` computes `rows` (pre-dedupe) and `pagesRead` and documented
+   * `rows - features.length` as the overlap — and then nothing read either of them. Given that
+   * an unstable paging order is this source's central risk, and that skipping cannot be detected
+   * from the API at all, the overlap ratio is the most diagnostic number the adapter produces.
+   * It goes into the endpoint string because that is the field `IngestionLogFields` allows and
+   * because it belongs with the request it describes.
+   */
+  const overlap = list.rows - list.features.length;
   const composed = { events: list.features, details, geometries };
   const body = new TextEncoder().encode(canonicalJson(composed));
   const digest = payloadHash(body);
 
   const meta = {
-    httpStatus: 200,
+    /*
+     * The status the *list* actually answered with, not a hardcoded 200.
+     *
+     * It said 200 unconditionally, including for a poll whose list terminated on a 204 — so a
+     * reader of `ingestion_runs.http_status` saw "200" for a request GDACS answered with "no
+     * content". A composed fetch has no single status, so it reports the one belonging to the
+     * request that decided the outcome.
+     */
+    httpStatus: list.httpStatus,
     bytes: body.byteLength,
     payloadSha256: digest,
-    endpoint,
+    endpoint: `${endpoint} pages=${list.pagesRead} rows=${list.rows} overlap=${overlap}`,
     attempts,
     durationMs,
   } as const;
+
+  /*
+   * A product with nothing in it says so, rather than reporting an unchanged body forever.
+   *
+   * A quiet `gdacs:VO` composes the identical `{events: [], details: {}, geometries: {}}` every
+   * poll, so the first was SUCCEEDED with zero received and every one after it was `UNCHANGED` →
+   * SKIPPED. The contract argues at length that `UNCHANGED` "says nothing about the world" and
+   * that collapsing it with "I looked and there is nothing" loses the fact that matters — and
+   * then GDACS did exactly that collapse, two commits after EMSC got it right. A week of SKIPPED
+   * runs cannot be told apart from a feed that stopped changing.
+   */
+  if (list.httpStatus === 204 && list.features.length === 0) {
+    return {
+      ...meta,
+      kind: 'NO_DATA',
+      // Never sha256 of the empty document, which would erase the last real digest.
+      payloadSha256: ctx.lastPayloadSha256 ?? digest,
+      detail: `GDACS reported no ${eventType} events in the last ${Math.round(lookbackMs / 3_600_000)} hours`,
+    };
+  }
 
   if (ctx.lastPayloadSha256?.equals(digest) === true) {
     return { ...meta, kind: 'UNCHANGED' };

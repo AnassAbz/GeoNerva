@@ -139,8 +139,34 @@ export function firmsEndpoint(sensor: FirmsSensor, keyless: boolean): string {
  * Matches the key's own alphabet and length, which is narrow enough not to eat ordinary words and
  * wide enough to catch the key in a path, a query string or a sentence.
  */
-export function redactFirmsUrl(text: string): string {
-  return text.replace(/\b[a-z0-9]{32}\b/g, '{MAP_KEY}');
+export function redactFirmsUrl(text: string, mapKey?: string): string {
+  /*
+   * The literal key first, when the caller has it.
+   *
+   * No pattern trick can evade this one, and the shape-based pass below can: `\b` treats `_` and
+   * alphanumerics as word characters, so a G5 reviewer showed that `MAP_KEY_<key>`, `key=<key>x`
+   * and `X<key>` all slipped through it. The built URL is slash-delimited and was never at risk,
+   * but this function exists precisely for the cases that are *not* the built URL — a provider
+   * putting a request URL in an error body, a redirect, a future caller less careful than this
+   * one — and under exactly those conditions the guard failed.
+   */
+  const withoutLiteral =
+    mapKey === undefined || mapKey.length === 0 ? text : text.replaceAll(mapKey, '{MAP_KEY}');
+
+  /*
+   * Then by shape: any **run** of 32 or more characters from the key's own alphabet, redacted
+   * whole.
+   *
+   * Not a boundary assertion of any kind. `` failed because `_` is a word character, so
+   * `MAP_KEY_<key>` was invisible to it — and a `(?<![A-Za-z0-9_])` lookbehind fails the *same*
+   * case for the opposite reason, refusing to match because of the underscore in front. Both were
+   * attempts to decide where the key ends, and the honest answer is that we cannot: so the run
+   * containing it goes, and `key=<key>x` loses its trailing `x` along with the key.
+   *
+   * It over-redacts a long lowercase hash in an unrelated message. That is the right direction to
+   * be wrong in, and ordinary prose is unaffected because a space ends a run.
+   */
+  return withoutLiteral.replace(/[a-z0-9]{32,}/g, '{MAP_KEY}');
 }
 
 /**
