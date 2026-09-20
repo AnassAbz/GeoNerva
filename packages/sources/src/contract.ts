@@ -1,0 +1,250 @@
+/**
+ * The adapter contract every provider implements (ARCHITECTURE §4.1).
+ *
+ * The shape is frozen; what this file adds is the reasoning a second adapter needs in order to be
+ * written by copying the first:
+ *
+ *  - **`normalize` is pure.** No clock, no IO, no database. It receives one parsed record and
+ *    returns the facts. That is what makes the fixtures a complete specification of an adapter's
+ *    behaviour and what lets replay re-derive a version without a network.
+ *  - **The batch verdict is per batch, not per record.** One malformed feature out of 400 is a
+ *    reject row; eighty of them is schema drift, and the right response to drift is to write
+ *    *nothing* and shout, because a half-ingested batch looks exactly like a quiet day.
+ *  - **Nothing is skipped silently.** Every record that does not become a fact leaves either a
+ *    reject row with a reason code or a raised error. A `continue` with no trace is a bug.
+ *
+ * Conditional GET: the HTTP client supports `If-None-Match`, but the frozen schema has nowhere to
+ * persist a validator between runs, so adapters detect "nothing changed" by comparing the body
+ * digest with `ingestion_runs.payload_sha256` of the previous run instead. The cost is one
+ * download per poll that a 304 could have avoided — about 1 MB every five minutes for USGS.
+ * Adding an `etag` column is not worth a change to a frozen table for that.
+ */
+
+import { createHash } from 'node:crypto';
+
+import type {
+  GeometryKind,
+  HazardType,
+  LatLon,
+  LifecycleStatus,
+  RejectReasonCode,
+  SourceCapability,
+} from '@geonerva/domain';
+import type { HttpClient } from '@geonerva/http';
+
+/**
+ * Static facts about a source product. Freshness policy and attribution are *not* copied here:
+ * they are seeded in `geonerva.sources` and would drift if they existed twice. The descriptor
+ * names the policy instead, and a test asserts every descriptor matches a seeded product.
+ */
+export interface SourceDescriptor {
+  /** `geonerva.sources.id`. */
+  readonly sourceId: string;
+  /** `geonerva.source_products.code`. */
+  readonly productCode: string;
+  /** Key into `INITIAL_FRESHNESS_POLICIES`. */
+  readonly policyKey: string;
+  readonly hazardType: HazardType;
+  readonly capabilities: readonly SourceCapability[];
+  /** Hosts this adapter may reach. Passed straight to the HTTP client's allowlist. */
+  readonly allowedHosts: readonly string[];
+  readonly timeoutMs: number;
+  readonly maxBytes: number;
+  /**
+   * Whether a batch of zero records is normal. `false` means an empty answer is suspicious
+   * enough to fail the run: USGS never has a genuinely silent day (~400 events), so zero
+   * features means something broke upstream, and reporting it as "all quiet" would be a lie.
+   */
+  readonly quietIsNormal: boolean;
+  /** Fraction of rejected records above which the batch is treated as schema drift. */
+  readonly maxRejectRatio: number;
+}
+
+export interface FetchContext {
+  readonly client: HttpClient;
+  readonly signal?: AbortSignal;
+  /** Digest of the body the previous run ingested, or `null` on the first ever run. */
+  readonly lastPayloadSha256: Buffer | null;
+  /** Which feed to poll, when the adapter offers more than one. */
+  readonly feed?: string;
+}
+
+interface FetchMeta {
+  readonly httpStatus: number;
+  readonly bytes: number;
+  readonly payloadSha256: Buffer;
+  /** Host and path only — a feed URL may carry a key (FIRMS does), and this is logged. */
+  readonly endpoint: string;
+  readonly attempts: number;
+  readonly durationMs: number;
+}
+
+export type FetchResult =
+  | (FetchMeta & { readonly kind: 'FETCHED'; readonly body: Uint8Array })
+  /** Byte-identical to the previous run. Still health evidence, so the run is SKIPPED, not lost. */
+  | (FetchMeta & { readonly kind: 'UNCHANGED' });
+
+export interface ParseContext {
+  readonly descriptor: SourceDescriptor;
+}
+
+/** A record that will not become a fact, and why. One row in `ingestion_rejects`. */
+export interface RejectedRecord {
+  readonly reasonCode: RejectReasonCode;
+  /** Enough of the offending record to debug it, bounded by the caller. Never the whole body. */
+  readonly excerpt: unknown;
+  /** Human-readable detail for the log. */
+  readonly detail: string;
+}
+
+export type ParseResult<TRaw> =
+  | {
+      readonly verdict: 'OK';
+      readonly records: readonly TRaw[];
+      readonly rejects: readonly RejectedRecord[];
+      /** What the provider said it was sending, when it says so. For a completeness check. */
+      readonly declaredCount: number | null;
+    }
+  | {
+      /** The batch is not usable. Nothing is written — not even the records that parsed. */
+      readonly verdict: 'REJECTED';
+      readonly errorClass: 'SCHEMA_DRIFT' | 'EMPTY_SUSPICIOUS';
+      readonly detail: string;
+      readonly rejects: readonly RejectedRecord[];
+    };
+
+export interface NormalizeContext {
+  readonly descriptor: SourceDescriptor;
+}
+
+/**
+ * One provider observation, in GeoNerva's vocabulary.
+ *
+ * Deliberately absent: `ingestedAt`, `sourceRecordId`, `rawRecordId` and `ingestionRunId`. Those
+ * belong to the *batch*, are decided at persist time, and letting a pure function invent them is
+ * how a batch ends up with two different `ingested_at` values and a replay that shows half of it.
+ */
+export interface NormalizedRecord {
+  /** The provider's current preferred identifier. Stored, but never the only key. */
+  readonly primaryKey: string;
+  /** Every identifier the provider has associated with this record, including `primaryKey`. */
+  readonly aliases: readonly string[];
+  readonly hazardType: HazardType;
+  readonly observedAt: Date;
+  readonly sourceUpdatedAt: Date | null;
+  readonly lifecycleStatus: LifecycleStatus;
+  readonly centroid: LatLon;
+  readonly geometryKind: GeometryKind;
+  readonly magnitude: number | null;
+  readonly magnitudeType: string | null;
+  readonly depthKm: number | null;
+  /** The agency credited with this solution, for the independence rule (ADR-030). */
+  readonly contributor: string | null;
+  readonly providerStatus: string | null;
+  readonly severityScheme: string | null;
+  readonly severityValue: string | null;
+  readonly title: string | null;
+  readonly sourceUrl: string | null;
+  readonly attributes: Record<string, unknown>;
+  /** Hash of the normalized content — the only change detector (ADR-029). */
+  readonly contentSha256: Buffer;
+  /** Exactly what the provider sent for this record, stored verbatim for provenance. */
+  readonly rawPayload: unknown;
+  readonly rawPayloadSha256: Buffer;
+}
+
+export interface SourceAdapter<TRaw> {
+  readonly descriptor: SourceDescriptor;
+  fetch(ctx: FetchContext): Promise<FetchResult>;
+  parse(body: Uint8Array, ctx: ParseContext): ParseResult<TRaw>;
+  /** Pure. Same input, same output, forever — including across a replay years later. */
+  normalize(raw: TRaw, ctx: NormalizeContext): NormalizedRecord;
+}
+
+/**
+ * Raised when an adapter's own invariant is violated — the case where skipping the record would
+ * be worse than stopping. It carries the provider id so the failure is actionable without the
+ * body.
+ */
+export class NormalizationError extends Error {
+  readonly providerId: string;
+  readonly invariant: string;
+
+  constructor(invariant: string, providerId: string, message: string) {
+    super(`${invariant} (${providerId}): ${message}`);
+    this.name = 'NormalizationError';
+    this.invariant = invariant;
+    this.providerId = providerId;
+  }
+}
+
+/**
+ * Deterministic JSON: object keys sorted at every depth, so two structurally equal values always
+ * produce the same bytes. `JSON.stringify` preserves insertion order, which means the same record
+ * arriving with its fields in a different order would otherwise hash differently and manufacture
+ * a revision that never happened.
+ */
+export function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalize(value));
+}
+
+function canonicalize(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(canonicalize);
+  const source = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(source).sort()) {
+    const entry = source[key];
+    // An absent key and a key set to undefined must hash alike: JSON.stringify drops both.
+    if (entry !== undefined) sorted[key] = canonicalize(entry);
+  }
+  return sorted;
+}
+
+/** The content digest, as the 32 raw bytes `observation_versions.content_sha256` stores. */
+export function contentHash(value: unknown): Buffer {
+  return createHash('sha256').update(canonicalJson(value), 'utf8').digest();
+}
+
+/** Digest of a payload exactly as received, for `raw_records` and `ingestion_runs`. */
+export function payloadHash(bytes: Uint8Array): Buffer {
+  return createHash('sha256').update(bytes).digest();
+}
+
+/**
+ * Decides the batch verdict from the counts (ARCHITECTURE §4.2).
+ *
+ * Kept here rather than in each adapter so the 20 % threshold cannot drift between sources, and
+ * so the rule is testable without a provider.
+ */
+export function batchVerdict(
+  descriptor: SourceDescriptor,
+  accepted: number,
+  rejected: number,
+):
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly errorClass: 'SCHEMA_DRIFT' | 'EMPTY_SUSPICIOUS';
+      readonly detail: string;
+    } {
+  const total = accepted + rejected;
+  if (total === 0) {
+    if (descriptor.quietIsNormal) return { ok: true };
+    return {
+      ok: false,
+      errorClass: 'EMPTY_SUSPICIOUS',
+      detail: `${descriptor.productCode} returned no records, and silence is not normal for it`,
+    };
+  }
+  const ratio = rejected / total;
+  if (ratio > descriptor.maxRejectRatio) {
+    return {
+      ok: false,
+      errorClass: 'SCHEMA_DRIFT',
+      detail: `${rejected} of ${total} records failed validation (${(ratio * 100).toFixed(1)} %), above the ${(descriptor.maxRejectRatio * 100).toFixed(0)} % drift threshold`,
+    };
+  }
+  return { ok: true };
+}

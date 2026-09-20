@@ -301,7 +301,21 @@ importers:
 
   packages/relevance: {}
 
-  packages/sources: {}
+  packages/sources:
+    dependencies:
+      '@geonerva/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@geonerva/http':
+        specifier: workspace:*
+        version: link:../http
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@geonerva/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
 
   packages/test-fixtures: {}
 
