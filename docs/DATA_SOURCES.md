@@ -90,7 +90,9 @@ tombstone requires the 409-on-`eventid` path or a future websocket feed to ident
 
 ### 1.6 History
 
-ComCat reaches back to 1900; modern global M4.5 completeness is only stable from roughly the mid-1990s (research consensus, not an official USGS statement). GeoNerva backfills **global M≥4.5 from 2000-01-01** (~7k events/year → ~190k rows) plus **all magnitudes for the most recent 30 days**.
+ComCat reaches back to 1900; modern global M4.5 completeness is only stable from roughly the mid-1990s (research consensus, not an official USGS statement). GeoNerva backfills **global M≥4.5 from 2016-01-01** (79,929 events, measured via the FDSN `count` endpoint on 2026-09-20) plus **all magnitudes for the most recent 30 days** (11,015).
+
+> **Narrowed from 2000-01-01 by ADR-034 [P4 2026-09-20].** The original scope is 187,173 events, and at the measured 1,865 B/event that is 333 MB of a 500 MB lean budget for a single source. The window was narrowed rather than the magnitude floor raised, because the M4.5–5.0 band is where a location's baseline lives in moderately active regions. The `standard` profile keeps 2000 → now.
 
 ### 1.7 Licence & attribution
 

@@ -408,3 +408,40 @@ Turborepo is not adopted until build times justify it.
 - **Audit implications, stated plainly:** after the retention window, `GET /api/v1/evidence/{id}` can still say *what* was ingested and prove the bytes by digest, but cannot show them. `findRawPayload` already returns `pruned: true` for exactly this case, so the API reports the absence rather than implying the payload never existed. For a backfilled record that is true from the start, and the API must say so.
 - **Storage consequence:** replacing 315 MB of backfill bodies with ~52 MB of rows and hashes brings the projected lean catalogue from ~727 MB to roughly **~460 MB**, which is inside the budget but not comfortably. §4.6's measurement is therefore a gate condition, not a formality, and if the measured figure passes 450 MB the EMSC backfill narrows first (ARCHITECTURE §12).
 - **Trade-offs:** a backfilled record can never have its original bytes inspected. Accepted because those bytes are re-derivable in substance from FDSN by `eventid`, the digest still proves what we ingested, and the alternative is a system that does not fit the deployment the owner chose.
+
+## ADR-034 — The v1 USGS catalogue is M ≥ 4.5 from 2016, not from 2000
+- **Date:** 2026-09-20 (P4.6, forced by measurement)
+- **Context:** `DATA_SOURCES.md` §1.6 and `ARCHITECTURE.md` §12 specify a backfill of **global M ≥ 4.5 from 2000-01-01** (estimated "~7k events/year → ~190k rows") plus all magnitudes for the last 30 days. P4 measured both halves of that sum for the first time:
+  - **Per-event cost, measured** from a real 2,266-event FDSN backfill (M ≥ 4.5, June–August 2026) under ADR-033: **1,865 B/event** — `observation_versions` 1,085, `raw_source_records` 231, `source_records` 199, `source_record_aliases` 184, `source_record_heads` 166. Indexes are 39 % of it. This is 32 % below P3's live figure of 2,735 B, which is ADR-033 working.
+  - **Event counts, measured** from the FDSN `count` endpoint rather than estimated:
+
+    | Catalogue | Events | Projected |
+    |---|---|---|
+    | M ≥ 4.5, 2000 → now | **187,173** | 333 MB |
+    | M ≥ 4.5, 2010 → now | 126,613 | 225 MB |
+    | **M ≥ 4.5, 2016 → now** | **79,929** | **142 MB** |
+    | M ≥ 5.0, 2000 → now | 47,959 | 85 MB |
+    | all magnitudes, last 30 d | 11,015 | 20 MB |
+
+  The "~190k rows" estimate was accurate. What was never checked is that 187,173 × 1,865 B is **333 MB of a 500 MB budget for one source**, before EMSC, before fire, before places.
+- **Alternatives:**
+  - *Keep 2000 → now and cut elsewhere* — rejected. The only things large enough to cut are fire retention, which the owner fixed at a 72-hour replay horizon (Q2), and EMSC, which is the source that actually has regional depth: P0 measured EMSC with **187 events within 150 km of Marrakech over five years against USGS's 9**. Spending the budget on the sparser source to preserve a start date would be backwards.
+  - *Raise the magnitude floor to M ≥ 5.0 and keep 2000* — 85 MB, cheapest, kept as the fallback lever. Rejected as the default because it discards the M4.5–5.0 band everywhere, and that band is where a location's "notable for here" baseline lives in seismically moderate regions.
+  - *Move to the `standard` profile* — rejected: the owner chose lean for v1 and ruled out paid storage (Q2).
+  - *Chosen:* narrow the **window**, not the magnitude. **M ≥ 4.5 from 2016-01-01** (79,929 events, 142 MB) plus all magnitudes for the last 30 days (11,015, 20 MB).
+- **Why ten years is enough for what the catalogue is for.** It feeds completeness-aware empirical percentiles (ADR-016), not a seismic hazard model. Ten years of global M4.5+ is ~80k events; the percentile estimates that drive "notable for here" are stable long before that sample size in any region with enough activity to have a baseline at all, and in regions without one the honest answer is already "insufficient data", which is a designed outcome rather than a gap. The `standard` profile keeps 2000 → now for anyone who wants the longer record.
+- **Budget, with the measured figure:**
+
+  | Item | MB |
+  |---|---|
+  | USGS M ≥ 4.5 from 2016 | 142 |
+  | USGS all magnitudes, last 30 d | 20 |
+  | Fire detections, 72 h retention (P2 measured) | 143 |
+  | `places` (GeoNames `cities15000`) | ~40 |
+  | Operational: runs, rejects, backfill plans, caches | ~30 |
+  | **Subtotal** | **~375** |
+  | **Reserved for EMSC (P5)** | **~125** |
+
+  P5 must measure EMSC against that 125 MB line and narrow its own backfill to fit; it does not get to overspend and leave the next phase to discover it.
+- **Caveat, stated because it cuts the other way:** 1,865 B/event was measured on a 2,266-row table, where index pages are lumpy and partly empty. At 80,000 rows the per-row cost usually falls as pages fill, so 142 MB is a **conservative** ceiling rather than a best guess. It is re-measured after the real backfill runs, and this ADR is revisited if the true figure differs by more than 15 %.
+- **Trade-offs:** GeoNerva's earthquake history starts in 2016 on the lean profile, and a user asking about 2011 Tōhoku gets "outside the indexed window" rather than a record. That is a visible, explainable limit — which is the kind this project accepts — and it is one configuration change away from the full catalogue on `standard`.

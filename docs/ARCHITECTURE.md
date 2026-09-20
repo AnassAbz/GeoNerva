@@ -753,6 +753,25 @@ That decision belongs to the retention job (P6) and is recorded here so it canno
 *Caveat on the numbers:* index pages grow in chunks, so a 1,737-row delta carries some lumpiness;
 treat these as ±15 %, and re-measure with `estimate-storage` before the backfill is run.
 
+**Measured again [P4 2026-09-20], this time from a real historical backfill.** 2,266 events
+(FDSN, M ≥ 4.5, June–August 2026) ingested under ADR-033, which stores the raw row and digest
+without the body:
+
+| Table | Per event | Heap | Index |
+|---|---|---|---|
+| `observation_versions` | 1,085 B | 719 | 365 |
+| `raw_source_records` | **231 B** | 101 | 130 |
+| `source_records` | 199 B | 101 | 98 |
+| `source_record_aliases` | 184 B | 90 | 94 |
+| `source_record_heads` | 166 B | 116 | 51 |
+| **Total** | **1,865 B** | | |
+
+ADR-033 works: 1,865 B against P3's 2,735 B with payload bodies, a **32 % reduction**, and the
+raw table drops from 1,269 B/event to 231. What it does not do is make the *planned* catalogue
+fit — the FDSN `count` endpoint says M ≥ 4.5 since 2000 is **187,173 events**, or **333 MB for one
+source**. **ADR-034** therefore narrows the lean v1 catalogue to **M ≥ 4.5 from 2016** (79,929
+events, 142 MB) and reserves ~125 MB for EMSC, which P5 must measure against.
+
 Not yet included, because P2 does not populate them: `places` (GeoNames `cities15000`, 34,146
 rows), `fire_cluster_versions` and `fire_daily_cells` at steady state, snapshots and caches.
 Budgeting ~40 MB for those puts the lean profile at **roughly 375 MB of 500 MB**.

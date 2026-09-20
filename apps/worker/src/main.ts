@@ -4,6 +4,7 @@
  *
  * Runs directly on Node 24 via native type stripping (ADR-026).
  */
+import { runBackfillCommand } from './cli/backfill.ts';
 import { checkConfig } from './cli/check-config.ts';
 import { runSource } from './cli/run-source.ts';
 import { startWorker } from './cli/start.ts';
@@ -15,6 +16,7 @@ Commands:
   check-config   Validate the worker environment and print a redacted summary
   run            Poll one source once (run --help for options)
   start          Poll every enabled source on its schedule until SIGTERM
+  backfill       Ingest a historical range, resumably (backfill --help)
   help           Show this message`;
 
 /**
@@ -43,6 +45,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return await runSource(rest, process.env, shutdownSignal());
     case 'start':
       return await startWorker(rest, process.env, shutdownSignal());
+    case 'backfill':
+      return await runBackfillCommand(rest, process.env, shutdownSignal());
     case undefined:
     case 'help':
     case '--help':
