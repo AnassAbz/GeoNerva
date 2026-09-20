@@ -525,6 +525,38 @@ describe('failures are recorded, not swallowed', () => {
   });
 });
 
+describe('a misconfigured deployment', () => {
+  it('fails as CONFIG_ERROR and writes no run row at all', async () => {
+    /*
+     * An adapter naming a product the database has never heard of. Guessing a product id would
+     * attach real facts to the wrong feed, so the run refuses to start.
+     *
+     * Nothing is written, which is the part worth pinning: this failure is invisible in source
+     * health precisely because there is no run row and no product to hang one on. The operator's
+     * only signal is the log line and the worker's non-zero exit code (see exitCodeFor), and
+     * that is why CONFIG_ERROR is the one class the CLI does not treat as routine.
+     */
+    const misconfigured = {
+      ...usgsAdapter,
+      descriptor: { ...usgsAdapter.descriptor, productCode: 'does-not-exist' },
+    };
+
+    const outcome = await runIngestion({
+      db,
+      adapter: misconfigured,
+      client: clientServing(() => feedResponse('all_day.geojson')),
+      trigger: 'MANUAL',
+      logger: createMemoryLogger(),
+    });
+
+    expect(outcome.status).toBe('FAILED');
+    expect(outcome.errorClass).toBe('CONFIG_ERROR');
+    expect(outcome.runId).toBeNull();
+    expect(await listRecentRuns(db, { sourceId: 'usgs' })).toHaveLength(0);
+    expect(await countOf('observation_versions')).toBe(0);
+  });
+});
+
 describe('the lease', () => {
   it('refuses a second concurrent run without writing a row', async () => {
     const client = clientServing(() => feedResponse('all_day.geojson'));

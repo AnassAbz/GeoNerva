@@ -8,6 +8,11 @@
  * It exits non-zero only when the *worker* failed. A run that failed because a provider was down
  * exits 0: that is a successfully recorded observation about the provider, the run row says so,
  * and a scheduler treating it as a crash would restart a worker that is working correctly.
+ *
+ * `CONFIG_ERROR` is the exception, and it is the whole reason ADR-032 gave it its own class: a
+ * host that is not allowlisted, or a product the database has never heard of, is *our* fault. It
+ * never self-heals, it is invisible in source health, and exiting 0 on it would let a
+ * misconfigured deployment sit there looking healthy. That one exits 1.
  */
 
 import { createDatabase, workerPoolOptions } from '@geonerva/db';
@@ -82,6 +87,16 @@ export const RUN_USAGE = `Usage: geonerva-worker run --source <id> [--feed <name
 Exits 0 when the run was recorded, whatever its outcome; a provider being down is an
 observation, not a worker failure. Exits 1 only when the worker itself could not run.`;
 
+/**
+ * The process exit code for a finished run.
+ *
+ * 0 means "the worker did its job", which includes faithfully recording that a provider was
+ * broken. 1 means the worker itself cannot work until a human changes something.
+ */
+export function exitCodeFor(outcome: RunOutcome): number {
+  return outcome.errorClass === 'CONFIG_ERROR' ? 1 : 0;
+}
+
 /** Human-readable one-liner. The machine-readable record is the JSON log and the run row. */
 export function describeOutcome(outcome: RunOutcome): string {
   const counts = outcome.counts;
@@ -140,7 +155,7 @@ export async function runSource(
       ...(signal === undefined ? {} : { signal }),
     });
     console.error(describeOutcome(outcome));
-    return 0;
+    return exitCodeFor(outcome);
   } finally {
     await handle.close();
   }
