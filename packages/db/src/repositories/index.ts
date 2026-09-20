@@ -53,6 +53,7 @@ export type {
 
 export {
   VersionRejectedError,
+  headContentHashes,
   insertTombstone,
   insertVersionIfChanged,
   listVersions,

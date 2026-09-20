@@ -283,6 +283,36 @@ describe('idempotency', () => {
     );
   });
 
+  it('writes nothing when the provider re-stamps updated without changing anything', async () => {
+    /*
+     * The realistic case, and the one a negative control showed was untested end to end: USGS
+     * re-stamps `updated` on events whose content did not change. If the content hash included
+     * it, every poll would manufacture 230 revisions, and "What Changed?" would fill with
+     * changes that never happened (ADR-029).
+     *
+     * The test above only perturbs feed metadata, so it never exercises this. Here every
+     * feature's own `updated` moves.
+     */
+    await ingest(clientServing(() => feedResponse('all_day.geojson')));
+    const digestAfterFirst = await factDigest();
+
+    const body = JSON.parse(readFixtureBytes('usgs', 'all_day.geojson').toString('utf8')) as {
+      features: { properties: { updated: number } }[];
+    };
+    for (const feature of body.features) feature.properties.updated += 60_000;
+
+    const second = await ingest(
+      clientServing(
+        () =>
+          new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } }),
+      ),
+    );
+
+    expect(second.status).toBe('SUCCEEDED');
+    expect(second.counts).toMatchObject({ accepted: 230, newVersions: 0, unchanged: 230 });
+    expect(await factDigest(), 'a re-stamp is not a revision').toStrictEqual(digestAfterFirst);
+  });
+
   it('adds one version, and only one, for a real revision', async () => {
     await ingest(clientServing(() => feedResponse('revision-t0.geojson')));
     const afterFirst = await countOf('observation_versions');

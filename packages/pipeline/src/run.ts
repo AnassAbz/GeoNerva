@@ -26,6 +26,7 @@ import {
   batchTimestamp,
   finishRun,
   findProductByCode,
+  headContentHashes,
   insertVersionIfChanged,
   lastPayloadDigest,
   recordReject,
@@ -144,16 +145,6 @@ async function persistBatch(
 ): Promise<PersistResult> {
   const ingestedAt = await batchTimestamp(trx);
 
-  const rawIds = await upsertRawRecords(
-    trx,
-    records.map((record) => ({
-      sourceId: adapter.descriptor.sourceId,
-      payloadSha256: record.rawPayloadSha256,
-      payload: record.rawPayload,
-      firstSeenAt: ingestedAt,
-    })),
-  );
-
   let newRecords = 0;
   let newVersions = 0;
   let unchanged = 0;
@@ -165,6 +156,8 @@ async function persistBatch(
     await recordReject(trx, runId, reject.reasonCode, reject.excerpt);
   }
 
+  // Identity first, for every record, because the next two decisions both need it.
+  const resolvedIds: string[] = [];
   for (const record of records) {
     const resolved = await resolveSourceRecord(trx, {
       sourceId: adapter.descriptor.sourceId,
@@ -175,9 +168,44 @@ async function persistBatch(
     });
     if (resolved.created) newRecords += 1;
     mergedRecords += resolved.mergedRecordIds.length;
+    resolvedIds.push(resolved.sourceRecordId);
+  }
+
+  /*
+   * Store a provider payload only for a record whose content actually changed.
+   *
+   * Raw payloads are content-addressed over the *whole* feature, including `updated`. USGS
+   * re-stamps `updated` without changing anything, so storing one per record per poll would write
+   * ~230 rows of ~1.3 KB every time any event in the feed moved — about 84 MB/day at a five
+   * minute cadence — none of which would have a version to be the provenance of.
+   *
+   * `insertVersionIfChanged` still makes the real decision under a row lock; this only decides
+   * what is worth storing beforehand, and it errs towards storing.
+   */
+  const heads = await headContentHashes(trx, resolvedIds);
+  const changing = records.filter((record, index) => {
+    const head = heads.get(resolvedIds[index] ?? '');
+    return head?.equals(record.contentSha256) !== true;
+  });
+
+  const rawIds = await upsertRawRecords(
+    trx,
+    changing.map((record) => ({
+      sourceId: adapter.descriptor.sourceId,
+      payloadSha256: record.rawPayloadSha256,
+      payload: record.rawPayload,
+      firstSeenAt: ingestedAt,
+    })),
+  );
+
+  for (const [index, record] of records.entries()) {
+    const sourceRecordId = resolvedIds[index];
+    if (sourceRecordId === undefined) {
+      throw new Error(`no resolved identity for ${record.primaryKey}; this is a pipeline bug`);
+    }
 
     const input: InsertVersionInput = {
-      sourceRecordId: resolved.sourceRecordId,
+      sourceRecordId,
       hazardType: record.hazardType,
       ingestionRunId: runId,
       ingestedAt,

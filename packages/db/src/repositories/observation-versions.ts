@@ -92,6 +92,34 @@ export class VersionRejectedError extends Error {
 }
 
 /**
+ * The current head content hash for each of these records, for callers that need to know what
+ * *will* change before they write anything.
+ *
+ * `insertVersionIfChanged` already makes the decision authoritatively, under a row lock. This is
+ * for the one thing that has to happen earlier: a provider payload is stored content-addressed
+ * and referenced by the version, so deciding whether to store it at all requires knowing, before
+ * the insert, whether a version is coming. Without that, a feed that re-stamps its timestamps
+ * writes a fresh payload row per record per poll with no version to attach it to.
+ *
+ * Records with no head are simply absent from the map.
+ */
+export async function headContentHashes(
+  db: Transaction<DB> | Kysely<DB>,
+  sourceRecordIds: readonly string[],
+): Promise<Map<string, Buffer>> {
+  const heads = new Map<string, Buffer>();
+  if (sourceRecordIds.length === 0) return heads;
+
+  const result = await sql<{ source_record_id: string; latest_content_sha256: Buffer }>`
+    SELECT source_record_id::text AS source_record_id, latest_content_sha256
+    FROM geonerva.source_record_heads
+    WHERE source_record_id = ANY(${sql.val(sourceRecordIds)}::bigint[])
+  `.execute(db);
+  for (const row of result.rows) heads.set(row.source_record_id, row.latest_content_sha256);
+  return heads;
+}
+
+/**
  * Inserts a version if — and only if — its content differs from the record's current head.
  *
  * The record row is locked first (`SELECT … FOR UPDATE`), which serializes two batches touching
