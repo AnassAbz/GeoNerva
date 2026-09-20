@@ -153,7 +153,16 @@ Corrections from the P3 implementation, which is the authoritative shape:
   to persist an ETag between runs, so "nothing changed" is detected by comparing the body digest
   with the previous run's `ingestion_runs.payload_sha256`. The cost is one ~1 MB download per poll
   that a 304 could have avoided; adding a column to a frozen table was not judged worth it. A feed
-  that *does* answer 304 is still handled.
+  that *does* answer 304 is still handled, and a 304 deliberately carries the **previous** digest
+  forward rather than the hash of the empty body, which would otherwise erase the comparison.
+- **That digest is scoped to `(source, product)`, not to the feed [G3 carry-over, closed P4].**
+  `all_hour` and `all_day` are one product, so alternating between them compares a digest from a
+  different feed. This can only ever cost a wasted re-parse, never a wrongful skip: every summary
+  body carries its own feed URL in `metadata`, so two feeds cannot produce identical bytes. Scoping
+  it properly needs a column on `ingestion_runs`, which is not worth a change to a frozen table to
+  save a re-parse nobody has measured. A **backfill never consults it at all** — it asks a bounded
+  question, so "the body is identical to the last run" is meaningless there, and a SKIPPED outcome
+  would leave its interval unmarked.
 
 ### 4.2 Run lifecycle
 

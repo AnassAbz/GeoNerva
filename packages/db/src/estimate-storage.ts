@@ -9,8 +9,13 @@
  * Volumes come from measurement, not assumption (docs/DATA_SOURCES.md §3.5):
  *   - FIRMS NOAA-20 + NOAA-21 ≈ **146k detections/day** (the keyless "24 h" files span ≈ 42 h,
  *     so the row counts in those files overstate a day by roughly 75 %).
- *   - USGS M ≥ 4.5 since 2000 ≈ 190k events, plus the EMSC backfill and recent all-magnitude
- *     history: ~250k earthquake versions is a fair lean-profile figure.
+ *   - USGS M ≥ 4.5 **since 2016** ≈ 80k events (ADR-034; the count endpoint says 79,929), plus
+ *     ~11k all-magnitude events from the last 30 days and the EMSC backfill within its reserved
+ *     125 MB: ~160k earthquake versions is the lean-profile figure.
+ *
+ * **Narrowed by ADR-034.** This script previously assumed M ≥ 4.5 since 2000 — 187,173 events by
+ * measurement — which at the measured 1,865 B/event is 333 MB for one source, two-thirds of the
+ * whole budget. The volumes below track the decision so the estimate and the plan cannot drift.
  *
  * Rows are generated in SQL rather than through the repositories: this measures storage, and
  * `generate_series` fills the same tables, indexes and partitions far faster than round-trips.
@@ -34,7 +39,11 @@ import { setupTestDatabase, type TestDatabase } from './testing/test-database.ts
 /** Lean profile: 72 h of detections at the measured rate. */
 const DETECTIONS_PER_DAY = 146_000;
 const DETECTION_DAYS = 3;
-const EARTHQUAKE_VERSIONS = 250_000;
+/**
+ * USGS M ≥ 4.5 since 2016 (79,929, measured) + last 30 days all magnitudes (11,015, measured) +
+ * headroom for the EMSC backfill P5 must fit into its reserved ~125 MB (ADR-034).
+ */
+const EARTHQUAKE_VERSIONS = 160_000;
 const GDACS_VERSIONS = 5_000;
 
 export interface TableSize {
