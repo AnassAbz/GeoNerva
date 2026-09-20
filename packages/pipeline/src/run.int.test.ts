@@ -349,6 +349,121 @@ describe('idempotency', () => {
   });
 });
 
+describe('time semantics', () => {
+  it('records an out-of-order arrival as knowledge, not as a correction', async () => {
+    /*
+     * A cached or replayed response can deliver *older* content after newer content. The
+     * bitemporal model has a definite answer: observed_at is when the earthquake happened,
+     * ingested_at is when we learned it, and the head is what the provider last told us. So the
+     * stale body does create a version — refusing it would mean silently discarding something a
+     * provider said, which is the one thing this pipeline must never do.
+     */
+    await ingest(clientServing(() => feedResponse('revision-t1.geojson')));
+    const afterNewer = await sql<{ n: string; status: string }>`
+      SELECT count(*)::text AS n, max(v.provider_status) AS status
+      FROM geonerva.observation_versions v
+      JOIN geonerva.source_records r ON r.id = v.source_record_id
+      WHERE r.primary_key = 'hv75040342'
+    `.execute(db);
+    expect(afterNewer.rows[0]?.status).toBe('reviewed');
+
+    const late = await ingest(clientServing(() => feedResponse('revision-t0.geojson')));
+    expect(late.status).toBe('SUCCEEDED');
+    expect(late.counts.newVersions, 'the older content is still news to us').toBe(2);
+
+    const versions = await sql<{ version_seq: number; provider_status: string; ingested_at: Date }>`
+      SELECT v.version_seq, v.provider_status, v.ingested_at
+      FROM geonerva.observation_versions v
+      JOIN geonerva.source_records r ON r.id = v.source_record_id
+      WHERE r.primary_key = 'hv75040342'
+      ORDER BY v.version_seq
+    `.execute(db);
+    expect(versions.rows.map((row) => row.provider_status)).toStrictEqual([
+      'reviewed',
+      'automatic',
+    ]);
+    // Knowledge time moves forward even though the content moved backwards.
+    const [first, second] = versions.rows;
+    expect(second?.ingested_at.getTime()).toBeGreaterThan(first?.ingested_at.getTime() ?? 0);
+
+    // And replay still answers "what did we believe at T?" correctly for both instants.
+    const atFirst = await observationsAsOf(db, { asOf: first?.ingested_at ?? new Date() });
+    expect(atFirst.find((row) => row.primary_key === 'hv75040342')?.provider_status).toBe(
+      'reviewed',
+    );
+    const atSecond = await observationsAsOf(db, { asOf: second?.ingested_at ?? new Date() });
+    expect(atSecond.find((row) => row.primary_key === 'hv75040342')?.provider_status).toBe(
+      'automatic',
+    );
+  });
+
+  it('stores the same instants whatever the server timezone is set to', async () => {
+    // A session TimeZone leaking into a timestamptz is how P2's partition bounds broke. The same
+    // class of bug here would shift every observed_at by the server's offset.
+    await sql`SET SESSION TimeZone = 'America/New_York'`.execute(db);
+    try {
+      await ingest(clientServing(() => feedResponse('all_day.geojson')));
+      const row = await sql<{ observed_ms: string; primary_key: string }>`
+        SELECT (extract(epoch FROM v.observed_at) * 1000)::bigint::text AS observed_ms,
+               r.primary_key
+        FROM geonerva.observation_versions v
+        JOIN geonerva.source_records r ON r.id = v.source_record_id
+        WHERE r.primary_key = 'nc75438582'
+      `.execute(db);
+      // The exact epoch millisecond from the captured feed, unshifted.
+      expect(row.rows[0]?.observed_ms).toBe('1789850640280');
+    } finally {
+      await sql`SET SESSION TimeZone = 'UTC'`.execute(db);
+    }
+  });
+});
+
+describe('two features in one batch that are the same event', () => {
+  it('collapses them into one record instead of inventing a second source', async () => {
+    /*
+     * USGS identity is the alias set, so two features whose `ids` intersect *are* one event —
+     * ComCat associated them. The adapter cannot see that (it dedupes on the preferred id), so
+     * the collapse happens at identity resolution, inside the batch, with both versions sharing
+     * the batch stamp.
+     *
+     * The failure this guards against is the expensive one: two records for one earthquake would
+     * later read as two independent sources agreeing, which is precisely the false confidence the
+     * independence rule exists to prevent (ADR-030).
+     */
+    const t0 = JSON.parse(readFixtureBytes('usgs', 'revision-t0.geojson').toString('utf8')) as {
+      features: { id: string; properties: { ids: string } }[];
+    };
+    const [first, second] = t0.features;
+    if (first === undefined || second === undefined) throw new Error('fixture needs two features');
+
+    // The second feature is re-associated with the first: different preferred id, shared alias.
+    second.properties.ids = `,${second.id},${first.id},`;
+
+    const outcome = await ingest(
+      clientServing(
+        () => new Response(JSON.stringify(t0), { headers: { 'content-type': 'application/json' } }),
+      ),
+    );
+
+    expect(outcome.status).toBe('SUCCEEDED');
+    expect(await countOf('source_records'), 'one event, one record').toBe(1);
+
+    const aliases = await sql<{ alias: string }>`
+      SELECT alias FROM geonerva.source_record_aliases ORDER BY alias
+    `.execute(db);
+    expect(
+      aliases.rows.map((row) => row.alias).sort(),
+      'every identifier still resolves to that record',
+    ).toStrictEqual([first.id, second.id].sort());
+
+    // Both statements are kept as versions of the one record, sharing the batch stamp.
+    const distinctStamps = await sql<{ n: string }>`
+      SELECT count(DISTINCT ingested_at)::text AS n FROM geonerva.observation_versions
+    `.execute(db);
+    expect(distinctStamps.rows[0]?.n).toBe('1');
+  });
+});
+
 describe('failures are recorded, not swallowed', () => {
   it.each([
     [404, 'HTTP_4XX'],
