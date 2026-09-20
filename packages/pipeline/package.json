@@ -10,5 +10,15 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@geonerva/db": "workspace:*",
+    "@geonerva/domain": "workspace:*",
+    "@geonerva/http": "workspace:*",
+    "@geonerva/sources": "workspace:*",
+    "kysely": "0.29.6"
+  },
+  "devDependencies": {
+    "@geonerva/test-fixtures": "workspace:*"
   }
 }

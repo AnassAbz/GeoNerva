@@ -10,6 +10,7 @@ export {
   batchVerdict,
   canonicalJson,
   contentHash,
+  createSourceClient,
   payloadHash,
 } from './contract.ts';
 export type {

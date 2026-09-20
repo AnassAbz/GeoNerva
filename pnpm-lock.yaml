@@ -297,7 +297,27 @@ importers:
         specifier: workspace:*
         version: link:../config
 
-  packages/pipeline: {}
+  packages/pipeline:
+    dependencies:
+      '@geonerva/db':
+        specifier: workspace:*
+        version: link:../db
+      '@geonerva/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@geonerva/http':
+        specifier: workspace:*
+        version: link:../http
+      '@geonerva/sources':
+        specifier: workspace:*
+        version: link:../sources
+      kysely:
+        specifier: 0.29.6
+        version: 0.29.6
+    devDependencies:
+      '@geonerva/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
 
   packages/relevance: {}
 

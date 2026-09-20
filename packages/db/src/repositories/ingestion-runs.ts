@@ -131,6 +131,20 @@ export async function acquireRunLease(
   return { acquired: true, runId: afterExpiry, expiredRunId };
 }
 
+/**
+ * One reading of the database's wall clock, to stamp a whole batch with.
+ *
+ * It comes from the database, not the worker, so a worker whose clock has drifted cannot write
+ * facts that appear to arrive before or after the run that carries them. `clock_timestamp()`
+ * rather than `now()`, which inside a transaction is the transaction's start time (S-16).
+ */
+export async function batchTimestamp(db: Kysely<DB>): Promise<Date> {
+  const result = await sql<{ at: Date }>`SELECT clock_timestamp() AS at`.execute(db);
+  const at = result.rows[0]?.at;
+  if (at === undefined) throw new Error('clock_timestamp() returned no row');
+  return at;
+}
+
 export interface FinishRunInput {
   readonly runId: string;
   readonly status: Exclude<RunStatus, 'RUNNING'>;
@@ -149,6 +163,19 @@ export interface FinishRunInput {
   /** Sanitized and bounded by the schema to 1 KB. Never a provider body. */
   readonly errorMessage?: string | null;
   readonly finishedAt?: Date;
+  /**
+   * The batch timestamp, when the caller has already stamped its versions with it.
+   *
+   * Omit it and the run takes `clock_timestamp()` here, which is right for a run that wrote no
+   * facts (a failure, a lease expiry). An ingestion that *did* write versions must pass the very
+   * value it used, because `observationsAsOf` filters on `ingested_at` alone: if the two differ,
+   * there is an instant at which the batch's facts are visible while the run that produced them
+   * is not yet counted, and the replay is momentarily inconsistent with its own provenance.
+   *
+   * It is still a `clock_timestamp()` reading taken inside the transaction, never `now()`, which
+   * would be the transaction's start time (S-16).
+   */
+  readonly committedAt?: Date;
 }
 
 /**
@@ -165,8 +192,9 @@ export async function finishRun(db: Kysely<DB>, input: FinishRunInput): Promise<
         -- DOMAIN_MODEL section 2: ingested_at is one stamp per batch, taken immediately before
         -- the commit, so finishRun must be the last statement of the ingestion transaction.
         -- clock_timestamp() rather than now() is what makes it the real end of the batch instead
-        -- of the moment the transaction opened (S-16).
-        committed_at = clock_timestamp(),
+        -- of the moment the transaction opened (S-16). A batch that already stamped its versions
+        -- passes that same instant as committedAt, so the two can never disagree.
+        committed_at = COALESCE(${input.committedAt ?? null}::timestamptz, clock_timestamp()),
         http_status = ${input.httpStatus ?? null},
         bytes_received = ${input.bytesReceived ?? null},
         payload_sha256 = ${input.payloadSha256 ?? null},
@@ -187,6 +215,32 @@ export async function finishRun(db: Kysely<DB>, input: FinishRunInput): Promise<
     throw new Error(`run ${input.runId} is not RUNNING and cannot be finished`);
   }
   return committedAt;
+}
+
+/**
+ * The body digest the last committed run for this product ingested, or `null` if there is none.
+ *
+ * This is what lets a poll answer "nothing changed" without a stored ETag: an identical body
+ * means an identical batch, so the run is SKIPPED rather than re-deriving 230 unchanged records.
+ * Only runs that actually ingested a body count — a failed fetch has no payload to compare, and
+ * treating its absence as "changed" is the safe direction.
+ */
+export async function lastPayloadDigest(
+  db: Kysely<DB>,
+  sourceId: string,
+  productId: number | null,
+): Promise<Buffer | null> {
+  const result = await sql<{ payload_sha256: Buffer | null }>`
+    SELECT payload_sha256
+    FROM geonerva.ingestion_runs
+    WHERE source_id = ${sourceId}
+      AND COALESCE(product_id, -1) = COALESCE(${productId}::smallint, -1)
+      AND committed_at IS NOT NULL
+      AND payload_sha256 IS NOT NULL
+    ORDER BY committed_at DESC
+    LIMIT 1
+  `.execute(db);
+  return result.rows[0]?.payload_sha256 ?? null;
 }
 
 /** Records a rejected record for a run. Excerpts are bounded by the caller. */

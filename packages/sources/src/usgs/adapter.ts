@@ -46,7 +46,9 @@ export function isUsgsFeed(value: string): value is UsgsFeed {
 
 export const usgsDescriptor: SourceDescriptor = {
   sourceId: 'usgs',
-  productCode: 'usgs:comcat',
+  // `geonerva.source_products.code` is scoped by source, so it is `comcat`, not `usgs:comcat`.
+  // The prefixed form is the freshness-policy key, which is global and therefore qualified.
+  productCode: 'comcat',
   policyKey: 'usgs:comcat',
   hazardType: 'EARTHQUAKE',
   capabilities: ['REALTIME_EVENTS', 'EVENT_REVISIONS', 'CROSS_REFERENCES'],
@@ -184,11 +186,10 @@ export function parseUsgsFeed(body: Uint8Array, ctx: ParseContext): ParseResult<
 async function fetchUsgs(ctx: FetchContext): Promise<FetchResult> {
   const feed = ctx.feed !== undefined && isUsgsFeed(ctx.feed) ? ctx.feed : DEFAULT_USGS_FEED;
   const url = usgsFeedUrl(feed);
-  const response = await ctx.client.get(url, {
-    signal: ctx.signal,
-    timeoutMs: usgsDescriptor.timeoutMs,
-    maxBytes: usgsDescriptor.maxBytes,
-  });
+  // The deadline and the size cap are not passed per request: the client is built from the
+  // descriptor (see `createSourceClient`), so they are enforced in one place and an adapter
+  // cannot quietly widen them.
+  const response = await ctx.client.get(url, { signal: ctx.signal });
 
   const digest = payloadHash(response.body);
   const meta = {

@@ -90,6 +90,21 @@ module.exports = {
       to: { path: '^packages/test-fixtures/' },
     },
     {
+      name: 'no-test-harness-in-production-code',
+      comment:
+        'The integration-test database harness creates and truncates databases. Only tests may ' +
+        'import it; production code reaching it would make the safety guard irrelevant.',
+      severity: 'error',
+      from: {
+        pathNot:
+          '(\\.test\\.ts$|\\.int\\.test\\.ts$|/e2e/|^packages/db/src/testing/' +
+          // The storage-measurement script builds a disposable database on purpose; that is the
+          // harness's whole job, and measuring against a real schema is the point of the script.
+          '|^packages/db/src/estimate-storage\\.ts$)',
+      },
+      to: { path: '^packages/db/src/testing/' },
+    },
+    {
       name: 'pure-engines-have-no-io',
       comment:
         'Pure engines must not import database, network, filesystem, process or framework modules.',

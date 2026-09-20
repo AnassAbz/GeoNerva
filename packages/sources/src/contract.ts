@@ -30,7 +30,7 @@ import type {
   RejectReasonCode,
   SourceCapability,
 } from '@geonerva/domain';
-import type { HttpClient } from '@geonerva/http';
+import { HttpClient, type HttpClientOptions } from '@geonerva/http';
 
 /**
  * Static facts about a source product. Freshness policy and attribution are *not* copied here:
@@ -176,6 +176,25 @@ export class NormalizationError extends Error {
     this.invariant = invariant;
     this.providerId = providerId;
   }
+}
+
+/**
+ * Builds the HTTP client a source is allowed to use, from its descriptor.
+ *
+ * The allowlist, the deadline and the size cap come from one place and are applied at
+ * construction, so an adapter cannot widen them per request — and a test can narrow them without
+ * the adapter's cooperation.
+ */
+export function createSourceClient(
+  descriptor: SourceDescriptor,
+  options: { readonly userAgent: string } & Partial<HttpClientOptions>,
+): HttpClient {
+  return new HttpClient({
+    allowedHosts: [...descriptor.allowedHosts],
+    timeoutMs: descriptor.timeoutMs,
+    maxBytes: descriptor.maxBytes,
+    ...options,
+  });
 }
 
 /**

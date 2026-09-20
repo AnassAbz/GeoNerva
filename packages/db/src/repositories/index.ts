@@ -20,7 +20,9 @@ export type { SourceProductRow, SourceRow } from './sources.ts';
 export {
   DEFAULT_LEASE_STALE_AFTER_MS,
   acquireRunLease,
+  batchTimestamp,
   finishRun,
+  lastPayloadDigest,
   listRecentRuns,
   recordReject,
   recordWorkerHeartbeat,
