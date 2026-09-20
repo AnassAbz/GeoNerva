@@ -27,6 +27,7 @@ import {
   addBackfillIntervals,
   backfillProgress,
   claimNextInterval,
+  findProductByCode,
   finishBackfillPlan,
   markIntervalDone,
   markIntervalFailed,
@@ -89,7 +90,14 @@ export interface BackfillOutcome {
   /** `COMPLETED` only when nothing is pending or failed — the repository refuses otherwise. */
   readonly status: 'COMPLETED' | 'INCOMPLETE' | 'FAILED';
   readonly progress: BackfillProgress;
-  readonly intervalsProcessed: number;
+  /**
+   * Windows this invocation fetched, whether or not they completed.
+   *
+   * "Attempted", not "processed": a window that failed still consumed a request, so it counts
+   * against `maxIntervals`. Whether it *completed* is `progress.done`, and a run reporting three
+   * attempted with zero done is telling the truth about both.
+   */
+  readonly intervalsAttempted: number;
   readonly intervalsSplit: number;
   readonly newVersions: number;
   readonly unchanged: number;
@@ -124,6 +132,21 @@ export async function runBackfill<TRaw>(
   const descriptor = adapter.descriptor;
   const base = { sourceId: descriptor.sourceId, productCode: descriptor.productCode };
 
+  /*
+   * An adapter without a historical interface cannot be backfilled.
+   *
+   * `runBackfill` issues FDSN requests on the adapter's behalf, so until the capability interface
+   * lands (P5, with the second source) this check is what stops it being pointed at an adapter
+   * that has no such endpoint. The host allowlist would refuse the request anyway, but as
+   * `CONFIG_ERROR` from deep inside a window — this says the actual reason.
+   */
+  if (!descriptor.capabilities.includes('HISTORICAL_EVENTS')) {
+    throw new WindowPlanError(
+      `${descriptor.sourceId}:${descriptor.productCode} does not declare HISTORICAL_EVENTS, ` +
+        'so it has no historical interface to back-fill from',
+    );
+  }
+
   // Planning first, so an impossible range is refused before a plan row exists.
   const windows = planWindows(request.from, request.to, options.plan);
   const defect = describePlanDefect(windows, request.from, request.to);
@@ -133,9 +156,21 @@ export async function runBackfill<TRaw>(
     throw new WindowPlanError(`refusing to persist a defective plan: ${defect}`);
   }
 
+  /*
+   * The plan is attached to the same product its runs will be, so two products of one source
+   * cannot resume each other's plan and skip windows as already done. The unique index keys on
+   * `COALESCE(product_id, -1)`, so leaving it null made every product share one plan identity.
+   */
+  const product = await findProductByCode(db, descriptor.sourceId, descriptor.productCode);
+  if (product === null) {
+    throw new WindowPlanError(
+      `no source_product ${descriptor.productCode} for source ${descriptor.sourceId}`,
+    );
+  }
+
   const { plan, created } = await openBackfillPlan(db, {
     sourceId: descriptor.sourceId,
-    productId: null,
+    productId: product.id,
     mode: mode === 'deleted-only' ? 'DELETION_SWEEP' : 'HISTORICAL',
     rangeFrom: request.from,
     rangeTo: request.to,
@@ -177,14 +212,14 @@ export async function runBackfill<TRaw>(
       (retried > 0 ? `, retrying ${retried} previously failed` : ''),
   });
 
-  let intervalsProcessed = 0;
+  let intervalsAttempted = 0;
   let intervalsSplit = 0;
   let stoppedEarly: string | null = null;
   let newVersions = 0;
   let unchanged = 0;
 
   while (options.signal?.aborted !== true) {
-    if (options.maxIntervals !== undefined && intervalsProcessed >= options.maxIntervals) break;
+    if (options.maxIntervals !== undefined && intervalsAttempted >= options.maxIntervals) break;
 
     const interval = await db.transaction().execute((trx) => claimNextInterval(trx, plan.id));
     if (interval === null) break;
@@ -256,7 +291,9 @@ export async function runBackfill<TRaw>(
           declaredCount: count.count,
           detail,
         });
-        intervalsProcessed += 1;
+        // Counted as attempted: it consumed a fetch, so it counts against `maxIntervals`. What
+        // it did *not* do is complete, and `progress` is the record of that.
+        intervalsAttempted += 1;
         continue;
       }
 
@@ -268,7 +305,7 @@ export async function runBackfill<TRaw>(
        * the loop would spin on it for as long as the other worker held the lease. Stopping is the
        * correct response: the plan stays open and the next invocation resumes it.
        */
-      intervalsProcessed += 1;
+      intervalsAttempted += 1;
       newVersions += outcome.counts.newVersions;
       unchanged += outcome.counts.unchanged;
 
@@ -379,7 +416,7 @@ export async function runBackfill<TRaw>(
     planId: plan.id,
     status,
     progress,
-    intervalsProcessed,
+    intervalsAttempted,
     intervalsSplit,
     newVersions,
     unchanged,

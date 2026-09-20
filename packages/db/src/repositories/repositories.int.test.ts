@@ -702,6 +702,53 @@ describe('record identity and the USGS merge (DOMAIN_MODEL §4.6)', () => {
 });
 
 describe('raw payload storage (DOMAIN_MODEL §4.5)', () => {
+  it('fills in a live body over a row a backfill stored pruned (ADR-033)', async () => {
+    /*
+     * A backfill and a live poll collide on the same digest whenever the feature has not changed,
+     * by design. With a no-op upsert the *first* writer decided forever: a backfill running first
+     * meant the live body was never stored, so ADR-033's 30-day debugging window silently did not
+     * apply to those records and the stored state depended on ingest order.
+     */
+    const digest = Buffer.alloc(32, 42);
+    await upsertRawRecords(db, [
+      { sourceId: 'usgs', payloadSha256: digest, payload: { a: 1 }, pruned: true },
+    ]);
+    const ids = await upsertRawRecords(db, [
+      { sourceId: 'usgs', payloadSha256: digest, payload: { a: 1 }, pruned: false },
+    ]);
+
+    const stored = await findRawPayload(db, ids.get(digest.toString('hex')) ?? '');
+    expect(stored?.payload, 'the live body is filled in').toStrictEqual({ a: 1 });
+    expect(stored?.pruned).toBe(false);
+  });
+
+  it('does not un-prune when the later writer has no body either', async () => {
+    const digest = Buffer.alloc(32, 43);
+    await upsertRawRecords(db, [
+      { sourceId: 'usgs', payloadSha256: digest, payload: { b: 2 }, pruned: true },
+    ]);
+    const ids = await upsertRawRecords(db, [
+      { sourceId: 'usgs', payloadSha256: digest, payload: { b: 2 }, pruned: true },
+    ]);
+    const stored = await findRawPayload(db, ids.get(digest.toString('hex')) ?? '');
+    expect(stored?.payload).toBeNull();
+    expect(stored?.pruned).toBe(true);
+  });
+
+  it('never replaces a body that is already there', async () => {
+    // Pruning only ever removes, so a stored body must survive a later pruned write.
+    const digest = Buffer.alloc(32, 44);
+    await upsertRawRecords(db, [
+      { sourceId: 'usgs', payloadSha256: digest, payload: { c: 3 }, pruned: false },
+    ]);
+    const ids = await upsertRawRecords(db, [
+      { sourceId: 'usgs', payloadSha256: digest, payload: { c: 3 }, pruned: true },
+    ]);
+    const stored = await findRawPayload(db, ids.get(digest.toString('hex')) ?? '');
+    expect(stored?.payload).toStrictEqual({ c: 3 });
+    expect(stored?.pruned).toBe(false);
+  });
+
   it('stores identical payloads once and reuses the id', async () => {
     const hash = contentHash('payload-a');
     const first = await upsertRawRecords(db, [

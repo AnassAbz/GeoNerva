@@ -137,9 +137,12 @@ export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
         break;
       }
       case '--window-days': {
+        // Integer: a fractional day makes `window_ms` non-integer, which the bigint column rejects
+        // with a raw SQLSTATE rather than a message anyone can act on.
         const parsed = parseNumberArg(value, 1, 365);
-        if (parsed === null) errors.push(`--window-days must be between 1 and 365, not ${value}`);
-        else windowDays = parsed;
+        if (parsed === null || !Number.isInteger(parsed)) {
+          errors.push(`--window-days must be a whole number between 1 and 365, not ${value}`);
+        } else windowDays = parsed;
         break;
       }
       default: {

@@ -13,7 +13,7 @@ const outcome = (over: Partial<BackfillOutcome> = {}): BackfillOutcome => ({
   planId: 'p1',
   status: 'COMPLETED',
   progress: { total: 4, pending: 0, done: 4, split: 0, failed: 0, received: 2266 },
-  intervalsProcessed: 4,
+  intervalsAttempted: 4,
   intervalsSplit: 0,
   newVersions: 2266,
   unchanged: 0,

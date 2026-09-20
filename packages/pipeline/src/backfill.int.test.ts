@@ -177,7 +177,7 @@ describe('a straightforward backfill', () => {
     expect(outcome.progress.pending).toBe(0);
     expect(outcome.progress.failed).toBe(0);
     // Three days, one window each.
-    expect(outcome.intervalsProcessed).toBe(3);
+    expect(outcome.intervalsAttempted).toBe(3);
     expect(queries).toHaveLength(3);
     expect(counts, 'every window is counted before it is paid for').toHaveLength(3);
 
@@ -298,7 +298,7 @@ describe('idempotency', () => {
 
     // Every interval is DONE, so a resume has nothing to claim.
     expect(queries, 'completed windows are not walked again').toHaveLength(0);
-    expect(second.intervalsProcessed).toBe(0);
+    expect(second.intervalsAttempted).toBe(0);
     expect(second.status).toBe('COMPLETED');
   });
 
@@ -486,7 +486,7 @@ describe('crash recovery', () => {
 
     const resumed = await backfill(scriptedClient().client);
     expect(resumed.planId).toBe(partial.planId);
-    expect(resumed.intervalsProcessed, 'only the outstanding windows').toBe(2);
+    expect(resumed.intervalsAttempted, 'only the outstanding windows').toBe(2);
     expect(resumed.status).toBe('COMPLETED');
   });
 

@@ -52,7 +52,16 @@ export const usgsDescriptor: SourceDescriptor = {
   productCode: 'comcat',
   policyKey: 'usgs:comcat',
   hazardType: 'EARTHQUAKE',
-  capabilities: ['REALTIME_EVENTS', 'EVENT_REVISIONS', 'CROSS_REFERENCES'],
+  // The seeded product has declared HISTORICAL_EVENTS and DELETIONS since P2; the descriptor did
+  // not, so code and database disagreed about USGS precisely in the direction of the two things
+  // P4 built. `runBackfill` and `runDeletionSweep` now check these.
+  capabilities: [
+    'REALTIME_EVENTS',
+    'HISTORICAL_EVENTS',
+    'EVENT_REVISIONS',
+    'DELETIONS',
+    'CROSS_REFERENCES',
+  ],
   allowedHosts: [USGS_HOST],
   timeoutMs: 30_000,
   maxBytes: 20 * 1024 * 1024,

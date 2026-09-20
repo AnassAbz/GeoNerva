@@ -63,7 +63,17 @@ export async function upsertRawRecords(
               ${pruned ? null : JSON.stringify(record.payload)}::jsonb, ${pruned},
               ${record.firstSeenAt ?? new Date()})
       ON CONFLICT (source_id, payload_sha256) DO UPDATE
-        SET source_id = EXCLUDED.source_id
+        -- Fill the body in when this writer has one and the stored row does not.
+        --
+        -- A backfill and a live poll collide on the same digest whenever the feature has not
+        -- changed, by design: the hash is over the canonical content. With a pure no-op touch the
+        -- FIRST writer decided forever, so a backfill running first meant the live body was never
+        -- stored and ADR-033's 30-day debugging window silently did not apply to those records.
+        -- The stored state depended on ingest order. Filling in is safe the other way too,
+        -- because pruning only ever removes.
+        SET payload = COALESCE(geonerva.raw_source_records.payload, EXCLUDED.payload),
+            payload_pruned = geonerva.raw_source_records.payload_pruned
+                             AND EXCLUDED.payload IS NULL
       RETURNING id::text AS id
     `.execute(db);
     const id = result.rows[0]?.id;
