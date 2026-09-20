@@ -157,7 +157,10 @@ export async function bulkInsertDetections(
  * busy right now is simply left for the next run — retention is never urgent.
  */
 export async function dropDetectionPartitionsBefore(
-  db: Db,
+  // Deliberately `Kysely<DB>` and not `Db`: this catches 55P03 to defer a busy partition, and a
+  // caught error inside a transaction aborts it, so every later statement would fail with 25P02
+  // (R-3). Retention runs on its own connection, one statement per partition.
+  db: Kysely<DB>,
   cutoff: Date,
   options: { lockTimeoutMs?: number } = {},
 ): Promise<{ readonly dropped: readonly string[]; readonly deferred: readonly string[] }> {

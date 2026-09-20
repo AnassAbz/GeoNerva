@@ -244,6 +244,8 @@ export async function insertTombstone(
     raw_record_id: string | null;
     lifecycle_status: string;
     latest_content_sha256: Buffer;
+    latest_version_id: string;
+    version_seq: number;
   }>`
     SELECT v.hazard_type, v.observed_at, v.valid_from, v.valid_to, v.source_updated_at,
            v.severity_scheme, v.severity_value, v.provider_status, v.contributor,
@@ -251,7 +253,7 @@ export async function insertTombstone(
            ST_Y(v.centroid::geometry) AS lat, ST_X(v.centroid::geometry) AS lon,
            v.geometry_kind, v.attributes, v.title, v.source_url, v.derived_from,
            v.raw_record_id::text AS raw_record_id, v.lifecycle_status,
-           h.latest_content_sha256
+           h.latest_content_sha256, v.id::text AS latest_version_id, v.version_seq
     FROM geonerva.source_record_heads h
     JOIN geonerva.observation_versions v ON v.id = h.latest_version_id
     WHERE h.source_record_id = ${input.sourceRecordId}::bigint
@@ -263,6 +265,13 @@ export async function insertTombstone(
       'MISSING_IDENTITY',
       'cannot tombstone a record that has no versions',
     );
+  }
+
+  // Already tombstoned with this status: nothing to record. Without this the derived hash below
+  // would chain off the *previous tombstone's* hash and every reconcile would write another
+  // version — unbounded growth on exactly the EMSC path this exists for (R-2).
+  if (row.lifecycle_status === input.status) {
+    return { inserted: false, versionId: row.latest_version_id, versionSeq: row.version_seq };
   }
 
   // The hash a tombstone stores is `sha256(status || content)`. Two consequences, both wanted:
