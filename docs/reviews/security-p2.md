@@ -710,3 +710,371 @@ P8 and P2 respectively, with the depcruise rule landing before any web code exis
 Re-review needed after the fixes, focused on: the resolved driver `ssl` configuration, the F-6
 conjunction, a `createPool` integration test, partition bounds under a non-UTC `TimeZone`, RLS on a
 runtime-created partition, and a tombstone test that passes the head hash.
+
+---
+
+# Re-review (fix verification)
+
+- **Date:** 2026-09-19
+- **Scope:** `git diff f5144f9..HEAD` — commits `29eca2d`, `6373405`, `97bfce9`, `a6798c9`,
+  `c2b55a2`, `36892f6`, `6e1fb11` (plus `decf75b`, docs, and `d65387b`, this report). 15 files,
+  +1,402/−72.
+- **Method:** read every changed file, then tried to break each fix on a live database
+  (PostgreSQL 17.0 / PostGIS 3.4.3), including the specific attacks the orchestrator asked for:
+  TLS parameters in unusual case and duplicated, a URL whose semantics stripping might change,
+  guard bypasses, partition bounds at a DST boundary and with `TimeZone` set **per database**
+  rather than per session, RLS on a partition created by the losing side of a race, a tombstone
+  whose caller supplies a colliding hash, lock-timeout behaviour under a real long reader, and
+  whether the lease rewrite introduced a new race.
+
+## R.1 Verdict
+
+**G2 can be signed off once R-1 is fixed.** Both §3a exit criteria are now met as written:
+
+| Exit criterion | Status |
+|---|---|
+| **F-6** | **MET.** The guard is now `loopback AND *_test`, with an explicit override. Verified against 19 adversarial URLs. |
+| **F-7** | **MET.** `assertConnectionUrlPolicy` refuses a non-TLS URL in production, and — beyond what the criterion asks — the driver now actually receives GeoNerva's `ssl` object, pinned CA included. |
+
+Eleven of the thirteen findings I raised are closed and verified. One HIGH remains, and it is a
+**partial** fix rather than a new defect: the corrected partition function is right, but migration
+0009 leaves behind the partitions migration 0005 already created, and on a non-UTC server the
+resulting boundary seam makes the *corrected* function fail permanently (R-1). Four MEDIUMs are
+residuals worth fixing before the freeze; none of them blocks on its own.
+
+## R.2 Findings
+
+| Sev | ID | Location | Summary |
+|---|---|---|---|
+| HIGH | R-1 | `migrations/0009_partition_hardening.sql:124-140` | 0009 enables RLS on pre-existing partitions but does not re-bound them. On a non-UTC server the 0005 window keeps local bounds, so the fixed function raises an uncaught `42P17 … would overlap …` at the seam and ingestion stops permanently; rows already written land in the wrong day and retention drops them early. |
+| MEDIUM | R-2 | `repositories/observation-versions.ts:268-274` | The tombstone hash is derived from the **head's** hash, and after the first tombstone the head *is* the tombstone — so every subsequent reconcile writes another version. Measured: 3 reconciles produced 3 tombstone versions. The docstring claims idempotency; `v.lifecycle_status` is selected and never used, which looks like the intended early return went missing. |
+| MEDIUM | R-3 | `repositories/fire.ts:158-188` | `dropDetectionPartitionsBefore` accepts a `Transaction<DB>`; a deferred partition raises 55P03, which aborts that transaction, and the next iteration throws an uncaught `25P02`. This is the same defect the same commit removed from `acquireRunLease` (S-17). |
+| MEDIUM | R-4 | `migrator/cli.ts:87` | **Answer to the explicit question: no, the migrator does not inherit the fix.** It still passes the raw URL and no `ssl`. The live bypass is closed (the policy now refuses `uselibpqcompat`/`ssl`), but the highest-privilege connection still lets the URL configure TLS, cannot pin a CA, and will silently stop verifying when pg v9 changes `sslmode=require` semantics. |
+| MEDIUM | R-5 | `connection-url.ts:177-184` | `sslnegotiation` is not on the strip list. `?sslmode=verify-full&sslnegotiation=direct` resolves to `ssl = true`, replacing the explicit object and **silently dropping the pinned CA**. Still verified against the system trust store, so not a MITM hole — but it is the exact defect class the fix was written to close. |
+| LOW | R-6 | `client.ts:98-112`, `IMPLEMENTATION_PLAN.md` §3a (S-15b) | Kysely 0.29.6 has no `preparedStatements` option — `KyselyConfig` is `{dialect, plugins?, log?}` — so the new argument is silently ignored. It is also unnecessary: Kysely's `PostgresDriver` calls `client.query(sql, params)` with no statement name, so pg never issues a *named* prepared statement. My original S-15 was right that the option was dead and wrong about the risk; the §3a entry now asserts something that is not true. |
+| LOW | R-7 | `migrations/0009:66-92`, `repositories/fire.ts:170-186` | Retention's worst case is `N × lockTimeoutMs`, each attempt re-entering the parent's lock queue. Measured: 10 blocked partitions at 1 s each took 10.1 s; at the 5 s default that is 50 s of repeated ACCESS EXCLUSIVE requests. |
+| LOW | R-8 | `connection-url.ts:113-126, 177-184` | TLS parameter handling is case-sensitive throughout, and duplicated `sslmode` reads only the first value. Every variant I tried fails safe, but the failure modes are accidental rather than designed. |
+| LOW | R-9 | `connection-url.ts:79` | `databaseNameOf` still does not percent-decode (the commit message says it does). `…/prod%2F_test` is accepted; `…/scratch%5Ftest` is refused. Both fail safe. The `_test` suffix match is also case-sensitive, so `…/X_TEST` is refused. |
+| LOW | R-10 | `migrations/0009:142-152` | The four functions are fixed, but there is no `ALTER DEFAULT PRIVILEGES … REVOKE EXECUTE … FROM PUBLIC`, so the next function added to the schema is `PUBLIC`-executable again. |
+| LOW | R-11 | `eslint.config.js:75-90` | The `sql.raw` rule catches direct calls and aliasing, but not computed access. `(sql as never)['raw']('…')` produces **no** lint error. Destructuring is caught only incidentally, by `@typescript-eslint/unbound-method`. This is P1's F-1 lesson (bracket access) recurring. |
+| LOW | S-11 | `spatial/fragments.ts:125,133` | Still open, unchanged and not claimed as fixed: `sql.lit(decimals)` remains the one value in the spatial layer that is not a bind parameter. |
+
+## R.3 Findings in detail
+
+### R-1 — HIGH — 0009 corrects the function but not the partitions 0005 already created
+
+**Location:** `packages/db/migrations/0009_partition_hardening.sql:124-140` (the backfill loop enables
+RLS only); the partitions in question come from `0005_fire_activity.sql:131`
+(`SELECT geonerva.ensure_fire_detection_partitions((CURRENT_DATE - 3)::date, 8)`), which runs with
+0005's *pre-fix* function definition.
+
+**Setup:** a fresh database with `ALTER DATABASE … SET TimeZone = 'America/New_York'` — the
+per-database form the orchestrator asked about, never a `SET TimeZone` — then migrations 0001…0009
+applied in order by the normal path. The migrator issues no `SET TimeZone`, so it inherits it:
+
+```text
+session TimeZone inherited: America/New_York
+migrated 9 files
+```
+
+**The UTC anchoring itself is correct**, including across a DST transition:
+
+```text
+fire_detections_20300310  FOR VALUES FROM ('2030-03-09 19:00:00-05') TO ('2030-03-10 20:00:00-04')
+fire_detections_20300615  FOR VALUES FROM ('2030-06-14 20:00:00-04') TO ('2030-06-15 20:00:00-04')
+```
+
+Both are exactly 24 h in UTC (00:00Z to 00:00Z) even though the first spans the spring-forward
+boundary. An insert at `2030-06-15T00:30:00Z` lands correctly. That part of S-4 is fixed.
+
+**But the eight partitions 0005 created keep local bounds, and 0009 never touches them:**
+
+```text
+fire_detections_20260916  FOR VALUES FROM ('2026-09-16 00:00:00-04') TO ('2026-09-17 00:00:00-04')
+…
+fire_detections_20260923  FOR VALUES FROM ('2026-09-23 00:00:00-04') TO ('2026-09-24 00:00:00-04')
+```
+
+Three consequences, all measured:
+
+1. **Ingestion stops permanently at the seam.** The last 0005 partition ends at
+   `2026-09-24 04:00Z`, while the fixed function wants `2026-09-24 00:00Z … 2026-09-25 00:00Z`:
+
+   ```text
+   ensure_fire_detection_partition('2026-09-24')     -> 42P17 partition "fire_detections_20260924"
+                                                        would overlap partition "fire_detections_20260923"
+   ensure_fire_detection_partition('2026-09-25')     -> ok
+   ensure_fire_detection_partitions('2026-09-22', 5) -> 42P17 (dies on that day, never reaches the rest)
+   ```
+
+   `42P17` is `invalid_object_definition`, and the new `EXCEPTION WHEN duplicate_table` handler does
+   not catch it. `bulkInsertDetections` calls `ensurePartitionsForDays` before every batch, so from
+   the fourth day after deployment onwards **every FIRMS batch fails**, and the nightly
+   partition-maintenance job fails with it. There is no self-healing path: the error recurs on every
+   run until someone issues DDL by hand.
+
+2. **Rows land in the wrong day.** A detection at `2026-09-19T00:30:00Z` inserted *successfully*
+   into `fire_detections_20260918` (00:30Z = 20:30 EDT on the 18th):
+
+   ```text
+   partition                            acquired_at
+   geonerva.fire_detections_20260918    2026-09-19T00:30:00.000Z
+   ```
+
+   Silent mis-filing is worse than the original failure, which at least raised.
+
+3. **Retention deletes inside the window.** `fire_detection_partitions_before('2026-09-19')` returns
+   the 16th, 17th and 18th, so dropping `fire_detections_20260918` destroys that
+   `2026-09-19T00:30Z` detection a full day early. This is the H8 "drops data inside the retention
+   window" case, now reachable.
+
+**Why HIGH, not CRITICAL:** it needs a non-UTC server, and both supported deployments (Supabase and
+the project's pinned Docker image) are `Etc/UTC` today. But nothing in the code pins `TimeZone`, the
+failure is unrecoverable without manual DDL, and it silently corrupts the day attribution of the
+data that does get written.
+
+**Fix:** in 0009, before (or instead of) the RLS backfill, repair any `fire_detections_YYYYMMDD`
+partition whose bounds are not UTC-midnight-aligned. On a fresh migration they are empty, so
+`DROP TABLE` plus recreate is sufficient; for a partition holding rows, `DETACH`, create the
+UTC-bounded replacement, move the rows, drop the old one — or `RAISE EXCEPTION` with an actionable
+message rather than leaving a database that cannot ingest. Separately, catch
+`invalid_object_definition` in `ensure_fire_detection_partition` and re-raise it naming the
+overlapping partition and the remedy. Belt and braces: set `TimeZone=UTC` on every connection and in
+the migrator, and assert it in a migration test.
+
+### R-2 — MEDIUM — the tombstone is idempotent only when the caller supplies a hash
+
+**Location:** `packages/db/src/repositories/observation-versions.ts:268-274`.
+
+```ts
+const tombstoneHash = createHash('sha256')
+  .update(input.status)
+  .update(input.contentSha256 ?? row.latest_content_sha256)
+  .digest();
+```
+
+The primary defect is fixed: tombstoning a live record now always writes, because
+`sha256(status || head)` cannot equal `head`. But `row.latest_content_sha256` is the **current head**,
+and after the first tombstone the head *is* the tombstone — so each reconcile hashes the previous
+tombstone's hash and produces a new value. Measured on the EMSC `MISSING_FROM_SOURCE` path, where
+there is no provider content and the caller therefore omits `contentSha256` (ADR-030: the record
+simply vanished):
+
+```text
+reconcile day 11: {"inserted":true,"versionId":"2","versionSeq":2}
+reconcile day 12: {"inserted":true,"versionId":"3","versionSeq":3}
+reconcile day 13: {"inserted":true,"versionId":"4","versionSeq":4}
+versions now: 1/ACTIVE 2/MISSING_FROM_SOURCE 3/MISSING_FROM_SOURCE 4/MISSING_FROM_SOURCE
+
+with a stable caller hash instead:
+  day 14: {"inserted":true,...}   day 15: {"inserted":false,...}   <- idempotent
+```
+
+The code comment states the opposite: *"tombstoning the same record twice produces the same hash, so
+it stays idempotent instead of piling up identical versions"*. That holds only for the
+caller-supplies-a-hash case, which is the USGS `DELETED` path — not the case the optional parameter
+was added for.
+
+**Effect:** ADR-030 re-queries the last 7 days daily, so a vanished EMSC `unid` gains one
+`observation_versions` row per day forever, each with a fresh `ingested_at`. The record stays
+correctly invisible (`observationsNow` returns 0 rows), so nothing false is shown — which is why this
+is MEDIUM — but the change-signal diff between two knowledge states sees a new version of a dead
+record every day, and storage grows without bound on records that will never return.
+
+**Fix:** the query already selects `v.lifecycle_status` and never reads it — the intended guard looks
+like it was dropped. Return `{ inserted: false }` when the head is already a tombstone with the same
+status, or derive the hash from the newest **non-tombstone** version's hash so it is stable across
+reconciles.
+
+### R-3 — MEDIUM — retention poisons a caller's transaction
+
+**Location:** `packages/db/src/repositories/fire.ts:158-188`.
+
+The catch handles `55P03` and `continue`s — but 55P03 has already aborted the surrounding
+transaction, so the next statement fails with `25P02`, which is not caught. Measured with a real
+long reader holding `AccessShareLock` on the parent:
+
+```text
+dropDetectionPartitionsBefore(db, …)  -> {"dropped":[],"deferred":[ …10 partitions… ]}  (10.1 s)  OK
+same call inside db.transaction()     -> THREW 25P02 current transaction is aborted             FAIL
+```
+
+The parameter type is `Kysely<DB> | Transaction<DB>`, and every sibling repository function in this
+package takes a transaction, so the shape invites it. The docstring's "The caller commits between
+partitions" is a convention with nothing enforcing it; inside one transaction the parent's ACCESS
+EXCLUSIVE would also be held across every day, which is what S-7 was about.
+
+**Fix:** narrow the parameter to `Kysely<DB>`, or wrap each drop in a savepoint so a deferred
+partition cannot poison the outer transaction.
+
+### R-4 — MEDIUM — the migrator CLI does not inherit the TLS fix
+
+**Location:** `packages/db/src/migrator/cli.ts:87` — unchanged by this round:
+
+```ts
+const client = new pg.Client({ connectionString: url, connectionTimeoutMillis: 10_000 });
+```
+
+No `driverConnectionString`, no `ssl`. What the policy change *did* buy: the CLI calls
+`assertConnectionUrlPolicy`, which now refuses `uselibpqcompat` and `ssl` outright, so the concrete
+MITM bypass from the first review is closed on this path too. What remains:
+
+- `sslmode` still reaches the driver and still decides TLS, so pg — not GeoNerva — owns the decision
+  on the connection that runs DDL with the highest-privilege credential;
+- `sslmode=require` is accepted by the policy and resolves to `{}` today, i.e. verification by Node's
+  default — but pg's own deprecation notice says v9 will make it `rejectUnauthorized: false`, and
+  there is no override here to stop that;
+- `sslrootcert`/`sslcert`/`sslkey` are honoured here and stripped in `createPool`, so the two paths
+  disagree about what a URL means;
+- a pinned CA is not available at all.
+
+**Fix (one line):**
+
+```ts
+const client = new pg.Client({
+  connectionString: driverConnectionString(url, variableName),
+  ssl: sslConfigFor(url, { nodeEnv: process.env['NODE_ENV'], variableName }),
+  connectionTimeoutMillis: 10_000,
+});
+```
+
+`testing/create-test-database.ts:34` and `testing/test-database.ts:103,181,190` build raw clients
+too, but the F-6 guard restricts them to loopback, where TLS is genuinely moot. Worth a comment
+saying so, so the next reader does not have to re-derive it.
+
+### R-5 — MEDIUM — `sslnegotiation=direct` still lets the URL win
+
+**Location:** `packages/db/src/connection-url.ts:177-184` (`TLS_QUERY_PARAMETERS`).
+
+`pg-connection-string` contains `if (config.sslnegotiation === 'direct' && config.ssl === undefined)
+config.ssl = true`. Stripping `sslmode` makes `config.ssl` undefined, so this branch now fires where
+it previously would not, and the resulting `ssl: true` overrides GeoNerva's object. Measured through
+the exact pair of calls `createPool` makes, reading `client.connectionParameters.ssl`:
+
+```text
+?sslmode=verify-full                        -> {"rejectUnauthorized":true,"ca":"PINNED-CA"}   OK
+?sslmode=require                            -> {"rejectUnauthorized":true,"ca":"PINNED-CA"}   OK
+?sslmode=verify-full&SSLROOTCERT=/etc/x.pem -> {"rejectUnauthorized":true,"ca":"PINNED-CA"}   OK
+?sslmode=verify-full&sslmode=disable        -> {"rejectUnauthorized":true,"ca":"PINNED-CA"}   OK
+?sslmode=require&USELIBPQCOMPAT=true        -> {"rejectUnauthorized":true,"ca":"PINNED-CA"}   OK
+?sslmode=verify-full&sslnegotiation=direct  -> true                                           CA DROPPED
+?sslmode=verify-ca&sslnegotiation=direct    -> true                                           CA DROPPED
+```
+
+`ssl: true` still means `rejectUnauthorized: true` in Node, so the server is authenticated against
+the system trust store — this is a silent loss of pinning, not an open door. But the module's own
+docstring says "with every TLS parameter removed", and this one is not.
+
+**Fix:** add `sslnegotiation` to `TLS_QUERY_PARAMETERS`, and make the removal case-insensitive:
+delete any parameter whose lowercased name starts with `ssl` or equals `uselibpqcompat`. Better
+still, reject unknown parameters rather than stripping silently.
+
+### LOW findings
+
+**R-6** — `packages/db/src/client.ts:98-112`. Kysely 0.29.6's `KyselyConfig` is
+`{dialect, plugins?, log?}`; `preparedStatements` appears nowhere in the package, so the object
+spread passes an option nothing reads (and the spread is why TypeScript does not object). It is also
+not needed: `PostgresDriver.executeQuery` calls `client.query(compiledQuery.sql,
+compiledQuery.parameters)` with no statement name, so pg uses the unnamed extended-protocol path and
+never creates a server-side prepared statement. ADR-008's `prepare=false` is satisfied by
+construction. **My original S-15 was right that the option was dead and wrong about the risk — the
+risk does not exist.** Either drop the parameter or keep it with a comment explaining why it is a
+no-op; and correct the §3a S-15b entry, which currently states that `preparedStatements: false` "is
+now applied to the Kysely dialect".
+
+**R-7** — retention now costs at most `lockTimeoutMs` per partition instead of blocking without
+bound, which is the important change. But the cost is linear: 10 blocked partitions at 1 s took
+10.1 s in my measurement, and each attempt re-enters the parent's lock queue, so concurrent fire
+queries can be delayed by up to `lockTimeoutMs` per partition. Consider stopping after the first
+deferral (if one is blocked the rest almost certainly are) or giving the whole run a budget.
+
+**R-8** — `sslModeOf`, the rejected-parameter check and `TLS_QUERY_PARAMETERS` all use exact
+lowercase matching, and `searchParams.get('sslmode')` reads only the first of duplicated values. I
+tried `SSLMODE=`, `SslMode=`, `SSL=0`, `USELIBPQCOMPAT=true`, `SSLROOTCERT=`,
+`?sslmode=verify-full&sslmode=disable` and `?sslmode=disable&sslmode=verify-full`: every one fails
+safe, either refused outright or resolving to `rejectUnauthorized: true`. But
+`?sslmode=verify-full&sslmode=disable` is *accepted* while the operator's last word was `disable`,
+which is a confusing thing to be lenient about. Reject duplicated TLS parameters explicitly.
+
+**R-9** — `databaseNameOf` (`connection-url.ts:79`) still returns the raw pathname. The commit
+message for `6373405` says it percent-decodes; it does not. Measured: `…/prod%2F_test` is accepted
+(the literal name `prod/_test` does not end in `_test`) and `…/scratch%5Ftest` is refused (the
+literal name `scratch_test` does). Both directions fail safe — an accepted encoded name would have
+`ensureTestDatabase` create `"prod%2F_test"` while pg connects to `prod/_test`, which errors rather
+than truncating anything — so this is cosmetic. Note also that `endsWith('_test')` is case-sensitive,
+so `…/X_TEST` and `…/scratch_TEST` are refused; safe, but worth saying out loud in the error message.
+
+**R-10** — `0009:142-152` revokes `EXECUTE` from `PUBLIC` on all four functions (verified: `proacl`
+no longer contains a bare `=X/geonerva` entry for any of them), but there is no
+`ALTER DEFAULT PRIVILEGES IN SCHEMA geonerva REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`, so the next
+function a migration adds starts `PUBLIC`-executable again.
+
+**R-11** — the new rule is effective for realistic code but not exhaustive. Probed:
+
+```text
+sql`SELECT ${sql.raw(column)}`                 -> error          OK
+sql.raw('SELECT 1')                            -> error          OK
+const raw = sql.raw; raw('SELECT 2')           -> error          OK
+const { raw: d } = sql; d('SELECT 3')          -> only @typescript-eslint/unbound-method
+(sql as never)['raw']('SELECT 4')              -> no error       MISS
+```
+
+The computed-access hole needs an explicit cast to compile, so review would catch it — but this is
+exactly the shape of P1's F-1 (the `NEXT_PUBLIC` rule missing bracket access), and the lesson there
+was to cover every syntactic form. Add `MemberExpression[computed=true][property.value='raw']` and a
+destructuring selector.
+
+**S-11** — unchanged and not claimed: `sql.lit(decimals)` at `spatial/fragments.ts:125,133`.
+
+## R.4 Verified fixed
+
+Each of these failed before its fix, and I re-verified it independently rather than relying on the
+new tests.
+
+| Finding | Evidence |
+|---|---|
+| **S-1** | `SEARCH_PATH.replaceAll(' ','')` produces `-c search_path=public,extensions`. The new `security-fixes.int.test.ts` opens a real pool through `createPool`, runs `SHOW search_path` and checks `to_regclass('geonerva.sources')`. The integration suite is green (134 tests), so the production connection factory is now exercised. |
+| **S-2** (core) | Resolved `client.connectionParameters.ssl` for the createPool path is `{"rejectUnauthorized":true,"ca":"PINNED-CA"}` for both `sslmode=verify-full` and `sslmode=require` — the pinned CA now survives, which it did not before. `uselibpqcompat`, `ssl=false`, `sslmode=disable`, `sslmode=prefer` and a missing `sslmode` are all refused in production. Case variants of `sslmode` fail closed ("must require TLS in production"). See R-5 for the one remaining parameter. |
+| **stripping is value-preserving** | I specifically looked for a URL whose meaning changes. `driverConnectionString` round-trips through `URLSearchParams`, which re-encodes `%20` as `+` — but `pg-connection-string` decodes both to a space, and a real connection carrying `options=-c%20statement_timeout%3D5000` produced `statement_timeout = 5s` both before and after stripping. Passwords with `%40`/`%3A`/`%2F`, IPv6 hosts, non-default ports, mixed-case hosts and unrelated parameters all survive unchanged. |
+| **S-3** | 19 adversarial URLs. Now refused: the development database on loopback, `…/postgres`, an SSH-tunnelled `…@127.0.0.1:5433/supabase_prod`, `localhost:5432/production`, `0.0.0.0/x_test`, `localhost.`, the `userinfo@host` trick, a `#fragment` trick, `?dbname=` smuggling, unix sockets, and an override value of `true` instead of `1`. Accepted: the documented default, `[::1]/x_test`, and an explicit remote override. The one accepted case worth naming is a *tunnelled* database that is itself named `*_test` — inherent to a name-based rule, and the name does say "test". |
+| **S-5** | `SELECT … WHERE NOT relrowsecurity` over the whole schema returns **zero rows** after migration, covering the eight partitions 0005 created (backfilled by 0009), partitions created at runtime, and — the case asked about — the partition seen by the **losing** side of a creation race: the winner enables RLS inside the same transaction that creates it, so the loser's early return is safe. Measured `relrowsecurity = true` on the raced partition. |
+| **S-6** | Two concurrent autocommit sessions calling `ensure_fire_detection_partition('2031-08-08')`: `['ok(fire_detections_20310808)', 'ok(fire_detections_20310808)']`. Previously one raised `42P07`. |
+| **S-7** (primary path) | With a second session holding an open transaction that had run `SELECT count(*) FROM geonerva.fire_detections`: `dropDetectionPartitionsBefore(…, {lockTimeoutMs:1000})` returned `{dropped:[], deferred:[…10 partitions…]}` in 10.1 s instead of blocking, and after the reader committed the same call dropped all 10. Retention no longer parks ingestion behind a reader. |
+| **S-8** (primary path) | Tombstoning a live record now writes: `{"inserted":true,"versionSeq":2}`, and `observationsNow` drops to 0 rows. A caller-supplied hash that collides with the head can no longer suppress the tombstone, because the stored hash is `sha256(status || content)` rather than the caller's value. See R-2 for the repeat case. |
+| **S-10** | The rule fires on `sql.raw(...)` inside a template, on a bare `sql.raw('…')` call and on aliasing. See R-11 for the residual forms. `pnpm lint --max-warnings=0` is clean with the rule active. |
+| **S-12** | `truncateAll` now builds the list with `format('geonerva.%I', t)` server-side over a bound `text[]`. No hand-quoted identifier remains in the package. |
+| **S-13** | `geonerva_web`'s column privileges on `agent_outputs` are now `created_at, id, model, prompt_version, role, snapshot_id, used, validation_status` — `output` is gone, and the grant finally matches the comment above it. (The table-level `REVOKE` correctly cleared 0007's column grants before the new grant re-established them.) |
+| **S-14** | `proacl` for all four maintenance functions no longer contains a bare `=X/geonerva` (PUBLIC) entry: `{geonerva=X/geonerva,geonerva_worker=X/geonerva}`, plus `geonerva_web` on the reporting function only. See R-10. |
+| **S-16** | The `clock_timestamp()` contract is now documented in place: `finishRun` must be the last statement of the ingestion transaction. That is what I asked for — the timestamp is unchanged, the invariant is now stated where someone will read it. |
+| **S-17** | Verified with concurrency rather than by reading. Eight simultaneous cold acquisitions for one product: **1 acquired, 7 refused, 1 RUNNING row**. Eight simultaneous workers all finding the *same stale* lease: **1 acquired, 7 refused, 1 RUNNING row, exactly 1 row marked `LEASE_EXPIRED`** — no double-acquire, no lost lease, no duplicate expiry. Holder finishing mid-flight: 1 acquired. Inside a single transaction, a second acquire returns `{acquired:false, heldByRunId:…}` and a third acquire for a different source still works — no `25P02`. **The rewrite introduced no new race.** |
+| **S-18** (half) | `0.0.0.0` is no longer treated as loopback and is refused. The percent-decoding half is R-9. |
+| **S-9, C1-forward** | Recorded in `IMPLEMENTATION_PLAN.md` §3a against P8, with the dependency rule required before the first endpoint. Correctly scoped. |
+| **DST** | `ensure_fire_detection_partition('2030-03-10')` under `America/New_York` produced `FROM ('2030-03-09 19:00:00-05') TO ('2030-03-10 20:00:00-04')` — exactly 24 h in UTC across the spring-forward boundary. The `AT TIME ZONE 'UTC'` anchoring is correct. |
+
+**Project checks:** `pnpm typecheck` clean; `pnpm lint --max-warnings=0` clean with the new rule;
+`pnpm depcruise` clean (103 modules, 297 dependencies); `pnpm test:unit` 297/297;
+`pnpm test:integration` 134/134 against PostgreSQL 17.0 / PostGIS 3.4.3.
+
+All probing used throwaway databases (`geonerva_rr_test`, `geonerva_rr2_test`,
+`geonerva_probe_test`), which have been dropped. The development database was not touched.
+
+## R.5 What blocks G2 now
+
+1. **R-1** — must be fixed. A migration that leaves the database unable to ingest on a supported
+   configuration is not a schema that can be frozen.
+
+Recommended to fix in the same round, because they sit inside the code G2 freezes:
+
+2. **R-2** — the tombstone path is the one ADR-030 depends on, and the guard is one early return.
+3. **R-3** — reintroduces, in the retention path, the defect this round removed from the lease.
+4. **R-4** — one line, and it makes the two connection paths agree about what a URL means.
+5. **R-5** — one string in `TLS_QUERY_PARAMETERS`.
+
+R-6 to R-11 and S-11 are LOW and can be recorded rather than fixed, except the §3a S-15b wording in
+R-6, which should be corrected because it asserts a behaviour Kysely does not have.
+
+Once R-1 is fixed I have no objection to signing G2 from a security standpoint. A further re-review
+should re-run only the non-UTC migration scenario end to end: migrate a fresh database under
+`ALTER DATABASE … SET TimeZone`, confirm every partition's bounds are UTC-midnight-aligned, confirm
+`ensure_fire_detection_partitions` spans the old seam without raising, and confirm a detection at
+`00:30Z` lands in the partition named for its own UTC day.
