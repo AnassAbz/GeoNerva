@@ -22,15 +22,25 @@
 
 import { createDatabase, workerPoolOptions } from '@geonerva/db';
 import { ConfigError, loadWorkerConfig } from '@geonerva/config';
-import { createJsonLogger, runIngestion, type RunOutcome } from '@geonerva/pipeline';
 import {
+  createJsonLogger,
+  runFireIngestion,
+  runIngestion,
+  type FireIngestionOutcome,
+  type RunOutcome,
+} from '@geonerva/pipeline';
+import {
+  FIRMS_SENSORS,
   GDACS_EVENT_TYPES,
   USGS_FEEDS,
   createSourceClient,
   emscAdapter,
+  firmsDescriptor,
   gdacsAdapter,
+  isFirmsSensor,
   isUsgsFeed,
   usgsAdapter,
+  type FirmsSensor,
   type SourceAdapter,
 } from '@geonerva/sources';
 
@@ -85,7 +95,25 @@ const FEED_VALIDATORS: Readonly<Record<string, (feed: string) => string | null>>
   ),
 };
 
-export const AVAILABLE_SOURCES = Object.keys(ADAPTERS);
+/**
+ * FIRMS, which is not in `ADAPTERS` because it is not a `SourceAdapter`.
+ *
+ * Thermal detections never become observation versions (DOMAIN_MODEL §4.9): they have no
+ * identity, no revisions and 230,000 rows a day, and they live in a partitioned table with its
+ * own insert and its own retention. `runFireIngestion` gives them the same lifecycle — lease,
+ * run row, batch verdict, reject rows, health evidence — and a different persist step. Listing
+ * them here rather than pretending they fit the other shape is the honest version of that.
+ */
+const FIRE_SOURCES = FIRMS_SENSORS.map((sensor) => `firms:${sensor}`);
+
+export const AVAILABLE_SOURCES = [...Object.keys(ADAPTERS), ...FIRE_SOURCES];
+
+/** The sensor behind `firms:VIIRS_NOAA20_NRT`, or `null` when this is not a FIRMS source. */
+function firmsSensorOf(source: string): FirmsSensor | null {
+  if (!source.startsWith('firms:')) return null;
+  const sensor = source.slice('firms:'.length);
+  return isFirmsSensor(sensor) ? sensor : null;
+}
 
 export interface RunSourceArgs {
   readonly source?: string;
@@ -127,7 +155,7 @@ export function parseRunArgs(argv: readonly string[]): RunSourceArgs {
   }
 
   if (!help && source === undefined) errors.push('--source is required');
-  if (source !== undefined && !(source in ADAPTERS)) {
+  if (source !== undefined && !(source in ADAPTERS) && firmsSensorOf(source) === null) {
     errors.push(`unknown source: ${source} (available: ${AVAILABLE_SOURCES.join(', ')})`);
   }
   // Checked here as well as in the adapter, so an operator gets the answer before the worker
@@ -161,6 +189,24 @@ observation, not a worker failure. Exits 1 only when the worker itself could not
  */
 export function exitCodeFor(outcome: RunOutcome): number {
   return outcome.errorClass === 'CONFIG_ERROR' ? 1 : 0;
+}
+
+/** The same one-liner for a detection batch, in the terms detections actually have. */
+export function describeFireOutcome(outcome: FireIngestionOutcome): string {
+  const mode = outcome.keyless ? 'keyless' : 'Area API';
+  if (outcome.status === 'SUCCEEDED' || outcome.status === 'PARTIAL') {
+    const counts = outcome.counts;
+    return (
+      `${outcome.status} (${mode}) — ${counts.received} received, ${counts.inserted} new, ` +
+      `${counts.duplicates} already held, ${counts.rejected} rejected` +
+      (outcome.newestAcquiredAt === null
+        ? ''
+        : `; newest ${outcome.newestAcquiredAt.toISOString()}`)
+    );
+  }
+  return outcome.detail === null
+    ? `${outcome.status} (${mode})`
+    : `${outcome.status} (${mode}) — ${outcome.detail}`;
 }
 
 /** Human-readable one-liner. The machine-readable record is the JSON log and the run row. */
@@ -201,14 +247,43 @@ export async function runSource(
   }
 
   const source = args.source;
+  const sensor = source === undefined ? null : firmsSensorOf(source);
   const adapter = source === undefined ? undefined : ADAPTERS[source];
-  if (adapter === undefined) {
+  if (adapter === undefined && sensor === null) {
     console.error(`✗ unknown source: ${source ?? '(none given)'}`);
     return 2;
   }
 
   const handle = createDatabase(workerPoolOptions(config.DATABASE_URL_WORKER, config.NODE_ENV));
   try {
+    if (sensor !== null) {
+      /*
+       * Keyless when no `FIRMS_MAP_KEY` is configured, and it says so in the output.
+       *
+       * Not a silent degradation: the keyless files are not a strict 24 hours (P0 measured ≈ 42),
+       * cannot be backfilled, and are the same two sensors. An operator who thinks they are
+       * polling the Area API when they are reading a public file would draw the wrong conclusion
+       * from a gap, so the mode is part of the result rather than an implementation detail.
+       */
+      const descriptor = firmsDescriptor(sensor);
+      const outcome = await runFireIngestion({
+        db: handle.db,
+        client: createSourceClient(descriptor, {
+          userAgent: `GeoNerva/${config.NODE_ENV} (+https://github.com/geonerva)`,
+        }),
+        sensor,
+        ...(config.FIRMS_MAP_KEY === undefined ? {} : { mapKey: config.FIRMS_MAP_KEY }),
+        trigger: 'MANUAL',
+        logger: createJsonLogger(),
+        ...(signal === undefined ? {} : { signal }),
+      });
+      console.error(describeFireOutcome(outcome));
+      return outcome.errorClass === 'CONFIG_ERROR' ? 1 : 0;
+    }
+    if (adapter === undefined) {
+      console.error(`✗ unknown source: ${source ?? '(none given)'}`);
+      return 2;
+    }
     const outcome = await runIngestion({
       db: handle.db,
       adapter,

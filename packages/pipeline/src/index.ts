@@ -29,3 +29,5 @@ export {
   sanitizeDetail,
 } from './logging.ts';
 export type { IngestionLogFields, LogLevel, Logger } from './logging.ts';
+export { runFireIngestion } from './fire-ingest.ts';
+export type { FireIngestionOutcome, RunFireIngestionOptions } from './fire-ingest.ts';

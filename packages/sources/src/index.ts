@@ -130,3 +130,27 @@ export type { GdacsEventType, GdacsWindow } from './gdacs/api.ts';
 export { GDACS_HAZARD_TYPES, gdacsPrimaryKey, normalizeGdacsFeature } from './gdacs/normalize.ts';
 export { gdacsFeatureSchema, gdacsPropertiesSchema } from './gdacs/schema.ts';
 export type { GdacsFeature, GdacsProperties } from './gdacs/schema.ts';
+
+export { FIRMS_DAY_RANGE, fetchFirms, firmsDescriptor, parseFirms } from './firms/adapter.ts';
+export type { FirmsBody, FirmsFetchOptions } from './firms/adapter.ts';
+export {
+  FIRMS_HOST,
+  FIRMS_MAX_DAY_RANGE,
+  FIRMS_SENSORS,
+  firmsAreaUrl,
+  firmsEndpoint,
+  firmsKeylessUrl,
+  isFirmsSensor,
+  isInvalidKeyResponse,
+  isValidMapKey,
+  redactFirmsUrl,
+} from './firms/api.ts';
+export type { FirmsAreaRequest, FirmsSensor } from './firms/api.ts';
+export {
+  FIRMS_REQUIRED_COLUMNS,
+  confidenceClassOf,
+  firmsInstant,
+  parseFirmsCsv,
+  roundCoordinate,
+} from './firms/parse.ts';
+export type { FirmsDetection, FirmsParseResult } from './firms/parse.ts';
