@@ -121,7 +121,7 @@ RECOMMENDED NEXT STEP
 |---|---|---|
 | G0 | this document | Architecture docs approved by product owner; open questions answered or defaulted |
 | G1 ✅ | P1 | **PASSED 2026-09-19** with exception E-1 (see `docs/reviews/gate-g1.md`): CI green on the scaffolded workspace; `pnpm db:up` + `pnpm db:check` (PostgreSQL + PostGIS + pg_trgm available) works on a clean machine. (`pnpm db:migrate` arrives with the migrator in P2, which packages/db owns) |
-| G2 ★ | P2 | Schema + domain + read models frozen; as-of invariants I2/I3 pass; storage estimate measured |
+| G2 ★ ✅ | P2 | **PASSED 2026-09-19** (see `docs/reviews/gate-g2.md`). Schema + domain + read models frozen; as-of invariants I2/I3 pass; storage estimate measured |
 | G3 | P3 | Vertical slice: USGS fixture → DB → as-of query; live USGS run in dev; idempotency proven |
 | G4 | P4 | All P0 sources ingest in dev for ≥ 24 h; health derivation correct; drift drills pass |
 | G5 | P5–P7 | Correlation calibrated on the labelled set (precision ≥ 0.98, recall ≥ 0.95 on M ≥ 4.5 pairs); relevance and baseline boundary tests; **QA round 1 on engines** |
@@ -174,7 +174,7 @@ RECOMMENDED NEXT STEP
 - **Expected commits:** `chore: initialize pnpm workspace`, `chore: strict TypeScript and lint`, `chore(ci): add CI pipeline`, `chore(infra): add docker compose with PostGIS`, `feat(config): validate environment`, `docs: add open-source community files`.
 - **Risks:** MapLibre v6 wrapper incompatibility (fallback: in-house wrapper); PostGIS version mismatch between local and Supabase.
 
-### P2 — Domain model & database ★ freeze
+### P2 — Domain model & database ★ freeze ✅ COMPLETE (2026-09-19)
 - **Goal:** Implement `DOMAIN_MODEL.md`: types, schemas, migrations, repositories, as-of views, spatial SQL, read-model contracts.
 - **Dependencies:** P1 (P0 fixtures helpful but not blocking).
 - **Agent owner:** Domain/DB.
