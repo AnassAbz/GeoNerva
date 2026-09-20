@@ -6,6 +6,8 @@
  */
 
 export { describeBackfillFailure, runBackfill } from './backfill.ts';
+export { runDeletionSweep } from './deletion-sweep.ts';
+export type { DeletionSweepOptions, DeletionSweepOutcome } from './deletion-sweep.ts';
 export type { BackfillOutcome, BackfillRequest, RunBackfillOptions } from './backfill.ts';
 
 export { classifyFetchFailure, describeDatabaseFailure, runIngestion } from './run.ts';

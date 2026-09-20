@@ -238,6 +238,26 @@ export interface SourceRecordRow {
 }
 
 /** One record by `(source, primary key)`. */
+/**
+ * Resolves an alias set to an existing record, **without creating one**.
+ *
+ * `resolveSourceRecord` creates on a miss, which is right for ingestion and wrong for a deletion
+ * sweep: a tombstone for an event GeoNerva never ingested would conjure a record whose only
+ * version says it was deleted. The answer to "we have never heard of this" is `null`.
+ *
+ * Merge redirects are followed, so an alias belonging to an absorbed record resolves to the
+ * survivor rather than to a record `observationsAsOf` no longer returns.
+ */
+export async function findRecordByAliases(
+  db: Db,
+  sourceId: string,
+  aliases: readonly string[],
+): Promise<string | null> {
+  const matched = await findRecordIdsByAliases(db, sourceId, aliases);
+  const survivors = [...new Set(await Promise.all(matched.map((id) => resolveSurvivor(db, id))))];
+  return survivors[0] ?? null;
+}
+
 export async function findSourceRecord(
   db: Db,
   sourceId: string,

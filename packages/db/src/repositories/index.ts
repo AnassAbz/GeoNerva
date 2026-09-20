@@ -64,6 +64,7 @@ export type { RawRecordInput } from './raw-records.ts';
 
 export {
   addAliases,
+  findRecordByAliases,
   findSourceRecord,
   listAliases,
   mergeSourceRecords,
