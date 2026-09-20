@@ -26,7 +26,7 @@ import {
   planCoverageMs,
   planWindows,
   splitWindow,
-} from './window-planner.ts';
+} from '../fdsn/window-planner.ts';
 
 const FROM = new Date('2026-01-01T00:00:00.000Z');
 const TO = new Date('2026-02-01T00:00:00.000Z');

@@ -646,6 +646,36 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
       fetchMs: Math.round(fetchMs),
     });
 
+    if (fetched.kind === 'NO_DATA') {
+      /*
+       * The provider looked and found nothing. That is an *observation*, not a skipped poll, so
+       * the run SUCCEEDs with zero counts and `received = 0` is the truth rather than a gap.
+       *
+       * SKIPPED would have been the easy choice and it would have been wrong: SKIPPED means
+       * "there was nothing new to examine", and an operator reading a week of SKIPPED runs cannot
+       * tell a quiet catalogue from a feed that stopped changing. Zero received, status SUCCEEDED,
+       * is unambiguous.
+       */
+      logger.log('info', 'ingestion.no_data', {
+        ...base,
+        stage: 'fetch',
+        runId,
+        httpStatus: fetched.httpStatus,
+        detail: fetched.detail,
+        received: 0,
+      });
+      const committedAt = await finishRun(db, {
+        runId,
+        status: 'SUCCEEDED',
+        httpStatus: fetched.httpStatus,
+        bytesReceived: fetched.bytes,
+        // The previous digest, carried forward by the adapter. Never sha256("").
+        payloadSha256: fetched.payloadSha256,
+        counts: EMPTY_COUNTS,
+      });
+      return finish('SUCCEEDED', runId, null, fetched.detail, EMPTY_COUNTS, committedAt);
+    }
+
     if (fetched.kind === 'UNCHANGED') {
       // Still health evidence: the source answered. SKIPPED, not FAILED and not invisible.
       const committedAt = await finishRun(db, {

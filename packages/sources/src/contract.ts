@@ -91,7 +91,28 @@ interface FetchMeta {
 export type FetchResult =
   | (FetchMeta & { readonly kind: 'FETCHED'; readonly body: Uint8Array })
   /** Byte-identical to the previous run. Still health evidence, so the run is SKIPPED, not lost. */
-  | (FetchMeta & { readonly kind: 'UNCHANGED' });
+  | (FetchMeta & { readonly kind: 'UNCHANGED' })
+  /**
+   * The provider answered, definitively, that nothing matched the query.
+   *
+   * A third kind rather than an empty body, because the three are different facts and collapsing
+   * them loses the one that matters (ARCHITECTURE §4.2: unavailable ≠ empty ≠ unknown):
+   *
+   *  - `UNCHANGED` — "the same bytes you already have". Says nothing about the world.
+   *  - `NO_DATA` — "I looked, and there is nothing in that window". An observation.
+   *  - `FETCHED` with zero records — a *body* that contains no records, which for a feed that
+   *    should never be empty is drift (`EMPTY_SUSPICIOUS`), not quiet.
+   *
+   * EMSC makes the distinction explicit: an FDSN service with the default `nodata=204` answers
+   * **HTTP 204 with an empty body** when nothing matched (live-verified 2026-09-20), and a 200
+   * carrying `features: []` from that same service is therefore a malformed answer rather than a
+   * quiet hour. Routing the 204 here keeps `emptyBatchIsSuspicious` free to mean what it says.
+   *
+   * There is no body, so there is nothing to hash: `payloadSha256` carries the **previous** run's
+   * digest forward, for the same reason a 304 does — storing sha256("") would erase the last
+   * real digest and make the next identical body look changed.
+   */
+  | (FetchMeta & { readonly kind: 'NO_DATA'; readonly detail: string });
 
 export interface ParseContext {
   readonly descriptor: SourceDescriptor;

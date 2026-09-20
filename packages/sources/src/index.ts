@@ -66,9 +66,36 @@ export {
   planCoverageMs,
   planWindows,
   splitWindow,
-} from './usgs/window-planner.ts';
-export type { PlannedWindow, WindowPlanOptions } from './usgs/window-planner.ts';
+} from './fdsn/window-planner.ts';
+export type { PlannedWindow, WindowPlanOptions } from './fdsn/window-planner.ts';
 
 export { normalizeUsgsFeature, parseIds } from './usgs/normalize.ts';
 export { usgsFeatureSchema, usgsFeedSchema } from './usgs/schema.ts';
 export type { UsgsFeature } from './usgs/schema.ts';
+
+export {
+  EMSC_POLL_LOOKBACK_MS,
+  emscAdapter,
+  emscDescriptor,
+  parseEmscFeed,
+} from './emsc/adapter.ts';
+export {
+  EMSC_HOST,
+  EMSC_MAX_ROWS,
+  EMSC_WINDOW_TARGET,
+  emscCount,
+  emscCountUrl,
+  emscEndpoint,
+  emscQueryUrl,
+  emscUpdatedAfterUrl,
+  isTruncated,
+  parseEmscCount,
+} from './emsc/fdsn.ts';
+export { normalizeEmscFeature } from './emsc/normalize.ts';
+export { emscFeatureSchema, emscFeedSchema } from './emsc/schema.ts';
+export type { EmscFeature, EmscFeatureProperties } from './emsc/schema.ts';
+
+export {
+  assertWindow,
+  bridgeEndtime,
+} from './fdsn/window.ts';

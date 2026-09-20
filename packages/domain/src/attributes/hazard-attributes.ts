@@ -100,6 +100,17 @@ export const earthquakeAttributesSchema = z.strictObject({
   /** Provider event type: `earthquake`, `quarry blast`, `explosion`, … */
   event_type: shortText.optional(),
   /**
+   * Which of a provider's catalogues this solution came from, when the provider runs more than
+   * one and says so per record (EMSC `source_catalog`).
+   *
+   * It is per record rather than per product because EMSC's single FDSN endpoint serves both: a
+   * live poll is entirely `EMSC-RTS`, while one day of 2010 came back 85 `EMSC-EMB` — the merged
+   * bulletin, revised long after the fact — to 12 `EMSC-RTS`. The seeded product is `emsc/rts`,
+   * so without this field a backfill would label bulletin solutions with a provenance the
+   * provider contradicted in the same response.
+   */
+  provider_catalog: shortText.optional(),
+  /**
    * For a derived copy (GDACS EQ): the identifier of the upstream solution GDACS restates, so the
    * correlation engine can attach it as `DERIVED_COPY` instead of counting it as agreement.
    */
