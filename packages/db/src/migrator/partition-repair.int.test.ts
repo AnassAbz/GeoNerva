@@ -22,19 +22,47 @@ import { migrateUp } from './runner.ts';
 import { MIGRATIONS_DIR } from './migrations.ts';
 
 const ADMIN_URL = 'postgresql://geonerva:geonerva@127.0.0.1:54320/postgres';
-const cleanups: (() => Promise<void> | void)[] = [];
+/**
+ * Cleanups, each with a name.
+ *
+ * The name exists because of a real diagnostic dead end: this hook has timed out at 120 s during
+ * a full integration run twice, and the failure message says only "Hook timed out" — which step
+ * it was in is exactly the information needed and exactly what was missing. Measured directly,
+ * `DROP DATABASE … WITH (FORCE)` on a freshly migrated database takes ~330 ms while the server is
+ * idle, so the drop is *not* the obvious culprit, and guessing further without evidence is how a
+ * flake stays unexplained for three phases. Any step over `SLOW_CLEANUP_MS` now reports itself.
+ */
+interface NamedCleanup {
+  readonly what: string;
+  run(): Promise<void> | void;
+}
+
+const cleanups: NamedCleanup[] = [];
+
+/** Long enough that a healthy run is silent, short enough to catch a step heading for 120 s. */
+const SLOW_CLEANUP_MS = 5_000;
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) {
-    await cleanup();
+    const started = Date.now();
+    await cleanup.run();
+    const elapsed = Date.now() - started;
+    if (elapsed > SLOW_CLEANUP_MS) {
+      process.stdout.write(`
+    slow cleanup: ${cleanup.what} took ${String(elapsed)} ms
+`);
+    }
   }
 });
 
 /** A migrations directory holding only the files up to and including `lastVersion`. */
 function migrationsUpTo(lastVersion: string): string {
   const directory = mkdtempSync(join(tmpdir(), 'gn-migrations-'));
-  cleanups.push(() => {
-    rmSync(directory, { recursive: true, force: true });
+  cleanups.push({
+    what: 'remove the temporary migrations directory',
+    run: () => {
+      rmSync(directory, { recursive: true, force: true });
+    },
   });
   for (const file of readdirSync(MIGRATIONS_DIR)) {
     if (file.slice(0, 4) <= lastVersion) cpSync(join(MIGRATIONS_DIR, file), join(directory, file));
@@ -54,14 +82,17 @@ async function createDatabaseInZone(name: string, timeZone: string): Promise<str
   } finally {
     await admin.end();
   }
-  cleanups.push(async () => {
-    const cleanupAdmin = new pg.Client({ connectionString: ADMIN_URL });
-    await cleanupAdmin.connect();
-    try {
-      await cleanupAdmin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-    } finally {
-      await cleanupAdmin.end();
-    }
+  cleanups.push({
+    what: `drop the database ${name}`,
+    run: async () => {
+      const cleanupAdmin = new pg.Client({ connectionString: ADMIN_URL });
+      await cleanupAdmin.connect();
+      try {
+        await cleanupAdmin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+      } finally {
+        await cleanupAdmin.end();
+      }
+    },
   });
   return `postgresql://geonerva:geonerva@127.0.0.1:54320/${name}`;
 }
@@ -74,8 +105,11 @@ describe.each([
     const url = await createDatabaseInZone(databaseName, timeZone);
     const client = new pg.Client({ connectionString: url });
     await client.connect();
-    cleanups.push(async () => {
-      await client.end();
+    cleanups.push({
+      what: `close the connection to ${databaseName}`,
+      run: async () => {
+        await client.end();
+      },
     });
 
     // Deliberately no TimeZone pin: this reproduces a database migrated before that existed.
@@ -148,8 +182,11 @@ describe('schema hardening that a statement cannot express', () => {
     const url = await createDatabaseInZone('gn_grants_test', 'UTC');
     const client = new pg.Client({ connectionString: url });
     await client.connect();
-    cleanups.push(async () => {
-      await client.end();
+    cleanups.push({
+      what: 'close the connection to gn_grants_test',
+      run: async () => {
+        await client.end();
+      },
     });
     await migrateUp(client, {});
 

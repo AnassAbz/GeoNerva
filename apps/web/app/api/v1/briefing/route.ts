@@ -48,5 +48,5 @@ export const GET = apiRoute(
       cacheControl: briefingCacheControl(asOf, now),
     });
   },
-  { name: 'briefing' },
+  { name: 'briefing', rateLimit: 'briefing' },
 );

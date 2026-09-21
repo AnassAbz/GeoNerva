@@ -18,5 +18,10 @@ export const GET = apiRoute(
       jsonResponse(getReplayHorizon(now), { cacheControl: CACHE_POLICIES.replayHorizon }),
     );
   },
-  { name: 'replay-horizon' },
+  /*
+   * `default` — §13.4's "everything else". The limiter fails open when the counter cannot be
+   * written, which is what keeps this endpoint answerable with no database: it reads no facts, so
+   * the counter is the only thing it would have needed one for.
+   */
+  { name: 'replay-horizon', rateLimit: 'default' },
 );

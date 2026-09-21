@@ -74,11 +74,17 @@ export function briefingCacheControl(asOf: Date, now: Date): string {
  */
 export function jsonResponse(
   body: unknown,
-  options: { readonly cacheControl: string; readonly status?: number },
+  options: {
+    readonly cacheControl: string;
+    readonly status?: number;
+    /** Merged first, so the four headers below always win. For the `RateLimit-*` family. */
+    readonly headers?: Readonly<Record<string, string>>;
+  },
 ): Response {
   return new Response(JSON.stringify(body), {
     status: options.status ?? 200,
     headers: {
+      ...options.headers,
       'content-type': 'application/json; charset=utf-8',
       'cache-control': options.cacheControl,
       vary: 'Accept-Encoding',

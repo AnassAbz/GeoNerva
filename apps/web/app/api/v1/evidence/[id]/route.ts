@@ -51,5 +51,5 @@ export const GET = apiRoute(
     const detail = await getEvidence(database().db, { id: raw, asOf, now });
     return jsonResponse(detail, { cacheControl: CACHE_POLICIES.evidence });
   },
-  { name: 'evidence' },
+  { name: 'evidence', rateLimit: 'default' },
 );

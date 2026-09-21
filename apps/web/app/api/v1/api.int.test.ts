@@ -27,9 +27,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createCanonicalEvent, createDb, linkRecord, type DB } from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import { seedObservation, seedRun } from '@geonerva/db/testing/factories';
+import { loadWebConfig } from '@geonerva/config';
 import { PROBLEM_MEDIA_TYPE } from '@geonerva/domain';
 
+import { setWebConfigForTesting } from '../../../lib/server/config.ts';
 import { setDatabaseForTesting } from '../../../lib/server/db.ts';
+import { RATE_LIMITS, checkRateLimit } from '../../../lib/server/rate-limit.ts';
 import type { DatabaseHandle } from '@geonerva/db/client';
 import { GET as briefing } from './briefing/route.ts';
 import { GET as evidence } from './evidence/[id]/route.ts';
@@ -58,14 +61,42 @@ const LON = -8.0;
 /** The only USGS product the migrations seed. */
 const USGS_PRODUCT = 'comcat';
 
+/**
+ * A validated configuration, so the rate limiter has a secret to derive keys from.
+ *
+ * Loaded through `loadWebConfig` rather than hand-written, because the limiter depends on the
+ * secret passing the entropy and length checks in `packages/config` — a test that bypassed the
+ * loader could pass against a secret production would refuse.
+ */
+const TEST_CONFIG = loadWebConfig({
+  DATABASE_URL: 'postgresql://web:pw@127.0.0.1:54320/geonerva_test',
+  RATE_LIMIT_SECRET: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08', // gitleaks:allow
+  NOMINATIM_CONTACT: 'https://example.org/geonerva-contact',
+});
+
+/**
+ * A distinct caller per test, so one test's spent window is not another's.
+ *
+ * The bucket is keyed on an IP `/24`, so incrementing the third octet is what gives each test its
+ * own budget. Sharing one address across the file would make the tests order-dependent — the
+ * sixty-first briefing in the file would be refused wherever it happened to fall.
+ */
+let callerIndex = 0;
+function freshCaller(): Headers {
+  callerIndex += 1;
+  return new Headers({ 'x-forwarded-for': `203.0.${String(callerIndex)}.42` });
+}
+
 beforeAll(async () => {
   testDb = await setupTestDatabase();
   db = createDb(testDb.pool);
   setDatabaseForTesting(testHandle());
+  setWebConfigForTesting(TEST_CONFIG);
 }, 120_000);
 
 afterAll(async () => {
   setDatabaseForTesting(null);
+  setWebConfigForTesting(null);
   await db.destroy();
 });
 
@@ -75,7 +106,15 @@ beforeEach(async () => {
 
 /** Builds the request the handler sees. `now` is not injectable, so `as_of` carries the timeline. */
 function request(path: string, init?: RequestInit): Request {
-  return new Request(`https://geonerva.test${path}`, init);
+  return new Request(`https://geonerva.test${path}`, {
+    headers: freshCaller(),
+    ...init,
+  });
+}
+
+/** A request from a caller the test controls, for the rate-limit cases. */
+function requestAs(path: string, headers: Headers, init?: RequestInit): Request {
+  return new Request(`https://geonerva.test${path}`, { headers, ...init });
 }
 
 /**
@@ -301,12 +340,24 @@ describe('GET /api/v1/replay/horizon', () => {
     expect((await bodyOf(response))['code']).toBe('UNKNOWN_PARAMETER');
   });
 
-  /* It reads no facts, so it must answer even with no database configured. */
-  it('answers without touching the database', async () => {
+  /**
+   * It reads no facts, so it answers with no database — even though it is rate limited.
+   *
+   * The limiter needs the counter table, and acquiring the handle is what fails here. That failure
+   * is a *limiter* outage rather than a request failure, so it fails open: the endpoint answers and
+   * publishes no budget. An endpoint that 500ed on a counter it did not need would be the wrong
+   * trade for the one endpoint a client calls to discover every other endpoint's bounds.
+   */
+  it('answers without touching the database, failing the limiter open', async () => {
     setDatabaseForTesting(null);
+    const previous = process.env['DATABASE_URL'];
+    delete process.env['DATABASE_URL'];
     try {
-      expect((await replayHorizon(request('/api/v1/replay/horizon'))).status).toBe(200);
+      const response = await replayHorizon(request('/api/v1/replay/horizon'));
+      expect(response.status).toBe(200);
+      expect(response.headers.get('ratelimit-limit')).toBe(String(RATE_LIMITS.default.limit));
     } finally {
+      if (previous !== undefined) process.env['DATABASE_URL'] = previous;
       setDatabaseForTesting(testHandle());
     }
   });
@@ -974,5 +1025,211 @@ describe('errors never leak the system', () => {
   it('reports the request path in instance and never the query string', async () => {
     const body = await bodyOf(await briefing(request('/api/v1/briefing?lat=91&lon=0')));
     expect(body['instance']).toBe('/api/v1/briefing');
+  });
+});
+
+describe('rate limiting (ARCHITECTURE §13.4)', () => {
+  /** How many rows the counter table holds, which is the only thing the web role may write. */
+  async function bucketCount(): Promise<number> {
+    const result = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM geonerva.rate_limit_buckets
+    `.execute(db);
+    return result.rows[0]?.n ?? 0;
+  }
+
+  it('publishes the remaining budget on an allowed response', async () => {
+    const caller = new Headers({ 'x-forwarded-for': '198.51.100.7' });
+    const first = await replayHorizon(requestAs('/api/v1/replay/horizon', caller));
+    expect(first.headers.get('ratelimit-limit')).toBe('120');
+    expect(first.headers.get('ratelimit-remaining')).toBe('119');
+
+    const second = await replayHorizon(requestAs('/api/v1/replay/horizon', caller));
+    expect(second.headers.get('ratelimit-remaining')).toBe('118');
+  });
+
+  it('refuses the request after the window is spent, with Retry-After', async () => {
+    const caller = new Headers({ 'x-forwarded-for': '198.51.101.7' });
+    const limit = RATE_LIMITS.briefing.limit;
+
+    let last = await briefing(
+      requestAs(`/api/v1/briefing?lat=${String(LAT)}&lon=${String(LON)}`, caller),
+    );
+    for (let index = 1; index <= limit; index += 1) {
+      last = await briefing(
+        requestAs(`/api/v1/briefing?lat=${String(LAT)}&lon=${String(LON)}`, caller),
+      );
+    }
+
+    expect(last.status).toBe(429);
+    expect(last.headers.get('content-type')).toBe(PROBLEM_MEDIA_TYPE);
+    expect(last.headers.get('cache-control')).toBe('no-store');
+    expect(Number(last.headers.get('retry-after'))).toBeGreaterThan(0);
+    const body = await bodyOf(last);
+    expect(body['code']).toBe('RATE_LIMITED');
+    expect(body['retryAfterS']).toBeGreaterThan(0);
+  });
+
+  /**
+   * The spoofing case, end to end.
+   *
+   * A caller who prepends addresses to `X-Forwarded-For` must not get a fresh budget: the proxy
+   * appends the real peer last, so only the rightmost entry counts. If the limiter read the
+   * leftmost, these two requests would land in two buckets and the second would report a full
+   * budget — which is the failure this asserts against.
+   */
+  it('does not give a forged X-Forwarded-For prefix its own bucket', async () => {
+    const real = '198.51.102.7';
+    const first = await replayHorizon(
+      requestAs('/api/v1/replay/horizon', new Headers({ 'x-forwarded-for': real })),
+    );
+    const forged = await replayHorizon(
+      requestAs(
+        '/api/v1/replay/horizon',
+        new Headers({ 'x-forwarded-for': `10.1.2.3, 10.4.5.6, ${real}` }),
+      ),
+    );
+
+    expect(first.headers.get('ratelimit-remaining')).toBe('119');
+    expect(forged.headers.get('ratelimit-remaining')).toBe('118');
+  });
+
+  it('puts two addresses in one /24 in the same bucket', async () => {
+    const before = await bucketCount();
+    await replayHorizon(
+      requestAs('/api/v1/replay/horizon', new Headers({ 'x-forwarded-for': '198.51.103.7' })),
+    );
+    await replayHorizon(
+      requestAs('/api/v1/replay/horizon', new Headers({ 'x-forwarded-for': '198.51.103.200' })),
+    );
+    expect(await bucketCount()).toBe(before + 1);
+  });
+
+  /* Fail closed by omission: a caller with no usable address is counted, not exempted. */
+  it('counts a request with no address against a shared bucket', async () => {
+    const response = await replayHorizon(
+      requestAs('/api/v1/replay/horizon', new Headers({ 'x-forwarded-for': 'not-an-address' })),
+    );
+    expect(response.headers.get('ratelimit-remaining')).toBe('119');
+
+    const second = await replayHorizon(requestAs('/api/v1/replay/horizon', new Headers()));
+    expect(second.headers.get('ratelimit-remaining')).toBe('118');
+  });
+
+  it('gives each endpoint its own window for one caller', async () => {
+    const caller = new Headers({ 'x-forwarded-for': '198.51.104.7' });
+    await briefing(requestAs(`/api/v1/briefing?lat=${String(LAT)}&lon=${String(LON)}`, caller));
+    const horizon = await replayHorizon(requestAs('/api/v1/replay/horizon', caller));
+
+    expect(horizon.headers.get('ratelimit-limit')).toBe('120');
+    expect(horizon.headers.get('ratelimit-remaining')).toBe('119');
+  });
+
+  /* A refused verb must not spend the budget for the verb the caller is allowed to use. */
+  it('does not count a rejected method against the budget', async () => {
+    const caller = new Headers({ 'x-forwarded-for': '198.51.105.7' });
+    const refused = await replayHorizon(
+      requestAs('/api/v1/replay/horizon', caller, { method: 'POST' }),
+    );
+    expect(refused.status).toBe(405);
+    expect(await bucketCount()).toBe(0);
+
+    const allowed = await replayHorizon(requestAs('/api/v1/replay/horizon', caller));
+    expect(allowed.headers.get('ratelimit-remaining')).toBe('119');
+  });
+
+  /* A refused *request* does consume its window: a fixed window gives no free retries. */
+  it('counts a request refused by validation', async () => {
+    const caller = new Headers({ 'x-forwarded-for': '198.51.106.7' });
+    await briefing(requestAs('/api/v1/briefing?lat=91&lon=0', caller));
+    const second = await briefing(
+      requestAs(`/api/v1/briefing?lat=${String(LAT)}&lon=${String(LON)}`, caller),
+    );
+    expect(second.headers.get('ratelimit-remaining')).toBe('58');
+  });
+
+  /**
+   * `checkRateLimit` is exported and reports a verdict rather than throwing, so its numbers are
+   * part of the contract even though `enforceRateLimit` is what the handlers use.
+   *
+   * The clamp is the point. Past the limit, `limit - count` is negative, and a negative
+   * `RateLimit-Remaining` is both meaningless to a client and a nonsense number to publish. This
+   * is the only place the over-limit verdict is visible: the throwing wrapper never renders it.
+   */
+  it('reports a remainder of zero past the limit, never a negative one', async () => {
+    const caller = new Headers({ 'x-forwarded-for': '198.51.110.7' });
+    const now = new Date();
+    const check = async () =>
+      checkRateLimit({
+        db: () => db,
+        headers: caller,
+        now,
+        name: 'placesSearchGlobal',
+        secret: TEST_CONFIG.RATE_LIMIT_SECRET,
+      });
+
+    const first = await check();
+    expect(first).toMatchObject({ allowed: true, limit: 1, remaining: 0 });
+
+    for (let index = 0; index < 4; index += 1) await check();
+    const last = await check();
+
+    expect(last.allowed).toBe(false);
+    expect(last.remaining).toBe(0);
+    expect(last.retryAfterS).toBeGreaterThan(0);
+  });
+
+  it('stores no address, only a 32-byte digest', async () => {
+    await replayHorizon(
+      requestAs('/api/v1/replay/horizon', new Headers({ 'x-forwarded-for': '198.51.107.42' })),
+    );
+    const rows = await sql<{ length: number; text: string }>`
+      SELECT octet_length(bucket_key) AS length, encode(bucket_key, 'hex') AS text
+      FROM geonerva.rate_limit_buckets
+    `.execute(db);
+
+    expect(rows.rows.length).toBeGreaterThan(0);
+    for (const row of rows.rows) {
+      expect(row.length).toBe(32);
+      expect(row.text).not.toContain('198');
+      expect(row.text).not.toContain('51107');
+    }
+  });
+
+  /**
+   * The counter table is the *only* thing a request writes.
+   *
+   * ARCHITECTURE §13 calls the web process read-only, and migration 0007 makes that precise: the
+   * web role may write `rate_limit_buckets` and `geocode_cache` and nothing else. This asserts the
+   * read path exercises exactly that: a briefing leaves the counter one row heavier and every fact
+   * table untouched.
+   */
+  it('writes the counter and nothing else', async () => {
+    await healthyRun('usgs', USGS_PRODUCT);
+    await derivationRan('CORRELATION');
+    await seedQuake();
+
+    const census = async (): Promise<Record<string, number>> => {
+      const result = await sql<{ table_name: string; n: number }>`
+        SELECT 'observation_versions' AS table_name, count(*)::int AS n
+          FROM geonerva.observation_versions
+        UNION ALL SELECT 'source_records', count(*)::int FROM geonerva.source_records
+        UNION ALL SELECT 'canonical_links', count(*)::int FROM geonerva.canonical_links
+        UNION ALL SELECT 'ingestion_runs', count(*)::int FROM geonerva.ingestion_runs
+        UNION ALL SELECT 'analysis_runs', count(*)::int FROM geonerva.analysis_runs
+        UNION ALL SELECT 'location_snapshots', count(*)::int FROM geonerva.location_snapshots
+        UNION ALL SELECT 'geocode_cache', count(*)::int FROM geonerva.geocode_cache
+      `.execute(db);
+      return Object.fromEntries(result.rows.map((row) => [row.table_name, row.n]));
+    };
+
+    const before = await census();
+    const bucketsBefore = await bucketCount();
+
+    await briefing(
+      request(`/api/v1/briefing?lat=${String(LAT)}&lon=${String(LON)}&as_of=${NOW.toISOString()}`),
+    );
+
+    expect(await census()).toEqual(before);
+    expect(await bucketCount()).toBe(bucketsBefore + 1);
   });
 });

@@ -39,5 +39,5 @@ export const GET = apiRoute(
      */
     return jsonResponse(status, { cacheControl: CACHE_POLICIES.sourcesStatus });
   },
-  { name: 'sources-status' },
+  { name: 'sources-status', rateLimit: 'default' },
 );
