@@ -1,10 +1,11 @@
 # Gate G8 — the read-only domain API
 
 - **Date:** 2026-09-21
-- **Commits:** `e2927f1` → `e21fbc2` — 6, plus this report
-- **Verdict: FAIL.** Not because anything built is unsound, but because the gate's own criterion is
-  "all P0 `/api/v1` endpoints" and **4 of 11 are served**. §6 lists what is missing and why, and §7
-  explains why three of the seven cannot be built without earlier phases' packages existing.
+- **Commits:** `e2927f1` → `5948858` — 8, plus this report
+- **Verdict: FAIL.** Not because anything built is unsound — no CRITICAL or HIGH finding remains
+  open (§9) — but because the gate's own criterion is "all P0 `/api/v1` endpoints" and **4 of 11
+  are served**. §6 lists what is missing and why, and §7 explains why four of the seven cannot be
+  built without earlier phases' packages existing.
 
 **A naming warning, first.** This gate is the one the P8 continuation prompt defines. The
 repository's own acceptance criterion for its phase P8 is **G6**, not G8
@@ -112,8 +113,8 @@ GeoNerva rather than a fact about a hazard, and it never influences hazard avail
 
 | | At P8 baseline | Now |
 |---|---|---|
-| Unit | 957 | **1,370** (+413) |
-| Integration | 358 | **489** (+131) |
+| Unit | 957 | **1,406** (+449) |
+| Integration | 358 | **505** (+147) |
 
 `pnpm check` exit code **0** (typecheck, eslint, prettier, dependency-cruiser over 234 modules,
 unit tests).
@@ -143,7 +144,8 @@ The test count rises across the table because tests were added as the phase went
 330 s — the slowest two in the table, which is what pointed at contention before the cause was
 measured. Runs 11–13 are after the final change.
 
-**110 mutation controls** were run against this phase's code:
+**142 mutation controls** were run against this phase's code — 110 against the implementation and
+32 against the review fixes (§9.5):
 
 | Target | Killed |
 |---|---|
@@ -153,6 +155,7 @@ measured. Runs 11–13 are after the final change.
 | the new as-of reads | 13 / 13 (after correcting 2 non-unique anchors) |
 | rate limiting | 20 / 21 |
 | the contracts and the OpenAPI document | 15 / 15 |
+| the review fixes (§9.5) | 31 / 32, the 32nd deleted as dead code |
 
 **Eleven controls survived on their first run.** Eight were real gaps in my tests and are fixed;
 each is worth naming because each is a different way a test can be vacuous:
@@ -301,9 +304,122 @@ and the machine restarted.
 
 ## 9. The adversarial reviews
 
-*(Recorded below once both independent reviews report. Findings are classified
-CRITICAL / HIGH / MEDIUM / LOW; every CRITICAL and HIGH is fixed with a regression test before this
-gate is reconsidered.)*
+Two independent reviews, run in parallel against `e2927f1..HEAD` with different briefs — one
+security and privacy, one correctness and honesty. Between them: **no CRITICAL, 6 HIGH, 14 MEDIUM,
+16 LOW.** Every HIGH and MEDIUM is fixed, with the cheap LOWs; the rest are in §7 and §9.4.
+
+I verified each HIGH against the code or the database before acting on it. All six reproduced.
+
+### 9.1 The six HIGH findings
+
+| # | Finding | State |
+|---|---|---|
+| S-1 | A precise coordinate reached the CDN cache key and the platform access log | **fixed** |
+| S-2 | Duplicate query parameters were accepted — one response, unbounded cache keys | **fixed** |
+| S-3 | The `geonerva_web` least-privilege claim holds in neither deployment shape | **comment corrected; the gap is §9.3** |
+| C-1 | `EV:COR` served `immutable` for a year, while `canonical_links` is updated in place | **fixed** |
+| C-2 | I9 unenforced on `/sources/status`, with a test asserting the violation | **fixed** |
+| C-3 | The refinement that "encodes I9" was blind to two of the eight evidence kinds | **fixed** |
+
+**S-1** is the one worth spelling out, because the code claimed the opposite. `parseLocation`
+rounded on arrival, which satisfied invariant I15 for the response *body* — and left
+`?lat=48.856614&lon=2.352222` as the CDN cache key and in the platform's own access log, which
+`log.ts`'s redaction cannot reach. ADR-015 and §13.2 both say "before logging, caching or
+querying", and no server can round before the URL reaches the edge. `cache.ts` asserted that "an
+unrounded position in a CDN key would be one visitor's location stored at the edge" as though the
+code prevented it. The boundary now **requires** a canonical coordinate and refuses a finer one
+without echoing it; the residual — that the first such request's URL still reaches the platform log
+once — is stated in `params.ts` rather than glossed.
+
+**C-1** is the most serious thing either review found. §13.1 says the evidence endpoint is
+immutable, on the premise the route's own comment stated: every primary evidence kind is an
+append-only row. Two of the four are not. `canonical_links` is updated in place by `unlinkRecord`,
+the relink path and `mergeCanonicalEvents`; `ingestion_runs` by `finishRun` and by lease expiry.
+And `correlationEvidenceAsOf` deliberately *reveals* a withdrawal from the moment it happens. So a
+client could resolve `EV:COR:7` at 12:00, read `unlinkedAt: null`, have it cached `immutable` for a
+year, and still read the correlation as open after the worker withdrew it at 14:00 — through a hard
+reload. `immutable` now requires a knowledge time materially in the past.
+
+**C-2 and C-3** are the same invariant failing in two places. `/sources/status` omitted a manifest
+entry it could not resolve while still citing the id, and a test asserted that as desired
+behaviour; a run with no resolvable evidence is now not reported at all, because
+`RunSummaryView.evidenceId` is non-nullable and there is no I9-compliant way to describe it. And
+the briefing's I9 refinement walked for `evidenceId`/`evidenceIds` only, while
+`BaselineMetricView.id` and `ChangeSignalView.id` are `EV:BAS:` and `EV:CHG:` references — so a
+briefing could cite a change signal absent from its own manifest and the refinement could not fail.
+Its comment claimed a key-name walk "cannot" miss a field.
+
+### 9.2 MEDIUM, all fixed
+
+| Finding | Fix |
+|---|---|
+| An oversized `X-Forwarded-For` let a caller *choose* the shared `unknown` bucket | The header is read from its end; the bucket is no longer selectable |
+| `runSummariesAsOf` read and sorted the whole run history per call (`EXPLAIN`-confirmed) | A lateral join, bounded per source in the index |
+| `decodeURIComponent('%ZZ')` was a one-byte caller-triggerable 500 | Caught; a 400 |
+| `errorMessage` published on the strength of `sanitizeDetail`, which redacts nothing | Served as `null`; the write-path gap is §9.4 |
+| The heartbeat compared a database clock to a web clock with a strict `<=` | A five-second skew allowance, matching `parseAsOf` |
+| A `c:` location key 404'd blaming a missing GeoNames import | Resolved as the coordinate pair it is |
+| The document promised a `501` nothing serves | Removed; the `404` a caller receives is documented |
+| The briefing's `Cache-Control` was a `const` containing a *sentence* | An `enum` of the two real values |
+| Legitimate IPv6 spellings fell into the shared bucket | Zone ids stripped, mixed notation recognised |
+| `?families=` yielded an empty family list — a false zero from a typo | Treated as every family |
+| Problem responses lacked `nosniff` and framing headers | Added |
+| `instance` reflected an unbounded attacker-controlled path | Capped |
+| `RateLimit-*` rode on publicly cacheable 200s | Only on a 429, which is `no-store` |
+| Two doc comments stated the opposite of the code beside them | Corrected |
+
+### 9.3 S-3: the least-privilege claim, which is not P8's to fix
+
+`db.ts` asserted that the read-only property "is enforced by the database rather than by this
+code". Verified against the database, that is true of neither shape available today:
+
+- **As `geonerva_web`**: every table has RLS `ENABLE` with **zero policies** and the role has no
+  `BYPASSRLS` — `pg_policies` for the `geonerva` schema is empty. `blindness.int.test.ts` already
+  measures the consequence: under `SET LOCAL ROLE geonerva_web`, `observationsAsOf` returns 0 rows
+  where the owner sees 230. Every endpoint would serve an empty world.
+- **As migration 0007's documented default** — granting the NOLOGIN group role to the owning login
+  role — membership is additive and the login role still *owns* the tables, so it keeps
+  `INSERT`/`UPDATE`/`DELETE` on everything and bypasses policy-less RLS as owner.
+
+So the property is currently enforced by **this layer's structure**: no write statement exists
+outside `consumeRateLimit`, and the dependency rules stop a repository being reachable. The
+comment now says that. Writing RLS policies touches every table in the schema and is a security
+decision of its own — not a change to make quietly inside an API phase — so it is carried as an
+open finding rather than a fix.
+
+### 9.4 Accepted, with reasons
+
+- **`errorMessage` is served as `null`.** The frozen contract promises "never a raw provider body
+  and never a connection string", and that is a property of the *writer*: `sanitizeDetail`
+  collapses whitespace and caps 1 KB, while `SourceFetchError.describe()` puts the provider's host
+  and path in the column and a normalization failure puts Zod issue text quoting payload values
+  there. `string | null` lets the endpoint satisfy the contract while the promise is unmet. The
+  real fix is redaction at the write path.
+- **The evidence space is enumerable.** `EV:OBS:1..N` walks the corpus at 120 req/min and the
+  404/200 boundary reveals row counts. The facts are redistributable, so this discloses internal
+  scale and timing rather than protected data — but it is real, and it is the strongest argument
+  for the LRU §13.3 asks for and P8 did not build.
+- **The 405 path is unmetered**, deliberately: a refused verb must not spend the budget for the
+  verb a caller is allowed to use. The cost is one `new URL()` and one `randomUUID()`.
+- **`url` and `sourceUrl` now drop a non-`http(s)` scheme** at the API boundary, which is
+  defence-in-depth; the deeper fix is to refuse such a value at normalize time.
+- **`snapshot.overall.headlineText` drops the "GeoNerva is tracking" scoping** that
+  `templates.ts` deliberately adds. Outside the P8 diff, and the answer to "can any response imply
+  the user is safe" — so it is recorded here and belongs to whoever owns the snapshot copy.
+
+### 9.5 Then I mutation-tested the fixes
+
+32 controls over the review fixes themselves. **Eight survived the first run, and every one was a
+fix I had made without a test** — the same defect the reviews were about, one layer up. All eight
+now have one: the conditional cache policy, I9 on the status contract, the manifest walk's `id`
+collection, the problem headers, the capped `instance`, the logged 405, the decode guard, and the
+`c:` key.
+
+The thirty-second survivor was not a missing test but **dead logic**. `evidenceCacheControl` took a
+`wasPinned` argument on the reasoning that only a pinned knowledge time can be immutable; it could
+never change the answer, because `parseAsOf` returns the request's own clock when `as_of` is
+absent, so an unpinned `asOf` *is* `now` and is never an hour behind it. Flipping the flag to a
+constant changed no behaviour. The parameter is gone.
 
 ## 10. What P8 delivered
 
