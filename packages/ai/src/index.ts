@@ -10,8 +10,12 @@
  */
 
 export {
+  MAX_PACKET_BYTES,
   MAX_PACKET_CHANGES,
   MAX_PACKET_ITEMS,
+  MAX_PACKET_MANIFEST,
+  MAX_PACKET_QUOTES,
+  MAX_PACKET_SOURCE_HEALTH,
   PacketRefusedError,
   buildPacket,
   renderPacket,
@@ -38,11 +42,17 @@ export {
   MAX_SUMMARY_WORDS,
   extractNumbers,
   extractTimestamps,
+  extractWordNumerals,
   validateInterpreterOutput,
 } from './validate.ts';
 export type { ValidationFinding, ValidationResult } from './validate.ts';
 
-export { AiClientError, FALLBACK_REASONS, generateAiBriefing } from './generate.ts';
+export {
+  AiClientError,
+  DEFAULT_CALL_TIMEOUT_MS,
+  FALLBACK_REASONS,
+  generateAiBriefing,
+} from './generate.ts';
 export type {
   AiCallResult,
   AiClient,

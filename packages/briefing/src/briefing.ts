@@ -138,6 +138,21 @@ export async function buildBriefing(
   const diff = diffSnapshots(previous.snapshot, now.snapshot, { fromAsOf, toAsOf: asOf });
   const changes = toChangeSection(diff, window, fromAsOf, asOf, engineVersion);
 
+  /*
+   * The change signals' **own** ids are evidence ids in this response.
+   *
+   * `ChangeSignalView.id` is typed `EvidenceId` and is an `EV:CHG:` content address, so invariant
+   * I9 covers it — and the first version of this function collected the ids each signal *cites*
+   * while omitting the ids the signals *are*. Every briefing with a change therefore shipped an
+   * evidence id absent from its own manifest, in the function whose docblock says it enforces I9.
+   */
+  const mintedChangeIds = [
+    ...changes.headline,
+    ...changes.listed,
+    ...changes.detail,
+    ...changes.suppressed,
+  ].map((signal) => signal.id);
+
   const copy = buildCopy({
     location,
     snapshot: now.snapshot,
@@ -160,12 +175,25 @@ export async function buildBriefing(
     ...now.evidenceIds,
     ...previous.evidenceIds,
     ...diff.all.flatMap((signal) => signal.evidenceIds),
-    ...(options.ai?.evidenceIds ?? []),
+    ...mintedChangeIds,
   ]);
 
-  const manifest = await resolveManifest(db, asOf, [...referenced]);
+  /*
+   * The manifest is resolved from the **deterministic** evidence only, and the AI block's
+   * citations are then *checked against it*.
+   *
+   * The first version unioned `ai.evidenceIds` into `referenced` before resolving, which made I9
+   * self-fulfilling for the one contributor that is model-derived: any id the model produced that
+   * happened to resolve to a real row was admitted to the manifest and became its own
+   * justification. A cached AI block validated against a different snapshot would then show
+   * resolvable citations to evidence this snapshot never used — indistinguishable from real
+   * support, which is exactly the "looks like proof" failure the strict default exists for.
+   */
+  const manifest = await resolveManifest(db, asOf, [...referenced], new Set(mintedChangeIds));
   const resolved = new Set(manifest.map((item) => item.id));
-  const unresolvedEvidenceIds = [...referenced].filter((id) => !resolved.has(id)).sort(compare);
+  const unresolvedEvidenceIds = [...new Set([...referenced, ...(options.ai?.evidenceIds ?? [])])]
+    .filter((id) => !resolved.has(id))
+    .sort(compare);
 
   if (unresolvedEvidenceIds.length > 0 && options.strictManifest !== false) {
     throw new EvidenceManifestError(unresolvedEvidenceIds);
@@ -315,35 +343,103 @@ async function resolveManifest(
   db: BuildSnapshotOptions['db'],
   asOf: Date,
   ids: readonly EvidenceId[],
+  mintedDerivedIds: ReadonlySet<EvidenceId>,
 ): Promise<EvidenceItem[]> {
-  const contentAddressed = ids.filter((id) => {
+  const byKind = new Map<string, EvidenceId[]>();
+  for (const id of ids) {
     const kind = tryParseEvidenceId(id)?.kind;
-    return kind === 'BAS' || kind === 'REL' || kind === 'CHG';
-  });
-  const rowBacked = ids.filter((id) => !contentAddressed.includes(id));
+    if (kind === undefined) continue;
+    const bucket = byKind.get(kind);
+    if (bucket === undefined) byKind.set(kind, [id]);
+    else bucket.push(id);
+  }
 
+  /*
+   * Row-backed kinds are the ones that point at an immutable row: an observation version, a
+   * correlation link, an ingestion run, a cluster version. Anything else is *derived*, and the
+   * distinction matters because a derived id cannot be checked against a table.
+   */
+  const rowBacked = [
+    ...(byKind.get('OBS') ?? []),
+    ...(byKind.get('COR') ?? []),
+    ...(byKind.get('RUN') ?? []),
+    ...(byKind.get('FCV') ?? []),
+  ];
   const rows = await evidenceItemsAsOf(db, { asOf, ids: rowBacked });
-
   const items: EvidenceItem[] = rows.map(toEvidenceItem);
-  for (const id of contentAddressed) {
-    const kind = tryParseEvidenceId(id)?.kind;
-    if (kind !== 'BAS' && kind !== 'REL' && kind !== 'CHG') continue;
+  const resolvedClusterVersions = new Set(
+    rows.filter((row) => row.kind === 'FCV').map((row) => row.id),
+  );
+
+  /*
+   * `EV:FDS:<clusterVersionId>:<count>` — the detection set behind a cluster version.
+   *
+   * It is neither a primary kind (there is no row for "the set of detections") nor
+   * content-addressed, and an earlier version of this function routed it to a query that has no
+   * branch for it. The id then resolved to nothing, and because `strictManifest` defaults to
+   * true, **every briefing with a fire cluster threw** — the family whose evidence ids were
+   * designed in P4 was the one that could not be served. The int tests seeded only earthquakes,
+   * which is why they were green.
+   *
+   * It is resolvable exactly when its cluster version is: the count travels in the id, and the
+   * thing that makes the citation trustworthy is that the version it summarizes exists at this
+   * knowledge time.
+   */
+  for (const id of byKind.get('FDS') ?? []) {
+    const ref = tryParseEvidenceId(id);
+    if (ref?.kind !== 'FDS') continue;
+    const parent = `EV:FCV:${ref.clusterVersionId}`;
+    if (!resolvedClusterVersions.has(parent)) continue;
+    const version = rows.find((row) => row.id === parent);
     items.push({
       id,
-      kind,
-      summary: summaryForDerived(kind),
-      sourceId: null,
-      productId: null,
-      observedAt: null,
-      /*
-       * For a derivation the knowledge time *is* the `as_of` it was computed for — that is the
-       * value that participates in replay, which is why `EvidenceItem` documents this field that
-       * way rather than as an ingestion timestamp.
-       */
-      ingestedAt: asOf.toISOString(),
+      kind: 'FDS',
+      summary: `The ${String(ref.count)} detections behind fire cluster version ${ref.clusterVersionId}.`,
+      sourceId: version?.source_id ?? null,
+      productId: version?.product_id ?? null,
+      observedAt: version?.observed_at?.toISOString() ?? null,
+      ingestedAt: version?.ingested_at.toISOString() ?? asOf.toISOString(),
       url: null,
       resolvable: false,
     });
+  }
+
+  /*
+   * Content-addressed kinds are synthesized rather than looked up — their id *is* the hash of the
+   * computation — but **only when this engine minted them**.
+   *
+   * Synthesizing an entry for any well-formed `BAS`/`REL`/`CHG` id made the strict-manifest gate
+   * vacuous for three of the eight kinds: a citation to `EV:REL:` plus 64 arbitrary hex characters
+   * was silently admitted and never appeared in `unresolvedEvidenceIds`. The gate could not fail
+   * for precisely the ids a model is most able to fabricate.
+   *
+   * **Currently unreachable, deliberately kept.** Since the AI block's citations are now *checked*
+   * rather than merged, the only derived ids reaching this function are the change ids this build
+   * minted — so the guard cannot fail today, and a mutation control confirms no test distinguishes
+   * it. It becomes load-bearing the moment `packages/baselines` starts contributing `EV:BAS:` ids
+   * to the referenced set, which is the next thing to do so. Elsewhere in this codebase a
+   * predicate no test can distinguish has been deleted; this one is the exception because the
+   * caller it guards against is a phase away rather than hypothetical.
+   */
+  for (const kind of ['BAS', 'REL', 'CHG'] as const) {
+    for (const id of byKind.get(kind) ?? []) {
+      if (!mintedDerivedIds.has(id)) continue;
+      items.push({
+        id,
+        kind,
+        summary: summaryForDerived(kind),
+        sourceId: null,
+        productId: null,
+        observedAt: null,
+        /*
+         * For a derivation the knowledge time *is* the `as_of` it was computed for — the value
+         * that participates in replay, which is why `EvidenceItem` documents it that way.
+         */
+        ingestedAt: asOf.toISOString(),
+        url: null,
+        resolvable: false,
+      });
+    }
   }
 
   return items.sort((left, right) => compare(left.id, right.id));

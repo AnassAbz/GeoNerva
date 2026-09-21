@@ -106,11 +106,20 @@ export const EXEMPTIBLE_CLASSES: ReadonlySet<LexiconClass> = new Set<LexiconClas
 ]);
 
 /**
- * Phrases per class.
+ * Prohibited wording per class, in two forms.
  *
- * Matched as substrings on a normalized copy of the text. Substrings rather than word boundaries
- * because the failure mode is a phrase appearing at all, and hyphenation and punctuation vary:
- * "real-time", "real time" and "realtime" are the same promise.
+ * `phrases` are matched as **substrings** on a normalized copy, because hyphenation and spacing
+ * vary and the failure mode is the phrase appearing at all: "real-time", "real time" and
+ * "realtime" are the same promise.
+ *
+ * `words` are matched on **word boundaries**, because a bare word is the dangerous case and a
+ * substring test on one is unusable. §11.4 rule 5 lists the safety class as `"safe", "no risk",
+ * "nothing to worry"` — a bare `safe`. An earlier version of this file carried only multi-word
+ * phrases, so *"Conditions near Marrakech appear safe"* passed every rule and could be published:
+ * the one sentence this module exists to prevent, emittable because the list happened to contain
+ * "you are safe" and not "safe". Boundaries keep "safety" and "unsafe" legal, which matters —
+ * "follow your local authorities for safety information" is a sentence GeoNerva should be able to
+ * write.
  */
 const PHRASES: Readonly<Record<LexiconClass, readonly string[]>> = {
   PREDICTION: [
@@ -125,11 +134,7 @@ const PHRASES: Readonly<Record<LexiconClass, readonly string[]>> = {
     'expected to hit',
     'expected to strike',
     'forecast to strike',
-    'predict',
-    'prediction',
-    'imminent',
     'due for',
-    'overdue',
   ],
   SAFETY: [
     'you are safe',
@@ -142,12 +147,33 @@ const PHRASES: Readonly<Record<LexiconClass, readonly string[]>> = {
     'not at risk',
     'nothing to worry',
     'no danger',
+    'no threat',
     'no cause for concern',
     'no reason for concern',
+    'nothing of concern',
+    'nothing to be concerned',
+    'you are fine',
+    'you will be fine',
     'all clear',
+    'out of danger',
+    'not in danger',
+    'little danger',
+    'little risk',
+    'low risk',
+    'minimal risk',
+    'no immediate',
+    'nothing alarming',
   ],
-  THERMAL_AS_WILDFIRE: ['wildfire', 'wild fire', 'forest fire', 'bushfire'],
+  THERMAL_AS_WILDFIRE: ['wild fire', 'forest fire'],
   REAL_TIME: ['real-time', 'real time', 'realtime', 'live feed'],
+};
+
+/** Single words, matched on word boundaries. See the note on `PHRASES`. */
+const WORDS: Readonly<Record<LexiconClass, readonly string[]>> = {
+  PREDICTION: ['predict', 'predicts', 'prediction', 'imminent', 'overdue'],
+  SAFETY: ['safe', 'harmless', 'reassuring'],
+  THERMAL_AS_WILDFIRE: ['wildfire', 'wildfires', 'bushfire', 'bushfires'],
+  REAL_TIME: [],
 };
 
 /**
@@ -160,36 +186,94 @@ const PHRASES: Readonly<Record<LexiconClass, readonly string[]>> = {
  * structured validation around this scanner rather than a cleverer regex.
  */
 export function scanLexicon(text: string, options: LexiconOptions = {}): LexiconHit[] {
-  const normalized = text.toLowerCase().replaceAll('’', "'").replace(/\s+/gu, ' ');
-  const exemptions = (options.verbatimQuotes ?? []).map((quote) =>
-    quote.toLowerCase().replaceAll('’', "'").replace(/\s+/gu, ' '),
-  );
+  const normalized = normalize(text);
+
+  /*
+   * The exemption is **position-sensitive**, which the first implementation was not.
+   *
+   * It used to ask whether the text contained an exempt quote *somewhere*, and then excused every
+   * occurrence of the phrase in the whole text. So relaying FIRMS's "Near-real-time detections
+   * arrive about three hours after the satellite overpass" excused a *second*, fabricated sentence
+   * — "GeoNerva provides real-time coverage" — in the same paragraph, which is exactly the
+   * laundering the doc comment claimed was impossible. Spans are computed first, and a hit is
+   * excused only when its own index falls inside one.
+   */
+  const spans: { readonly start: number; readonly end: number; readonly quote: string }[] = [];
+  for (const raw of options.verbatimQuotes ?? []) {
+    const quote = normalize(raw);
+    if (quote === '') continue;
+    let from = 0;
+    for (;;) {
+      const at = normalized.indexOf(quote, from);
+      if (at === -1) break;
+      spans.push({ start: at, end: at + quote.length, quote });
+      from = at + quote.length;
+    }
+  }
 
   const hits: LexiconHit[] = [];
   for (const lexiconClass of LEXICON_CLASSES) {
     if (lexiconClass === 'THERMAL_AS_WILDFIRE' && options.thermalContext !== true) continue;
 
-    for (const phrase of PHRASES[lexiconClass]) {
-      let from = 0;
-      for (;;) {
-        const index = normalized.indexOf(phrase, from);
-        if (index === -1) break;
-        from = index + phrase.length;
-        /*
-         * A phrase inside relayed verbatim text is allowed, and only there, and only for a class
-         * that may be excused at all. The match test is that some supplied quote contains the
-         * phrase *and* appears in the scanned text — so relaying a provider's wording is fine
-         * while writing the same words outside a quote is not.
-         */
-        const exempt =
-          EXEMPTIBLE_CLASSES.has(lexiconClass) &&
-          exemptions.some((quote) => quote.includes(phrase) && normalized.includes(quote));
-        if (!exempt) hits.push({ lexiconClass, phrase, index });
-      }
+    for (const { phrase, index } of occurrences(normalized, lexiconClass)) {
+      const exempt =
+        EXEMPTIBLE_CLASSES.has(lexiconClass) &&
+        spans.some(
+          (span) =>
+            index >= span.start && index + phrase.length <= span.end && span.quote.includes(phrase),
+        );
+      if (!exempt) hits.push({ lexiconClass, phrase, index });
     }
   }
 
   return hits.sort((left, right) => left.index - right.index || compare(left.phrase, right.phrase));
+}
+
+/** Every prohibited phrase and word occurrence of one class, with its position. */
+function occurrences(
+  normalized: string,
+  lexiconClass: LexiconClass,
+): { readonly phrase: string; readonly index: number }[] {
+  const found: { phrase: string; index: number }[] = [];
+
+  for (const phrase of PHRASES[lexiconClass]) {
+    let from = 0;
+    for (;;) {
+      const index = normalized.indexOf(phrase, from);
+      if (index === -1) break;
+      found.push({ phrase, index });
+      from = index + phrase.length;
+    }
+  }
+
+  for (const word of WORDS[lexiconClass]) {
+    /*
+     * Boundaries by inspection rather than by a constructed `RegExp`: the word list is source
+     * code, but building a pattern from a string is the habit that eventually meets a value from
+     * configuration, and a regex metacharacter there is an injection.
+     */
+    let from = 0;
+    for (;;) {
+      const index = normalized.indexOf(word, from);
+      if (index === -1) break;
+      from = index + word.length;
+      if (isWordBounded(normalized, index, word.length)) found.push({ phrase: word, index });
+    }
+  }
+
+  return found;
+}
+
+function isWordBounded(text: string, index: number, length: number): boolean {
+  const before = index === 0 ? '' : (text[index - 1] ?? '');
+  const after = text[index + length] ?? '';
+  const isLetter = (character: string): boolean => /[\p{L}\p{N}]/u.test(character);
+  return !isLetter(before) && !isLetter(after);
+}
+
+/** Lowercased, apostrophe-folded, whitespace-collapsed. Positions are indices into this form. */
+function normalize(text: string): string {
+  return text.toLowerCase().replaceAll('\u2019', "'").replace(/\s+/gu, ' ');
 }
 
 /** Convenience for the templates' own tests and for the validator's gate. */

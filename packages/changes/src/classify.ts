@@ -25,6 +25,7 @@
 
 import {
   RELEVANCE_RANK,
+  compareProviderSeverity,
   type ChangeProminence,
   type ChangeType,
   type HazardFamily,
@@ -201,16 +202,33 @@ function subjectSignals(
   options: DiffOptions,
 ): ChangeSignal[] {
   /*
-   * **A family that cannot be shown produces no per-subject signals at all.**
+   * **A family that cannot be shown now produces no per-subject signals.**
    *
    * When availability drops, `items` is empty by invariant I11 — not because the hazards ended.
-   * Emitting `EVENT_RESOLVED` for each of them would turn an outage into a page full of good
-   * news, which is the single worst output this engine could produce. The family-level
-   * `SOURCE_STALE` above is the honest signal for that transition.
+   * Emitting a per-subject signal for each of them would turn an outage into a page of good news,
+   * which is the single worst output this engine could produce. The family-level `SOURCE_STALE`
+   * above is the honest signal for that transition.
    */
-  if (after.availability !== 'AVAILABLE' || before.availability !== 'AVAILABLE') return [];
+  if (after.availability !== 'AVAILABLE') return [];
 
-  const beforeByRef = new Map(before.items.map((item) => [item.subjectRef, item]));
+  /*
+   * A family that could not be shown *before* is a different case, and conflating the two hid the
+   * most important change a briefing can carry.
+   *
+   * Both sides used to be required to be `AVAILABLE`. So a family that was `UNAVAILABLE` at the
+   * earlier knowledge time — a common state, since a source goes `STALE` an hour after its last
+   * success — produced exactly one signal on recovery: `SOURCE_RECOVERED`. A new `CRITICAL` flood
+   * five kilometres away, arriving in that same window, was invisible to the diff, to the copy and
+   * to the AI packet, and the change section read as pure good news.
+   *
+   * The asymmetry is the fix. Not knowing before means an item present now is **new knowledge**,
+   * so arrivals are reported; but it also means nothing can be said to have *departed*, because
+   * there was never a list to depart from.
+   */
+  const knewBefore = before.availability === 'AVAILABLE';
+  const beforeByRef = new Map(
+    knewBefore ? before.items.map((item) => [item.subjectRef, item] as const) : [],
+  );
   const afterByRef = new Map(after.items.map((item) => [item.subjectRef, item]));
   const signals: ChangeSignal[] = [];
 
@@ -224,9 +242,11 @@ function subjectSignals(
     if (grouped !== null) signals.push(grouped);
   }
 
-  for (const [ref, item] of beforeByRef) {
-    if (afterByRef.has(ref)) continue;
-    signals.push(...departedSignal(family, item, options));
+  if (knewBefore) {
+    for (const [ref, item] of beforeByRef) {
+      if (afterByRef.has(ref)) continue;
+      signals.push(...departedSignal(family, item, options));
+    }
   }
 
   return signals;
@@ -287,24 +307,40 @@ function revisionSignals(
   const reasonCodes: string[] = [];
   const types: ChangeType[] = [];
 
-  const severityBefore = before.providerSeverity?.value ?? null;
-  const severityAfter = after.providerSeverity?.value ?? null;
+  const severityBefore = before.providerSeverity;
+  const severityAfter = after.providerSeverity;
   const sameScheme =
-    before.providerSeverity?.scheme === after.providerSeverity?.scheme &&
-    before.providerSeverity !== null;
-  if (sameScheme && severityBefore !== severityAfter) {
-    /*
-     * Severity is compared **within one scheme only**. GDACS `Orange` and PAGER `orange` are not
-     * the same statement, and a scheme change is a provenance change rather than an escalation —
-     * so when the scheme differs, no severity signal is emitted at all.
-     */
-    const escalated = severityRank(after) > severityRank(before);
+    severityBefore !== null &&
+    severityAfter !== null &&
+    severityBefore.scheme === severityAfter.scheme;
+  /*
+   * Severity is compared **within one scheme only**, by the domain's own comparison.
+   *
+   * GDACS `Orange` and PAGER `orange` are not the same statement, and a scheme change is a
+   * provenance change rather than an escalation — so when the scheme differs, no severity signal
+   * is emitted. And the direction is `compareProviderSeverity`, which knows all four schemes and
+   * returns `null` for a value it has not seen, with the documented contract that callers "must
+   * treat null as not comparable and say so".
+   *
+   * This file used to hard-code `['green','yellow','orange','red']` and rank an unknown value at
+   * -1. A `CAP_SEVERITY` alert revised `Moderate → Extreme` therefore compared -1 against -1,
+   * `escalated` came out false, and an official alert going to its highest level was published as
+   * *"was downgraded by the provider"* — with the de-escalation weight, so it ranked lower on the
+   * page too. Latent until an ECCC/NWS adapter lands, which is exactly when nobody would be
+   * reading this function.
+   */
+  const direction =
+    severityBefore !== null && severityAfter !== null && sameScheme
+      ? compareProviderSeverity(severityBefore, severityAfter)
+      : null;
+  if (direction !== null && direction !== 0) {
+    const escalated = direction < 0;
     types.push(escalated ? 'EVENT_ESCALATED' : 'EVENT_DEESCALATED');
     facets.push({
       type: escalated ? 'EVENT_ESCALATED' : 'EVENT_DEESCALATED',
       label: 'Alert level',
-      before: severityBefore,
-      after: severityAfter,
+      before: severityBefore?.value ?? null,
+      after: severityAfter?.value ?? null,
     });
     reasonCodes.push('PROVIDER_SEVERITY_CHANGED');
   }
@@ -392,60 +428,61 @@ function revisionSignals(
 }
 
 /**
- * A subject in the earlier state and not the later one, with the family available in both.
+ * A subject that was listed before and is not listed now.
  *
- * §10.2 is specific and the distinction is the point: **earthquakes never resolve.** An earthquake
- * that leaves the card has aged out of the recency window or moved out of the radius; saying it
- * "resolved" would imply the earth stopped, which is not a thing that happens. Only a hazard with
- * a real end — a flood receding, a cyclone dissipating, a cluster going inactive — resolves.
+ * **Absence is never resolution**, and an earlier version of this function asserted otherwise for
+ * every family except earthquakes. §10.2 defines `EVENT_RESOLVED` as a *lifecycle* transition —
+ * "GDACS `iscurrent=false`/`todate` passed, cluster → INACTIVE, alert ended/expired/cancelled" —
+ * and a diff of two snapshots cannot see any of those. What it can see is that an item left the
+ * list, and there are at least four reasons for that which are not the hazard ending:
+ *
+ *  - **The recency window moved.** Both snapshots filter on `asOf − window` (ADR-037), so the
+ *    later one has a later cutoff. A flood observed 29 days and 20 hours ago is in the earlier
+ *    snapshot and out of the later one. It has not receded; the window slid past it.
+ *  - **The display cap.** A card shows at most `DEFAULT_MAX_ITEMS_PER_FAMILY`; two nearer arrivals
+ *    push the two lowest-ranked shown items out.
+ *  - **The search radius.** A cyclone whose centroid moved out of range is gone from the list and
+ *    very much not over.
+ *  - **The relevance model declined it.** A subject that fell below assessment thresholds is
+ *    dropped from `items` by the snapshot builder.
+ *
+ * In the worst case this produced `EVENT_RESOLVED` for a `CRITICAL` flood, which §10.4's hard rule
+ * then promoted to `HEADLINE`, and the briefing's lead sentence became *"<flood> is no longer
+ * active"* about a flood that was still active.
+ *
+ * So the signal is emitted, suppressed as `AGED_OUT`, and worded as what is actually known: the
+ * subject is no longer listed. Announcing a genuine resolution needs the tombstone in the
+ * snapshot — a subject present with a terminal `lifecycleStatus` — which the snapshot builder does
+ * not yet carry. That is recorded in the gate report rather than guessed at here.
  */
 function departedSignal(
   family: HazardFamily,
   item: SubjectSummary,
   options: DiffOptions,
 ): ChangeSignal[] {
-  if (family === 'EARTHQUAKES') {
-    return [
-      finish(
-        {
-          type: 'EVENT_RESOLVED',
-          family,
-          subjectRef: item.subjectRef,
-          title: `${item.title} is no longer listed`,
-          detail: 'Earthquakes are not resolved; they age out of the window.',
-          lateReport: false,
-          facets: [],
-          reasonCodes: ['AGED_OUT'],
-          evidenceIds: item.evidenceIds,
-          levelBefore: item.relevance.level,
-          levelAfter: null,
-        },
-        options,
-        new Date(item.observedAt),
-        'AGED_OUT',
-      ),
-    ];
-  }
-
   return [
     finish(
       {
         type: 'EVENT_RESOLVED',
         family,
         subjectRef: item.subjectRef,
-        title: `${item.title} is no longer active`,
-        detail: null,
+        title: `${item.title} is no longer listed`,
+        /*
+         * The detail says why this is not a claim that the hazard ended. A reader who sees the
+         * suppressed list deserves the distinction, and it is the whole point of the signal.
+         */
+        detail:
+          'It is outside the window, the radius or the list shown here. GeoNerva cannot tell from this whether it has ended.',
         lateReport: false,
-        facets: [
-          { type: 'EVENT_RESOLVED', label: 'Relevance', before: item.relevance.level, after: null },
-        ],
-        reasonCodes: ['NO_LONGER_REPORTED'],
+        facets: [],
+        reasonCodes: ['NO_LONGER_LISTED'],
         evidenceIds: item.evidenceIds,
         levelBefore: item.relevance.level,
         levelAfter: null,
       },
       options,
       new Date(item.observedAt),
+      'AGED_OUT',
     ),
   ];
 }
@@ -553,14 +590,6 @@ function factNumber(item: SubjectSummary, code: string): number | null {
   const fact = item.facts.find((candidate) => candidate.code === code);
   if (fact === undefined) return null;
   return fact.value.kind === 'number' ? fact.value.value : null;
-}
-
-/** Severity rank inside one scheme. An unrecognised value ranks lowest, never highest. */
-function severityRank(item: SubjectSummary): number {
-  const value = item.providerSeverity?.value.trim().toLowerCase() ?? '';
-  const order = ['green', 'yellow', 'orange', 'red'];
-  const index = order.indexOf(value);
-  return index === -1 ? -1 : index;
 }
 
 /** The most consequential of the types that fired, by §10.4's own base weights. */

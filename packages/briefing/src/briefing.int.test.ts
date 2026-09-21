@@ -10,7 +10,13 @@
 import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { createCanonicalEvent, createDb, linkRecord, type DB } from '@geonerva/db';
+import {
+  createCanonicalEvent,
+  createDb,
+  generateFireClusterPublicId,
+  linkRecord,
+  type DB,
+} from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import { seedObservation, seedRun } from '@geonerva/db/testing/factories';
 import { parseEvidenceId, type LocationRef } from '@geonerva/domain';
@@ -448,5 +454,167 @@ describe('language', () => {
     expect(briefing.snapshot.overall.headlineCode).toBe('DATA_UNAVAILABLE');
     expect(briefing.copy.headline).toContain('cannot currently report on');
     expect(briefing.copy.summary[0]).toContain('unknown rather than as quiet');
+  });
+});
+
+describe('the P7 review findings, as regressions', () => {
+  /** A fire cluster with the detections the clustering derivation reads. */
+  async function seedFireCluster(km: number, lastDetectedAt: Date): Promise<string> {
+    const at = north(km);
+    const product = await sql<{ id: number }>`
+      SELECT id FROM geonerva.source_products
+      WHERE source_id = 'firms' AND code = 'VIIRS_NOAA20_NRT'
+    `.execute(db);
+    const productId = product.rows[0]?.id ?? 0;
+
+    const cluster = await sql<{ id: string; public_id: string }>`
+      INSERT INTO geonerva.fire_clusters (id, public_id, created_at, status)
+      VALUES (gen_random_uuid(), ${generateFireClusterPublicId(INSIDE_WINDOW)}, ${INSIDE_WINDOW},
+              'ACTIVE')
+      RETURNING id::text AS id, public_id
+    `.execute(db);
+    const clusterId = cluster.rows[0]?.id ?? '';
+
+    await sql`
+      INSERT INTO geonerva.fire_cluster_versions
+        (cluster_id, as_of, n_total, n_24h, overpasses_24h, first_detected_at, last_detected_at,
+         frp_sum_24h, frp_max, max_confidence, product_ids, centroid, hull, content_sha256)
+      VALUES (${clusterId}::uuid, ${INSIDE_WINDOW}, 40, 12, 2, ${lastDetectedAt}, ${lastDetectedAt},
+              40.0, 12.0, 'NOMINAL', ARRAY[${productId}]::smallint[],
+              ST_SetSRID(ST_MakePoint(${at.lon}, ${at.lat}), 4326)::geography, NULL,
+              sha256(${clusterId}::text::bytea))
+    `.execute(db);
+    return clusterId;
+  }
+
+  async function fireUsable(): Promise<void> {
+    await healthySource('firms', 'VIIRS_NOAA20_NRT', new Date(T0.getTime() - 5 * 60 * 1000));
+    await healthySource('firms', 'VIIRS_NOAA20_NRT', new Date(AS_OF.getTime() - 5 * 60 * 1000));
+    for (const finishedAt of [
+      new Date(T0.getTime() - 5 * 60 * 1000),
+      new Date(AS_OF.getTime() - 5 * 60 * 1000),
+    ]) {
+      await sql`
+        INSERT INTO geonerva.analysis_runs
+          (id, kind, engine_version, started_at, finished_at, status)
+        VALUES (gen_random_uuid(), 'CLUSTERING', ${ENGINE}, ${finishedAt}, ${finishedAt},
+                'SUCCEEDED')
+      `.execute(db);
+    }
+  }
+
+  it('serves a briefing for a location with fire activity', async () => {
+    /*
+     * This threw. `buildFireSubject` cites `EV:FDS:<clusterVersionId>:<count>` — the detection set
+     * behind a cluster version — and nothing resolved that kind: it is neither a primary kind with
+     * a row nor content-addressed, and it was routed to a query with no branch for it. The id came
+     * back unresolved, and because `strictManifest` defaults to true, **every briefing with a fire
+     * cluster failed outright**. The family whose evidence ids were designed in P4 was the one
+     * that could not be served, and the suite was green because it seeded only earthquakes.
+     */
+    await fireUsable();
+    await seedFireCluster(5, new Date(AS_OF.getTime() - 60 * 60 * 1000));
+
+    const { briefing, unresolvedEvidenceIds } = await build();
+
+    expect(unresolvedEvidenceIds).toEqual([]);
+    expect(briefing.snapshot.families.FIRE_ACTIVITY.items).toHaveLength(1);
+
+    const kinds = briefing.evidenceManifest.map((item) => item.kind);
+    expect(kinds).toContain('FCV');
+    expect(kinds).toContain('FDS');
+
+    // The detection set is described and is not claimed to resolve through the evidence endpoint.
+    const detectionSet = briefing.evidenceManifest.find((item) => item.kind === 'FDS');
+    expect(detectionSet?.resolvable).toBe(false);
+    expect(detectionSet?.summary).toContain('detections');
+  });
+
+  it('puts every change signal’s own id in the manifest', async () => {
+    /*
+     * `ChangeSignalView.id` is an `EV:CHG:` content address typed `EvidenceId`, so invariant I9
+     * covers it — and the first version collected the ids each signal *cites* while omitting the
+     * ids the signals *are*. Every briefing with a change shipped an evidence id absent from its
+     * own manifest, in the function whose docblock says it enforces I9.
+     */
+    await earthquakesUsable();
+    await seedLinkedEarthquake({ primaryKey: 'us1' });
+
+    const { briefing } = await build();
+    const manifest = new Set(briefing.evidenceManifest.map((item) => item.id));
+    const signals = [
+      ...briefing.changes.headline,
+      ...briefing.changes.listed,
+      ...briefing.changes.detail,
+      ...briefing.changes.suppressed,
+    ];
+
+    expect(signals.length).toBeGreaterThan(0);
+    for (const signal of signals) expect(manifest.has(signal.id)).toBe(true);
+  });
+
+  it('does not admit a fabricated derived evidence id to the manifest', async () => {
+    /*
+     * Synthesizing an entry for any well-formed `BAS`/`REL`/`CHG` id made the strict-manifest gate
+     * vacuous for three of the eight kinds: a citation to `EV:REL:` plus 64 arbitrary hex
+     * characters was silently admitted and never appeared in `unresolvedEvidenceIds`. The gate
+     * could not fail for precisely the ids a model is most able to fabricate.
+     */
+    await earthquakesUsable();
+    await seedLinkedEarthquake({ primaryKey: 'us1' });
+
+    const fabricated = `EV:REL:${'d'.repeat(64)}`;
+    const ai = {
+      model: 'test',
+      promptVersion: 'v1',
+      validationStatus: 'PASSED' as const,
+      sections: [],
+      evidenceIds: [fabricated],
+      disclaimer: 'Generated text.',
+      generatedAt: AS_OF.toISOString(),
+    };
+
+    const { unresolvedEvidenceIds } = await build({ ai, strictManifest: false });
+    expect(unresolvedEvidenceIds).toEqual([fabricated]);
+    await expect(build({ ai })).rejects.toThrow(EvidenceManifestError);
+  });
+
+  it('checks the AI block’s citations against the manifest instead of adding them to it', async () => {
+    /*
+     * The first version unioned `ai.evidenceIds` into the referenced set *before* resolving, which
+     * made I9 self-fulfilling for the one contributor that is model-derived: any id the model
+     * produced that happened to resolve to a real row was admitted and became its own
+     * justification. A cached block validated against a different snapshot would then show
+     * resolvable citations to evidence this snapshot never used.
+     */
+    const stranger = await seedObservation(db, {
+      sourceId: 'usgs',
+      primaryKey: 'us-far-away',
+      aliases: ['us-far-away'],
+      ingestedAt: INSIDE_WINDOW,
+      observedAt: INSIDE_WINDOW,
+      // 1,200 km away: a real row at this knowledge time, and nothing this briefing used.
+      centroid: north(1_200),
+      magnitude: 5.4,
+      depthKm: 10,
+    });
+    await earthquakesUsable();
+    await seedLinkedEarthquake({ primaryKey: 'us1' });
+
+    const ai = {
+      model: 'test',
+      promptVersion: 'v1',
+      validationStatus: 'PASSED' as const,
+      sections: [],
+      evidenceIds: [`EV:OBS:${stranger.versionId}`],
+      disclaimer: 'Generated text.',
+      generatedAt: AS_OF.toISOString(),
+    };
+
+    const { briefing, unresolvedEvidenceIds } = await build({ ai, strictManifest: false });
+    expect(unresolvedEvidenceIds).toEqual([`EV:OBS:${stranger.versionId}`]);
+    expect(briefing.evidenceManifest.map((item) => item.id)).not.toContain(
+      `EV:OBS:${stranger.versionId}`,
+    );
   });
 });

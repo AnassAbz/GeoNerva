@@ -405,9 +405,14 @@ describe('the lexicon scanner itself', () => {
      * so `SAFETY` is not exemptible at all.
      */
     const hostile = 'According to the bulletin, you are safe and there is no danger here.';
+    /*
+     * Asserted as the set of classes, not the count. How many phrases a sentence trips is not a
+     * contract — adding "safe" as a bare word legitimately raised the count here — and pinning
+     * multiplicity makes the test fail when the scanner gets *better*.
+     */
     expect(
-      scanLexicon(hostile, { verbatimQuotes: [hostile] }).map((hit) => hit.lexiconClass),
-    ).toEqual(['SAFETY', 'SAFETY']);
+      new Set(scanLexicon(hostile, { verbatimQuotes: [hostile] }).map((hit) => hit.lexiconClass)),
+    ).toEqual(new Set(['SAFETY']));
     expect(EXEMPTIBLE_CLASSES.has('SAFETY')).toBe(false);
     expect(EXEMPTIBLE_CLASSES.has('THERMAL_AS_WILDFIRE')).toBe(false);
   });
@@ -443,6 +448,40 @@ describe('the lexicon scanner itself', () => {
 
   it('reports hits in document order', () => {
     const hits = scanLexicon('You are safe, and nothing will occur.');
-    expect(hits.map((hit) => hit.lexiconClass)).toEqual(['SAFETY', 'PREDICTION']);
+    // First occurrence order, deduplicated by class: safety precedes prediction in this sentence.
+    const order = [...new Set(hits.map((hit) => hit.lexiconClass))];
+    expect(order).toEqual(['SAFETY', 'PREDICTION']);
+    expect(hits.map((hit) => hit.index)).toEqual(
+      [...hits.map((hit) => hit.index)].sort((a, b) => a - b),
+    );
+  });
+
+  it('bans the bare word "safe", which is what §11.4 rule 5 lists', () => {
+    /*
+     * The list used to hold only multi-word phrases, so "Conditions near Marrakech appear safe"
+     * passed every rule and could be published — the one sentence this module exists to prevent,
+     * legal because the list happened to contain "you are safe" and not "safe". One apostrophe
+     * also walked past it.
+     */
+    for (const text of [
+      'Conditions near Marrakech appear safe.',
+      "You're safe near Marrakech.",
+      'The area appears safe.',
+      'Residents are safe for now.',
+      'This location is not in danger.',
+      'There is little risk to this location.',
+    ]) {
+      expect(scanLexicon(text), text).not.toEqual([]);
+    }
+  });
+
+  it('leaves "safety" and "unsafe" legal, because word boundaries matter', () => {
+    /*
+     * A substring test on a bare word is unusable: "follow your local authorities for safety
+     * information" is a sentence GeoNerva should be able to write, and "the unsafe area was
+     * evacuated" is a factual report.
+     */
+    expect(scanLexicon('Follow your local authorities for safety information.')).toEqual([]);
+    expect(scanLexicon('The unsafe area was evacuated by authorities.')).toEqual([]);
   });
 });

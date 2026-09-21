@@ -165,6 +165,43 @@ describe('an outage is never reported as good news', () => {
     expect(signal?.importance).toBe(IMPORTANCE_BASE.SOURCE_STALE + LEVEL_WEIGHT.HIGH);
   });
 
+  it('reports a new hazard that arrived while the family was unavailable', () => {
+    /*
+     * The change a briefing most needs to carry, and the one the first version of this engine
+     * dropped. Both sides had to be AVAILABLE for any per-subject signal, so a family that was
+     * UNAVAILABLE at the earlier knowledge time — common, since a source goes STALE an hour after
+     * its last success — produced only SOURCE_RECOVERED on recovery. A new CRITICAL flood arriving
+     * in that window was invisible to the diff, the copy and the AI packet, and the change section
+     * read as pure good news.
+     */
+    const critical = subject({
+      family: 'FLOODS',
+      title: 'Flood',
+      relevance: { ...subject().relevance, level: 'CRITICAL' },
+    });
+    const result = diffSnapshots(
+      snapshot('FLOODS', { availability: 'UNAVAILABLE' }),
+      snapshot('FLOODS', { items: [critical], itemsTotal: 1 }),
+      WINDOW,
+    );
+
+    const types = result.all.map((signal) => signal.type);
+    expect(types).toContain('SOURCE_RECOVERED');
+    expect(types).toContain('NEW_EVENT');
+    // And the new CRITICAL hazard, not the recovery, is what leads the section.
+    expect(result.headline[0]?.type).toBe('NEW_EVENT');
+  });
+
+  it('claims no departures for a family it could not see before', () => {
+    // Nothing can depart from a list that never existed.
+    const result = diffSnapshots(
+      snapshot('FLOODS', { availability: 'UNAVAILABLE' }),
+      snapshot('FLOODS', {}),
+      WINDOW,
+    );
+    expect(result.all.map((signal) => signal.type)).toEqual(['SOURCE_RECOVERED']);
+  });
+
   it('reports recovery when a family becomes available again', () => {
     const before = snapshot('EARTHQUAKES', { availability: 'UNAVAILABLE' });
     const after = snapshot('EARTHQUAKES', { items: [subject()], itemsTotal: 1 });
@@ -217,36 +254,57 @@ describe('a new subject', () => {
 });
 
 describe('a departed subject', () => {
-  it('never says an earthquake resolved', () => {
+  it('never claims a hazard ended just because it left the list', () => {
     /*
-     * §10.2, verbatim: "Earthquakes never resolve; they age out silently." Saying one resolved
-     * would imply the earth stopped, which is not a thing that happens — so the signal exists,
-     * is suppressed with `AGED_OUT`, and says so in its own detail line.
+     * §10.2 defines EVENT_RESOLVED as a lifecycle transition — GDACS `iscurrent=false`, a cluster
+     * going INACTIVE, an alert expiring — and a diff of two snapshots can see none of those. It can
+     * only see that an item left the list, which also happens when the recency window slides past
+     * it, when the display cap pushes it out, when it leaves the search radius, or when the
+     * relevance model declines it.
+     *
+     * An earlier version of this engine asserted resolution for every family except earthquakes.
+     * That test asserted the defect; this one asserts the rule.
      */
-    const before = snapshot('EARTHQUAKES', { items: [subject()], itemsTotal: 1 });
-    const after = snapshot('EARTHQUAKES', {});
+    for (const family of ['EARTHQUAKES', 'FLOODS', 'CYCLONES', 'OTHER'] as const) {
+      const item = subject({
+        subjectRef: `CE:XX-26-AAAAAA`,
+        family,
+        title: 'Hazard',
+      });
+      const [signal] = diffSnapshots(
+        snapshot(family, { items: [item], itemsTotal: 1 }),
+        snapshot(family, {}),
+        WINDOW,
+      ).all;
 
-    const [signal] = diffSnapshots(before, after, WINDOW).all;
-    expect(signal?.suppressionReason).toBe('AGED_OUT');
-    expect(signal?.prominence).toBe('SUPPRESSED');
-    expect(signal?.detail).toContain('age out');
+      expect(signal?.suppressionReason).toBe('AGED_OUT');
+      expect(signal?.prominence).toBe('SUPPRESSED');
+      expect(signal?.title).toContain('no longer listed');
+      expect(signal?.title).not.toContain('no longer active');
+      expect(signal?.detail).toContain('cannot tell');
+    }
   });
 
-  it('does report a flood as no longer active', () => {
-    // A flood recedes. That is a real end, and the difference from an earthquake is the point.
-    const flood = subject({
-      subjectRef: 'CE:FL-26-BBBBBB',
-      hazardType: 'FLOOD',
+  it('does not headline a CRITICAL subject that merely aged out of the window', () => {
+    /*
+     * The worst case of the old behaviour. A CRITICAL flood observed just inside the earlier
+     * snapshot's window and just outside the later one's produced EVENT_RESOLVED, which §10.4's
+     * hard rule promoted to HEADLINE — so the briefing's lead sentence announced that a flood
+     * which was still active was over.
+     */
+    const critical = subject({
       family: 'FLOODS',
       title: 'Flood',
-      facts: [],
+      relevance: { ...subject().relevance, level: 'CRITICAL' },
     });
-    const before = snapshot('FLOODS', { items: [flood], itemsTotal: 1 });
-    const after = snapshot('FLOODS', {});
+    const result = diffSnapshots(
+      snapshot('FLOODS', { items: [critical], itemsTotal: 1 }),
+      snapshot('FLOODS', {}),
+      WINDOW,
+    );
 
-    const [signal] = diffSnapshots(before, after, WINDOW).all;
-    expect(signal?.type).toBe('EVENT_RESOLVED');
-    expect(signal?.suppressionReason).toBeNull();
+    expect(result.headline).toEqual([]);
+    expect(result.suppressed).toHaveLength(1);
   });
 });
 

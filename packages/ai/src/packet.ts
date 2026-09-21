@@ -28,6 +28,8 @@
  */
 
 import {
+  RELEVANCE_RANK,
+  USER_COORDINATE_DECIMALS,
   isPersistableLocationKey,
   type EvidenceId,
   type HazardFamily,
@@ -37,9 +39,9 @@ import {
 
 /** Raised when a briefing must not be sent to a model. */
 export class PacketRefusedError extends Error {
-  readonly reason: 'AD_HOC_LOCATION';
+  readonly reason: 'AD_HOC_LOCATION' | 'UNROUNDED_COORDINATES';
 
-  constructor(reason: 'AD_HOC_LOCATION', message: string) {
+  constructor(reason: PacketRefusedError['reason'], message: string) {
     super(message);
     this.name = 'PacketRefusedError';
     this.reason = reason;
@@ -136,9 +138,22 @@ export interface BriefingPacket {
   readonly contentSha256: string;
 }
 
-/** Items per packet. A bound the model cannot argue with, and a cost control. */
+/**
+ * Bounds on the packet. §11.1 calls the packet "bounded"; these are what makes that true.
+ *
+ * `MAX_PACKET_ITEMS` alone bounded the one array that was already small. The manifest is the union
+ * of **both** snapshots' evidence plus every change signal, so a busy location produced hundreds
+ * of entries each carrying a summary string — a packet of a hundred and fifty kilobytes, sent
+ * twice, against ADR-012's budgeted "~6k input" and US$0.10–0.20 per briefing. One location could
+ * consume the whole daily cap.
+ */
 export const MAX_PACKET_ITEMS = 12;
 export const MAX_PACKET_CHANGES = 12;
+export const MAX_PACKET_MANIFEST = 80;
+export const MAX_PACKET_SOURCE_HEALTH = 24;
+export const MAX_PACKET_QUOTES = 12;
+/** A hard ceiling on the rendered packet. Beyond it the AI path declines rather than spends. */
+export const MAX_PACKET_BYTES = 64 * 1024;
 
 /**
  * Builds the packet from a finished briefing.
@@ -162,6 +177,24 @@ export function buildPacket(briefing: LocationBriefing): BriefingPacket {
       'AD_HOC_LOCATION',
       'an ad-hoc coordinate location is never sent to a model (ADR-015, ARCHITECTURE §11.5)',
     );
+  }
+
+  /*
+   * The coordinates must be the rounded place centroid, not a user position.
+   *
+   * The key check above is sufficient only if `LocationRef` coordinates are always rounded, and
+   * that was a comment rather than a check — a caller pairing a `p:` key with an unrounded user
+   * position would have satisfied the gate. §11.5 forbids raw user coordinates reaching the model,
+   * so the invariant is asserted here where it is cheap.
+   */
+  for (const value of [briefing.location.lat, briefing.location.lon]) {
+    const scaled = value * 10 ** USER_COORDINATE_DECIMALS;
+    if (Math.abs(scaled - Math.round(scaled)) > 1e-9) {
+      throw new PacketRefusedError(
+        'UNROUNDED_COORDINATES',
+        'location coordinates must be rounded before a packet is built (ARCHITECTURE §11.5)',
+      );
+    }
   }
 
   const families: PacketFamily[] = [];
@@ -265,31 +298,81 @@ export function buildPacket(briefing: LocationBriefing): BriefingPacket {
     notCoveredFamilies: briefing.snapshot.overall.notCoveredFamilies,
     families,
     /*
-     * Ordered by relevance then distance, as the card is, and capped. The cap is why the model is
-     * told `itemsTotal` per family: it must be able to say "and others" without guessing a number.
+     * Ordered by relevance, then distance, then reference — **globally**, across families — and
+     * then capped. The cap is why the model is told `itemsTotal` per family: it must be able to
+     * say "and others" without guessing a number.
+     *
+     * The ordering is not cosmetic. `items` is filled by iterating families in `HAZARD_FAMILIES`
+     * order, and each card may hold up to twenty subjects, so an unsorted slice of twelve could be
+     * filled entirely by distant LOW-relevance earthquakes while a `CRITICAL` flood never reached
+     * the model at all. The AI briefing would then describe the trivia and omit the emergency —
+     * and, worse, the validator would *reject* an honest explanation of the dropped subject as
+     * "explains a subject that is not in the packet".
      */
-    items: items.slice(0, MAX_PACKET_ITEMS),
+    items: [...items]
+      .sort(
+        (left, right) =>
+          RELEVANCE_RANK[right.relevanceLevel] - RELEVANCE_RANK[left.relevanceLevel] ||
+          left.distanceKm - right.distanceKm ||
+          compare(left.subjectRef, right.subjectRef),
+      )
+      .slice(0, MAX_PACKET_ITEMS),
     changes,
-    sourceHealth: briefing.snapshot.sourceHealth.map((entry) => ({
-      sourceId: entry.sourceId,
-      productId: entry.productId,
-      status: entry.status,
-      lastSuccessAt: entry.lastSuccessAt,
-      evidenceId: entry.evidenceId,
-    })),
-    evidenceManifest: briefing.evidenceManifest.map((entry) => ({
-      id: entry.id,
-      kind: entry.kind,
-      summary: entry.summary,
-      sourceId: entry.sourceId,
-    })),
+    sourceHealth: briefing.snapshot.sourceHealth
+      .slice(0, MAX_PACKET_SOURCE_HEALTH)
+      .map((entry) => ({
+        sourceId: entry.sourceId,
+        productId: entry.productId,
+        status: entry.status,
+        lastSuccessAt: entry.lastSuccessAt,
+        evidenceId: entry.evidenceId,
+      })),
+    /*
+     * The manifest is bounded to the evidence of **what is actually in the packet**, plus the
+     * health evidence, and then capped.
+     *
+     * An unbounded manifest is both a cost problem and a grounding one: the model was handed
+     * hundreds of citeable ids for subjects it was never shown, and a qualitative claim citing one
+     * of them passed rule 2 because the id existed. Rule 2's own comment says a citation outside
+     * the manifest "is either invented or about another location"; that only holds if the manifest
+     * describes the packet.
+     */
+    evidenceManifest: boundManifest(briefing, items, changes).slice(0, MAX_PACKET_MANIFEST),
     deterministicCopy: {
       headline: briefing.copy.headline,
       summary: briefing.copy.summary,
     },
-    verbatimQuotes,
+    verbatimQuotes: verbatimQuotes.slice(0, MAX_PACKET_QUOTES),
     contentSha256: briefing.contentSha256,
   };
+}
+
+/**
+ * The manifest entries that describe what the packet contains.
+ *
+ * Restricting the citeable set to the packet's own items, changes and source health is the
+ * grounding half of rule 2: the model can only cite evidence for things it was shown.
+ */
+function boundManifest(
+  briefing: LocationBriefing,
+  items: readonly PacketItem[],
+  changes: readonly PacketChange[],
+): BriefingPacket['evidenceManifest'] {
+  const wanted = new Set<string>([
+    ...items.flatMap((item) => item.evidenceIds),
+    ...changes.flatMap((change) => [change.id, ...change.evidenceIds]),
+    ...briefing.snapshot.sourceHealth
+      .map((entry) => entry.evidenceId)
+      .filter((id): id is string => id !== null),
+  ]);
+  return briefing.evidenceManifest
+    .filter((entry) => wanted.has(entry.id))
+    .map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      summary: entry.summary,
+      sourceId: entry.sourceId,
+    }));
 }
 
 /** A fact value as the UI renders it, so text and packet compare like with like. */

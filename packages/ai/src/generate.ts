@@ -31,8 +31,32 @@
 
 import type { AiBriefingView, AiSection, AiValidationStatus } from '@geonerva/domain';
 
-import { buildPacket, renderPacket, PacketRefusedError, type BriefingPacket } from './packet.ts';
-import { parseInterpreterOutput, parseSkepticOutput, type InterpreterOutput } from './schema.ts';
+/**
+ * The echoed model name, bounded.
+ *
+ * `AiCallResult.document` is explicitly untrusted and `model` arrives in the same response, yet it
+ * goes into a read model rendered beside the AI text and into logs. Bounding the charset and the
+ * length is cheap; a caller that wants a stronger guarantee should compare it against the
+ * configured `AI_MODEL`.
+ */
+function safeModelName(raw: string): string {
+  const cleaned = raw.trim().replace(/[^A-Za-z0-9._:-]/gu, '');
+  return cleaned.slice(0, 64) === '' ? 'unknown' : cleaned.slice(0, 64);
+}
+
+import {
+  MAX_PACKET_BYTES,
+  PacketRefusedError,
+  buildPacket,
+  renderPacket,
+  type BriefingPacket,
+} from './packet.ts';
+import {
+  parseInterpreterOutput,
+  parseSkepticOutput,
+  type InterpreterOutput,
+  type ProblemCode,
+} from './schema.ts';
 import { validateInterpreterOutput, type ValidationFinding } from './validate.ts';
 
 /** Why the AI path did not produce shown text. Every value is a fallback to the templates. */
@@ -42,6 +66,8 @@ export const FALLBACK_REASONS = [
   'NO_API_KEY',
   'AD_HOC_LOCATION',
   'BUDGET_EXHAUSTED',
+  /** The packet exceeded `MAX_PACKET_BYTES`; declining is cheaper than spending. */
+  'PACKET_TOO_LARGE',
   'PROVIDER_UNAVAILABLE',
   'TIMEOUT',
   'RATE_LIMITED',
@@ -102,11 +128,21 @@ export interface GenerateOptions {
   readonly mode?: 'disabled' | 'anthropic' | 'local';
   readonly client?: AiClient;
   readonly promptVersion?: string;
-  /** False when the daily budget is spent (ADR-012's hard cap). */
+  /**
+   * **Must be explicitly true to spend.** ADR-012 calls the daily budget a hard cap, and this used
+   * to read `withinBudget === false`, so `undefined` proceeded — the one control described as hard
+   * was the only one that failed *open*, while `mode` and `client` both failed closed. A caller
+   * that has not checked its budget has not earned a call.
+   */
   readonly withinBudget?: boolean;
   readonly signal?: AbortSignal;
+  /** Wall-clock budget for each model call. SECURITY.md M5 lists timeouts as a cost mitigation. */
+  readonly timeoutMs?: number;
   readonly now?: () => Date;
 }
+
+/** Default per-call timeout. A client that never settles must not hang the worker job. */
+export const DEFAULT_CALL_TIMEOUT_MS = 60_000;
 
 /** The record an operator needs, and nothing a log should not hold. */
 export interface GenerateOutcome {
@@ -171,11 +207,19 @@ export async function generateAiBriefing(options: GenerateOptions): Promise<Gene
     // `AI_MODE=local` is a reserved interface stub (§11.3). Reserved is not implemented.
     return declined('PROVIDER_UNAVAILABLE', packet.contentSha256, packetBytes);
   }
-  if (options.client === undefined) {
+  const client = options.client;
+  if (client === undefined) {
     return declined('NO_API_KEY', packet.contentSha256, packetBytes);
   }
-  if (options.withinBudget === false) {
+  if (options.withinBudget !== true) {
     return declined('BUDGET_EXHAUSTED', packet.contentSha256, packetBytes);
+  }
+  if (packetBytes > MAX_PACKET_BYTES) {
+    /*
+     * Declining is cheaper than spending. An oversized packet is a cost incident rather than a
+     * data problem, and the deterministic briefing it falls back to is already complete.
+     */
+    return declined('PACKET_TOO_LARGE', packet.contentSha256, packetBytes);
   }
 
   let interpretMs: number | null = null;
@@ -212,9 +256,13 @@ export async function generateAiBriefing(options: GenerateOptions): Promise<Gene
   let draft: InterpreterOutput;
   try {
     const started = Date.now();
-    const call = await options.client.interpret(rendered, options.signal);
+    const call = await withTimeout(
+      (signal) => client.interpret(rendered, signal),
+      options.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS,
+      options.signal,
+    );
     interpretMs = Date.now() - started;
-    model = call.model;
+    model = safeModelName(call.model);
     tokensIn = call.tokensIn ?? null;
     tokensOut = call.tokensOut ?? null;
     costMicros = call.costMicros ?? null;
@@ -244,11 +292,13 @@ export async function generateAiBriefing(options: GenerateOptions): Promise<Gene
   }
 
   // ---- Skeptic --------------------------------------------------------------------------------
+  /** Carried into the outcome, so a Skeptic's objection is never invisible. */
+  let skepticNotes: readonly ValidationFinding[] = [];
   try {
     const started = Date.now();
-    const call = await options.client.critique(
-      rendered,
-      JSON.stringify(firstPass.repaired),
+    const call = await withTimeout(
+      (signal) => client.critique(rendered, JSON.stringify(firstPass.repaired), signal),
+      options.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS,
       options.signal,
     );
     critiqueMs = Date.now() - started;
@@ -263,14 +313,7 @@ export async function generateAiBriefing(options: GenerateOptions): Promise<Gene
      */
     if (!parsed.ok) return fail('SKEPTIC_REJECTED');
     if (parsed.output.verdict === 'REJECT') {
-      return fail(
-        'SKEPTIC_REJECTED',
-        parsed.output.findings.map((finding) => ({
-          claimPath: finding.claimPath,
-          problemCode: finding.problemCode,
-          note: 'flagged by the reviewing pass',
-        })),
-      );
+      return fail('SKEPTIC_REJECTED', skepticFindings(parsed.output.findings));
     }
     /*
      * `REVISE` is not a licence to rewrite: the Skeptic may only remove. Its findings name claim
@@ -278,10 +321,26 @@ export async function generateAiBriefing(options: GenerateOptions): Promise<Gene
      * anything to be *added*, only subtracted.
      */
     if (parsed.output.verdict === 'REVISE') {
-      draft = dropFlaggedClaims(
+      /*
+       * A `REVISE` that changes nothing is a **rejection**, not a pass.
+       *
+       * `dropFlaggedClaims` can only remove indexed claims, so a Skeptic objecting to `summary` —
+       * or, before the schema was tightened, to `keyObservations.0` — left the document untouched.
+       * The final validation then re-approved the very document the first pass had already
+       * approved, `findings` came back empty, and the objection vanished: a failure swallowed into
+       * success, with the Skeptic's only effective verdict being `REJECT`.
+       *
+       * So the revision has to actually revise. If it does not, the objection stands.
+       */
+      const revised = dropFlaggedClaims(
         firstPass.repaired,
-        parsed.output.findings.map((f) => f.claimPath),
+        parsed.output.findings.map((finding) => finding.claimPath),
       );
+      if (claimCount(revised) === claimCount(firstPass.repaired)) {
+        return fail('SKEPTIC_REJECTED', skepticFindings(parsed.output.findings));
+      }
+      draft = revised;
+      skepticNotes = skepticFindings(parsed.output.findings);
     } else {
       draft = firstPass.repaired;
     }
@@ -295,6 +354,17 @@ export async function generateAiBriefing(options: GenerateOptions): Promise<Gene
     return fail('GROUNDING_FAILED', finalPass.findings);
   }
 
+  /*
+   * The outcome reports the **first** pass's status and findings alongside the final ones.
+   *
+   * `finalPass` runs on the already-repaired document, so it necessarily reports `PASSED` with no
+   * findings. Publishing that alone recorded a clean pass in `agent_outputs` for an output in
+   * which claims had failed grounding and been removed — §11.4 requires the outcome to be
+   * recorded, and "repaired" is the outcome that was being lost.
+   */
+  const status: AiValidationStatus = firstPass.status === 'PASSED' ? finalPass.status : 'REPAIRED';
+  const allFindings = [...firstPass.findings, ...skepticNotes, ...finalPass.findings];
+
   return {
     ai: {
       // Assigned by the Interpreter call above; any failure there returned before this point.
@@ -305,7 +375,7 @@ export async function generateAiBriefing(options: GenerateOptions): Promise<Gene
        * contract wants is safe, and the contract is right to want it: a `REJECTED` output is
        * stored for evaluation and never shown (ADR-012).
        */
-      validationStatus: finalPass.status === 'PASSED' ? 'PASSED' : 'REPAIRED',
+      validationStatus: status === 'PASSED' ? 'PASSED' : 'REPAIRED',
       sections: toSections(finalPass.repaired),
       evidenceIds: finalPass.evidenceIds,
       disclaimer: DISCLAIMER,
@@ -313,10 +383,65 @@ export async function generateAiBriefing(options: GenerateOptions): Promise<Gene
     },
     attempted: true,
     fallbackReason: null,
-    validationStatus: finalPass.status,
-    findings: finalPass.findings,
+    validationStatus: status,
+    findings: allFindings,
     metrics: metrics(),
   };
+}
+
+/** How many claims a document carries, for the "a revision must revise" check. */
+function claimCount(output: InterpreterOutput): number {
+  return (
+    output.keyObservations.length +
+    output.changeNarrative.length +
+    output.relevanceExplanations.length
+  );
+}
+
+/** A Skeptic's findings, with its note replaced by a constant. Its paths are schema-checked. */
+function skepticFindings(
+  findings: readonly { readonly claimPath: string; readonly problemCode: ProblemCode }[],
+): readonly ValidationFinding[] {
+  return findings.map((finding) => ({
+    claimPath: finding.claimPath,
+    problemCode: finding.problemCode,
+    note: 'flagged by the reviewing pass',
+  }));
+}
+
+/**
+ * Runs one model call under a wall-clock bound.
+ *
+ * The timer is cleared on both paths, and the timeout is surfaced as an `AiClientError` so it
+ * joins the ordinary fallback vocabulary rather than becoming an unhandled rejection. It does not
+ * cancel the underlying request — a client that ignores its `AbortSignal` will keep running — but
+ * it does stop the worker job waiting on it, which is the failure that matters here.
+ */
+async function withTimeout<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  outer: AbortSignal | undefined,
+): Promise<T> {
+  const controller = new AbortController();
+  const onAbort = (): void => {
+    controller.abort();
+  };
+  outer?.addEventListener('abort', onAbort, { once: true });
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new AiClientError('TIMEOUT', `the model call exceeded ${String(timeoutMs)} ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([work(controller.signal), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    outer?.removeEventListener('abort', onAbort);
+  }
 }
 
 /** Sections, in a fixed order, so the same output always renders the same way. */

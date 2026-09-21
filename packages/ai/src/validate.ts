@@ -72,7 +72,6 @@ export function validateInterpreterOutput(
   output: InterpreterOutput,
 ): ValidationResult {
   const manifest = new Set(packet.evidenceManifest.map((entry) => entry.id));
-  const allowedNumbers = collectPacketNumbers(packet);
   const levelBySubject = new Map<string, RelevanceLevel>(
     packet.items.map((item) => [item.subjectRef, item.relevanceLevel]),
   );
@@ -85,11 +84,15 @@ export function validateInterpreterOutput(
   const changeIds = new Set(packet.changes.map((change) => change.id));
   const asOf = Date.parse(packet.asOf);
   const unusableFamilies = unusableFamilyWords(packet);
-  const thermalSubjects = new Set(
-    packet.items
-      .filter((item) => item.hazardType === 'THERMAL_ACTIVITY')
-      .map((item) => item.subjectRef),
-  );
+  /*
+   * Whether the packet holds a thermal subject at all, which is what makes "wildfire" prohibited
+   * anywhere in the output.
+   *
+   * `thermalContext` used to be passed only for `relevanceExplanations`, so the *summary* — the
+   * one piece a reader cannot skip — could say "A wildfire is burning 12 km from Marrakech" while
+   * §9.2's mandatory caveat sat on the same card saying VIIRS detects heat, not fire.
+   */
+  const hasThermalSubject = packet.items.some((item) => item.hazardType === 'THERMAL_ACTIVITY');
 
   const findings: ValidationFinding[] = [];
 
@@ -98,7 +101,6 @@ export function validateInterpreterOutput(
     path: string,
     text: string,
     evidenceIds: readonly string[],
-    options: { readonly thermal?: boolean } = {},
   ): ValidationFinding[] => {
     const local: ValidationFinding[] = [];
 
@@ -113,8 +115,9 @@ export function validateInterpreterOutput(
       }
     }
 
-    // Rule 3 — every number in the prose must exist in the packet.
-    for (const number of extractNumbers(text)) {
+    // Rule 3 — every number in the prose must exist in what this claim cites.
+    const allowedNumbers = allowedNumbersFor(packet, evidenceIds);
+    for (const number of [...extractNumbers(text), ...extractWordNumerals(text)]) {
       if (!allowedNumbers.has(number)) {
         local.push({
           claimPath: path,
@@ -127,7 +130,7 @@ export function validateInterpreterOutput(
     // Rule 5 — banned lexicon, with the packet's verbatim quotes excused.
     for (const hit of scanLexicon(text, {
       verbatimQuotes: packet.verbatimQuotes,
-      ...(options.thermal === true ? { thermalContext: true } : {}),
+      ...(hasThermalSubject ? { thermalContext: true } : {}),
     })) {
       local.push({
         claimPath: path,
@@ -156,14 +159,30 @@ export function validateInterpreterOutput(
       });
     }
 
-    // Rule 8 — a family that cannot be described must not be discussed as though it could.
+    /*
+     * Rule 8 — a family whose sources cannot fully support a claim must not be discussed as though
+     * they could, and the caveat has to be about **that family**.
+     *
+     * Two holes are closed here. The first: `statesUnavailability` used to be asked of the whole
+     * text, so "Flood data is unavailable. There are no earthquakes near Marrakech." satisfied the
+     * rule for *earthquakes* on the strength of a sentence about floods — the availability lie,
+     * arriving through generated prose, which is the failure this rule exists for. The caveat must
+     * now sit in the same sentence as the family it excuses.
+     *
+     * The second: only `UNAVAILABLE` families were policed, while the availability model keeps a
+     * family `AVAILABLE` with reason `SOME_SOURCES_UNUSABLE` when one of two sources is down. The
+     * deterministic card says "Some sources for earthquakes could not be read: usgs"; the AI path
+     * said nothing, and was therefore *less* honest than the templates it is meant to improve on,
+     * in the commonest degraded state there is.
+     */
     for (const [family, words] of unusableFamilies) {
-      if (!mentionsFamily(text, words)) continue;
-      if (!statesUnavailability(text)) {
+      const mentioning = sentencesMentioning(text, words);
+      if (mentioning.length === 0) continue;
+      if (!mentioning.some(statesUnavailability)) {
         local.push({
           claimPath: path,
           problemCode: 'STALE_AS_CURRENT',
-          note: `mentions ${family} without stating that GeoNerva cannot currently report on it`,
+          note: `mentions ${family} without stating in the same sentence that GeoNerva cannot fully report on it`,
         });
       }
     }
@@ -218,9 +237,7 @@ export function validateInterpreterOutput(
   output.relevanceExplanations.forEach((entry, index) => {
     const path = `relevanceExplanations[${String(index)}]`;
     claimTotal += 1;
-    const local = checkText(path, entry.text, entry.evidenceIds, {
-      thermal: thermalSubjects.has(entry.subjectRef),
-    });
+    const local = checkText(path, entry.text, entry.evidenceIds);
 
     // Rule 4 — the level is echoed, not chosen.
     const expected = levelBySubject.get(entry.subjectRef);
@@ -321,13 +338,28 @@ export function validateInterpreterOutput(
 }
 
 /**
- * Every number the packet contains, as the strings a text would spell them with.
+ * The numbers a claim may use, **scoped to what it cites**.
  *
- * Both the plain form and the one-decimal form are admitted, because "M5.4" and "5.4" are the same
- * figure and a magnitude of 5.0 is honestly written either "5" or "5.0". Admitting both is not a
- * loosening: the set is still *exactly* the figures in the packet, and a number outside it fails.
+ * §11.4 rule 3 requires a number to equal "a value in the packet **at a referenced path**". The
+ * first implementation built one flat set over the whole packet, which licensed any figure that
+ * collided with an unrelated value:
+ *
+ *  - a claim could take a magnitude from one item and a distance from another and assert them of
+ *    the same event — "an M6.1 earthquake struck 8 km from Marrakech", where the 6.1 belongs to a
+ *    distant event and the 8 to a small nearby one;
+ *  - `lat = 31.63` admitted the string "32" through `toFixed(0)`, so a coordinate licensed a
+ *    detection count.
+ *
+ * The set is now assembled from the **items and changes the claim actually cites**, plus the
+ * genuinely global figures (the window phrasing in the deterministic copy, and provider caveats
+ * the claim is relaying). Coordinates are excluded entirely: no honest sentence needs to state the
+ * location's own latitude, and admitting them was pure surface area.
  */
-function collectPacketNumbers(packet: BriefingPacket): ReadonlySet<string> {
+function allowedNumbersFor(
+  packet: BriefingPacket,
+  citedEvidenceIds: readonly string[],
+): ReadonlySet<string> {
+  const cited = new Set(citedEvidenceIds);
   const numbers = new Set<string>();
   const add = (value: number | null | undefined): void => {
     if (value === null || value === undefined || !Number.isFinite(value)) return;
@@ -336,32 +368,75 @@ function collectPacketNumbers(packet: BriefingPacket): ReadonlySet<string> {
     numbers.add(normalizeNumber(value.toFixed(1)));
   };
 
-  add(packet.lat);
-  add(packet.lon);
-  for (const family of packet.families) add(family.itemsTotal);
   for (const item of packet.items) {
+    if (!item.evidenceIds.some((id) => cited.has(id))) continue;
     add(item.distanceKm);
     add(item.agreement?.nIndependentSources);
-    for (const fact of item.facts) {
+    for (const fact of item.facts)
       for (const found of extractNumbers(fact.value)) numbers.add(found);
-    }
     for (const reason of item.relevanceReasons) {
       for (const found of extractNumbers(reason.text)) numbers.add(found);
     }
   }
+
   /*
-   * Numbers inside verbatim provider text and inside the deterministic copy are admissible: the
-   * model is allowed to relay a caveat or improve on a sentence GeoNerva already published, and
-   * both are figures this response already shows the user.
+   * A family's own total is admissible when the claim cites something from that family, so "3 of
+   * the 7 earthquakes" is sayable while a count lifted from an unrelated card is not.
    */
-  for (const quote of packet.verbatimQuotes) {
-    for (const found of extractNumbers(quote)) numbers.add(found);
+  const citedFamilies = new Set(
+    packet.items
+      .filter((item) => item.evidenceIds.some((id) => cited.has(id)))
+      .map((item) => item.family),
+  );
+  for (const family of packet.families) {
+    if (citedFamilies.has(family.family)) add(family.itemsTotal);
   }
+
+  /*
+   * Global figures: the window phrasing GeoNerva already published, and provider caveats the claim
+   * may relay verbatim. Both are numbers this response shows the user regardless of citation.
+   */
   for (const sentence of [packet.deterministicCopy.headline, ...packet.deterministicCopy.summary]) {
     for (const found of extractNumbers(sentence)) numbers.add(found);
   }
+  for (const quote of packet.verbatimQuotes) {
+    for (const found of extractNumbers(quote)) numbers.add(found);
+  }
   return numbers;
 }
+
+/**
+ * Quantities written as words.
+ *
+ * Rule 3 calls itself the strictest rule, and it was blind to "six earthquakes" and "a dozen
+ * detections" — a fabricated count spelled out was invisible. A numeral-only extractor made the
+ * rule's own docstring false, so a word numeral in a claim is treated as a number that has to be
+ * justified like any other. The list is deliberately short: these are the forms a summary actually
+ * uses, and an unlisted one is not silently permitted — it simply is not *detected*, which is the
+ * honest limit and is recorded in the gate report.
+ */
+const WORD_NUMERALS: Readonly<Record<string, number>> = {
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  dozen: 12,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  hundred: 100,
+  thousand: 1000,
+};
 
 /**
  * Numbers in a piece of text.
@@ -378,6 +453,16 @@ export function extractNumbers(text: string): string[] {
   );
   const matches = withoutTimestamps.match(/-?\d+(?:[.,]\d+)?/gu) ?? [];
   return matches.map(normalizeNumber);
+}
+
+/** Word numerals in a text, as the canonical number strings rule 3 compares against. */
+export function extractWordNumerals(text: string): string[] {
+  const found: string[] = [];
+  for (const [word, value] of Object.entries(WORD_NUMERALS)) {
+    const pattern = new RegExp(`(?<![\\p{L}])${word}(?![\\p{L}])`, 'giu');
+    if (pattern.test(text.toLowerCase())) found.push(normalizeNumber(String(value)));
+  }
+  return found;
 }
 
 /** `5,4` and `5.40` and `5.4` are the same figure; `0.5` and `.5` are too. */
@@ -398,32 +483,59 @@ export function extractTimestamps(text: string): number[] {
     .filter((value) => Number.isFinite(value));
 }
 
-/** Families whose sources cannot currently support a claim, with the words a text would use. */
+/**
+ * Families whose sources cannot currently support an unqualified claim.
+ *
+ * `UNAVAILABLE` is the obvious case. `AVAILABLE` with a **degraded reason** is the one that was
+ * missed: the availability model keeps a family available when one of several sources is down, and
+ * the card carries the caveat naming it. `NOT_COVERED` is excluded because a family nothing covers
+ * cannot be described as stale, and the copy says so on its own axis.
+ */
+const DEGRADED_REASONS: ReadonlySet<string> = new Set([
+  'AVAILABILITY_SOME_SOURCES_UNUSABLE',
+  'AVAILABILITY_DERIVATION_STALE',
+  'AVAILABILITY_SUBJECTS_NOT_ASSESSED',
+  'SOME_SOURCES_UNUSABLE',
+  'DERIVATION_STALE',
+  'SUBJECTS_NOT_ASSESSED',
+]);
+
 function unusableFamilyWords(packet: BriefingPacket): ReadonlyMap<string, readonly string[]> {
   const words = new Map<string, readonly string[]>();
   for (const family of packet.families) {
-    if (family.availability === 'AVAILABLE') continue;
     if (family.availability === 'NOT_COVERED') continue;
+    const degraded =
+      family.availabilityReasonCode !== null && DEGRADED_REASONS.has(family.availabilityReasonCode);
+    if (family.availability === 'AVAILABLE' && !degraded) continue;
     words.set(family.family, familyWordsFor(family.family));
   }
   return words;
 }
 
+/** The sentences of `text` that mention any of `words`. Rule 8 is asked of each one. */
+function sentencesMentioning(text: string, words: readonly string[]): string[] {
+  return text.split(/(?<=[.!?;])\s+/u).filter((sentence) => mentionsFamily(sentence, words));
+}
+
+/**
+ * The words a text would use for a family.
+ *
+ * A total map rather than a `switch` with a `default`: the old default returned the volcano and
+ * drought words for *any* unlisted family, so an unavailable `OTHER` discussed as "a tsunami"
+ * escaped the rule entirely. `storm` is deliberately absent from `CYCLONES` — it appears in honest
+ * prose about unrelated weather and would false-reject.
+ */
+const FAMILY_WORDS: Readonly<Record<string, readonly string[]>> = {
+  EARTHQUAKES: ['earthquake', 'seismic', 'quake', 'aftershock'],
+  FIRE_ACTIVITY: ['fire', 'thermal', 'detection', 'burning'],
+  FLOODS: ['flood', 'flooding'],
+  CYCLONES: ['cyclone', 'hurricane', 'typhoon'],
+  WEATHER_ALERTS: ['weather warning', 'weather alert', 'official alert', 'official warning'],
+  OTHER: ['volcano', 'volcanic', 'drought', 'tsunami'],
+};
+
 function familyWordsFor(family: string): readonly string[] {
-  switch (family) {
-    case 'EARTHQUAKES':
-      return ['earthquake', 'seismic', 'quake'];
-    case 'FIRE_ACTIVITY':
-      return ['fire', 'thermal', 'detection'];
-    case 'FLOODS':
-      return ['flood'];
-    case 'CYCLONES':
-      return ['cyclone', 'hurricane', 'typhoon', 'storm'];
-    case 'WEATHER_ALERTS':
-      return ['weather warning', 'weather alert'];
-    default:
-      return ['volcano', 'volcanic', 'drought'];
-  }
+  return FAMILY_WORDS[family] ?? [];
 }
 
 function mentionsFamily(text: string, words: readonly string[]): boolean {

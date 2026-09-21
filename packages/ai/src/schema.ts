@@ -102,7 +102,22 @@ export const skepticOutputSchema = z.object({
   findings: z
     .array(
       z.object({
-        claimPath: z.string().trim().min(1).max(120),
+        /*
+         * Structural, and enforced here rather than trusted.
+         *
+         * `ValidationFinding.claimPath` is documented as "where in the output", and the
+         * `SKEPTIC_REJECTED` path copies this value into an operator-facing field that the
+         * codebase promises is model-free. An unconstrained string let a Skeptic — or a compromised
+         * provider response — put arbitrary text, including newlines, into `agent_outputs` and
+         * into metrics. It is also the only form `dropFlaggedClaims` can act on, so anything else
+         * was silently inert.
+         */
+        claimPath: z
+          .string()
+          .regex(
+            /^(?:summary|(?:keyObservations|changeNarrative|relevanceExplanations)\[\d{1,2}\])$/u,
+            'not a claim path',
+          ),
         problemCode: z.enum(PROBLEM_CODES),
         note: z.string().trim().max(400).default(''),
       }),
