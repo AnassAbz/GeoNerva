@@ -1,115 +1,104 @@
 # Session handoff — 2026-09-21
 
-Written at a clean boundary: G6 has passed, the tree is clean, `pnpm check` exits 0, and both
-suites are green. This supersedes the 2026-09-20 handoff, which described P6 part-built.
+Written at a clean boundary: G7 has passed, the tree is clean, `pnpm check` exits 0, and both suites
+are green. This supersedes the earlier 2026-09-21 handoff, which described P7 as not started.
 
 ## 1. Where this is
 
 | | |
 |---|---|
-| **Last gate passed** | **G6** — deterministic hazard context (`docs/reviews/gate-g6.md`) |
-| **Current phase** | **P7 — explainable briefing domain**, not started |
-| **Next gate** | G7 (`docs/reviews/gate-g7.md`, not written) |
-| **Commits this session** | `97ee8ed` → `0a31af4`, 7 on `main` |
-| **Tests** | **837 unit, 338 integration** (19 files), PostgreSQL 17 / PostGIS 3.4.3 |
+| **Last gate passed** | **G7** — explainable briefing domain (`docs/reviews/gate-g7.md`) |
+| **Current phase** | **P8 — API**, not started |
+| **Next gate** | G8 per the prompt's numbering (`docs/reviews/gate-g8.md`, not written) |
+| **Commits this session** | `97ee8ed` → `217d498`, 16 on `main` |
+| **Tests** | **957 unit, 358 integration** (20 files), PostgreSQL 17 / PostGIS 3.4 |
 | **Working tree** | clean |
+
+**Two numbering schemes are in play and they diverged at G6.** The continuation prompts number
+gates by their own sequence; `docs/IMPLEMENTATION_PLAN.md` §2 numbers them differently — repo-G6 is
+"API contract tests; p95 briefing latency < 600 ms", repo-G7 is "E2E green desktop + mobile; axe
+clean". `gate-g6.md` and `gate-g7.md` use the prompt's numbering and say so in their own first
+lines. **Do not read either as the repository's gate of the same number.** Nothing about E2E,
+accessibility or latency has been measured.
 
 Read before continuing, in this order:
 
-1. `docs/reviews/gate-g6.md` — especially §4 (what the two adversarial reviews found), §6 (open
-   items accepted for G6) and §7 (the observation that is still unresolved).
-2. `docs/DECISIONS.md` ADR-036 and ADR-037, both new, and ADR-036's **correction** block: the ADR
-   originally asserted two things about its own commit that were false.
-3. `docs/reviews/gate-g5.md` §9–§11 for the earlier findings and vacuous tests.
+1. `docs/reviews/gate-g7.md` — especially §4 (what the two reviews found), §6 (**eleven honest
+   limits**, which are the things most likely to be wrongly assumed), and §7 (open items).
+2. `docs/reviews/gate-g6.md` §5 and §7 — the contention probe and the unresolved observation.
+3. `docs/DECISIONS.md` ADR-012 (runtime AI shape), ADR-015 (ad-hoc locations), ADR-036, ADR-037.
 
-## 2. What P6 delivered
+## 2. What P7 delivered
 
-| Area | What exists now |
+| Package | What exists now |
 |---|---|
-| `packages/correlation` | Misfit, decision (stages 0–2), hysteresis, calibration, **agreement and the headline value**. `candidateScore` maps a misfit onto the 0–1 column the schema actually has |
-| `packages/pipeline` | `correlateEarthquakes` — the runner against the database — and `seedSingleSourceEvents` for GDACS families |
-| `packages/db` | `analysis_runs` repository, `derivationsAsOf`, `productCoverageFor`, `newestDetectionIngestAt`, the correlation reads, migration `0014` adding the `SEED` run kind |
-| `packages/relevance` | Three new availability axes: **derivation**, **replay horizon**, **unassessed subjects** |
-| `packages/briefing` | `buildSnapshot`, canonical serialization + `contentSha256`, family coverage, the replay horizon |
+| `packages/changes` | The snapshot diff (§10): classification, materiality, grouping, importance and prominence, suppression always explained |
+| `packages/briefing` | Deterministic copy, the banned-lexicon scanner, `buildBriefing`, the evidence-manifest resolver |
+| `packages/ai` | The bounded packet with its privacy gate, structured-output schemas, the deterministic validator (§11.4's eight rules), and the fallback state machine |
+| `packages/db` | `evidenceItemsAsOf`, `attributionsFor` |
 
-**The calibration stands**: precision 1.0000, recall 0.9891 against the 250-pair labelled set
-(`docs/reviews/correlation-calibration.md`). Read §2 and §6 of that report — the uniqueness gap
-never binds on this set, and the report says what the calibration does *not* establish.
+**`AI_MODE=disabled` is the default and the deterministic copy is the product's language.** A
+briefing with `ai: null` is the normal response, not a degraded one.
 
-## 3. What P7 needs, and what it must not do
+## 3. What P8 needs
 
-P7 is the **explainable briefing domain**: deterministic copy and the bounded evidence object the
-AI layer is later given. The session plan's own framing is the important part:
+Repo `IMPLEMENTATION_PLAN.md` P8 is "Briefing service & domain API": the `/api/v1` endpoints,
+geocoding, rate limiting, problem+json errors, cache headers, worker-side materialization, and an
+OpenAPI document generated from Zod. `buildSnapshot` and `buildBriefing` already exist, so the
+service half of that phase is done; what remains is the HTTP surface.
 
-> The LLM is **NOT** the source of truth. The database and deterministic hazard-context layer are
-> the source of truth.
+Four things to get right, each of which this phase learned the hard way:
 
-Contracts that already exist and must be filled rather than redesigned:
-
-- `BriefingCopy` — `headline`, `summary[]`, `byFamily`, `caveats[]`, `templateVersion`
-  (`packages/domain/src/read-models/common.ts`).
-- `LocationBriefing` — the union of `snapshot`, `changes`, `copy`, optional `ai`, and
-  `evidenceManifest` (`packages/domain/src/read-models/location-briefing.ts`).
-- `ChangeSection` / `ChangeSignalView` — P7's neighbour; `packages/changes` is still a stub, and
-  `diff(buildSnapshot(L, now−Δ), buildSnapshot(L, now))` is the documented shape (ARCHITECTURE §10).
-- `EvidenceItem` and its four payload types (`packages/domain/src/read-models/evidence-item.ts`).
-
-Three traps, each of which this phase has already walked into once in a different form:
-
-1. **Do not let copy invent a number.** `Reason.params` exists "so the AI validator can check that
-   no number was invented". Every number in a sentence must come from a `params` entry, and the P6
-   review found two places where `params` was `{}` while the sentence quoted figures.
-2. **Do not let copy render a zero the card refused to claim.** A card that is not `AVAILABLE` has
-   no items *and* no count (invariant I11). The copy layer is the last place that can leak one.
-3. **Do not build a second relevance or agreement rule.** `packages/relevance` and
-   `packages/correlation` decide; the copy layer renders.
+1. **`apps/web` currently imports no `@geonerva/*` package.** The moment a route handler imports
+   one, the `web-reads-facts-only-through-asof` and `web-is-read-only` rules stop being vacuous.
+   Expect them to fire, and fix the import rather than the rule.
+2. **The AI path has no caller.** `generateAiBriefing` is complete and tested but nothing schedules
+   it. Per ADR-012 it runs **in the worker, for materialized locations only**, keyed by
+   `packet.cacheKey` — *not* by the snapshot hash alone, because the packet depends on the window.
+   Ad-hoc `c:` locations must never reach it; `buildPacket` refuses them, and that refusal is the
+   guard, not a fallback.
+3. **Nothing writes `cost_micros`.** `withinBudget` now fails closed, so a caller must assert it.
+   Wire the accounting before enabling AI, or it will simply always decline.
+4. **`strictManifest` defaults to true and throws.** An endpoint that must return something should
+   pass `false` and surface `unresolvedEvidenceIds`, but the strict default is what caught the
+   `EV:FDS` defect, so do not flip it globally.
 
 ## 4. Unresolved, carried forward
 
-**The intermittent 7-test integration failure is still unexplained.** Gate G6 §5 records a
-contention probe — three full passes under sustained concurrent load, suite duration 297 s against
-~100 s idle, 329/329 each time — which establishes that the suite tolerates real contention and
-**does not diagnose the original observation**. No cause is claimed. Do not close it.
+**The intermittent 7-test integration failure is still unexplained.** G6 §5 records a contention
+probe that established the suite tolerates real contention and **did not** diagnose it. During this
+session's disk migration the suite failed 4 then 9 tests, all in `backfill.int.test.ts`, which then
+passed 28/28 alone and 358/358 twice; `dd_setup_*` installer logs in `TEMP` are timestamped inside
+those runs, so another installer was competing for C:. Load-correlated, not diagnosed, not closed.
 
-A separate intermittent failure *was* diagnosed (G6 §7): `scripts/lint-rules.test.ts` timed out on
-its first ESLint call, 2 runs in 15, now 20/20 after warming in a `beforeAll`. Whether the original
-shares that mechanism is a hypothesis. **If a test fails intermittently, capture the output on the
-first occurrence** — both times it has happened in this project, the first run captured nothing.
+**If a test fails intermittently, capture the output on the first occurrence.** Three times now in
+this project the first run captured nothing. The one instance that *was* diagnosed — an ESLint cold
+boot exceeding a 5 s `testTimeout` — was only solvable because a capturing loop reproduced it.
 
-## 5. Open items accepted at G6
+## 5. Environment
 
-1. **No lease on `analysis_runs`.** Two overlapping `CORRELATION` runs can each open a canonical
-   event for one earthquake. Single-instance worker today; belongs with scheduling in **P10**.
-2. **`canonical_event_state` is a non-bitemporal projection of a bitemporal store.** ADR-036
-   records the versioned-projection alternative and why P6 did not take it. Revisit before the
-   event-detail read model.
-3. **`FamilyCard.metrics` is empty.** `packages/baselines` is unbuilt.
-4. **Source configuration is not versioned**, so coverage for a past `asOf` uses today's source
-   set. `active_from`/`active_to` are honoured, which covers the misleading case.
-5. **Fire clusters are read but nothing writes them.** `buildSnapshot` now reads
-   `clusterVersionsAsOf` and the derivation axis reports `DERIVATION_NOT_RUN` honestly — which is
-   correct behaviour and also means the fire card is `UNAVAILABLE` in practice until clustering is
-   built. That is the truthful state, not a regression.
+Docker's WSL2 data distribution now lives on **`D:\DockerData`** and the npm cache on
+`D:\npm-cache`; 10.75 GB was reclaimed on C:, which had 144 MB free. The pnpm store stays on C:
+deliberately — moving it across drives breaks pnpm's hardlinks into this repo's `node_modules`.
+Backups are on `D:\GeoNervaBackup`, including a 2.69 GB pre-migration WSL export that is safe to
+delete once you are satisfied. **C: is still ~97 % full from unrelated data**, so headroom is thin.
 
-## 6. Architectural context that is easy to get wrong
+## 6. Habits that keep finding real defects
 
-- **`asOf` is the only fact reader.** `packages/db/src/asof.ts`. `packages/briefing` must import
-  **`@geonerva/db/asof`**, never the root barrel — the barrel re-exports every repository, and a
-  repository read returns the newest row rather than the row as of `T`. The rule
-  `briefing-reads-facts-only-through-asof` now fails the build on any such path, and it was
-  verified to fail before being trusted.
-- **Independence is decided by contributor identity, never by value agreement** (ADR-030). A
-  republication is linked `DERIVED_COPY` — by Stage 1 *and* by Stage 2, which was the review's most
-  serious finding.
-- **`content_sha256` is the only change detector** (ADR-029), and the snapshot's `contentSha256` is
-  taken over a canonical form with `generatedAt` excluded.
-- **An absence is never an answer on its own.** Five axes now decide whether GeoNerva may say
-  "nothing"; see G6 §2.4 for the table of which lie each one prevents.
-- **Mutation controls are standard practice here.** 39 were run this phase and 9 initially
-  survived — a fifth of the new tests were not yet evidence of anything. Run them on every rule.
+- **Mutation controls on every rule.** 46 this phase, 10 initially surviving. One of them showed
+  that a control I had written tested the single wording that happened to be in a phrase list —
+  confirming the implementation rather than the requirement. When a control survives, suspect the
+  test before the code.
+- **Float comparison against a threshold.** Twice now: `assessAgreement`, then the change engine's
+  materiality, where **170 of 581** magnitude pairs two hundredths apart subtract to less than 0.2.
+  Round to the precision the column stores.
+- **Read your own exemptions adversarially.** The verbatim-quote carve-out was narrowed twice — once
+  by class, once by position — and both narrowings were load-bearing.
+- **An absence is never an answer.** Five availability axes, and the P7 reviews still found two
+  paths where absence became reassurance: `EVENT_RESOLVED` from a subject leaving a list, and a
+  family's new hazards being invisible on recovery.
 
 ## 7. Next action
 
-Start **P7.1**: the bounded structured evidence object a briefing receives (location, `asOf`,
-hazard evidence, source availability, source freshness), then the deterministic templates for
-`BriefingCopy`. `buildSnapshot` already returns everything P7.1 needs except the change section.
+Start **P8**: the `/api/v1` surface over `buildBriefing`, beginning with the contract tests
+(Zod ↔ OpenAPI) so the frozen read models are checked at the boundary before any handler exists.
