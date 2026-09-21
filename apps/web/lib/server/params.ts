@@ -1,0 +1,329 @@
+/**
+ * Query-parameter validation (ARCHITECTURE §13.2).
+ *
+ * Every rule below is transcribed from §13.2 so a reader can compare them line by line:
+ *
+ * > - `lat ∈ [−90, 90]`, `lon ∈ [−180, 180]` (normalized), rounded to 0.01° **before** logging,
+ * >   caching or querying.
+ * > - `bbox` must be valid with area ≤ 60° × 60° at zoom < 4. Antimeridian bboxes are accepted.
+ * > - `as_of ∈ [replay_horizon, now]`; `since` is clamped.
+ * > - `families[]` must be from the enum.
+ * > - String params are length-capped.
+ * > - Unknown params → 400. This keeps cache keys canonical and prevents cache-busting abuse.
+ *
+ * ### Three rules that are security controls rather than hygiene
+ *
+ * **Unknown parameters are rejected.** A tolerated unknown parameter is a cache-busting primitive:
+ * `?briefing&x=1`, `?x=2`, … are distinct CDN keys for one response, so an attacker can force
+ * unlimited origin traffic through a cached endpoint. Rejecting them keeps the key canonical.
+ *
+ * **Coordinates are rounded here, at the boundary, before anything else sees them.** ADR-015 and
+ * invariant I15: two decimals is the contract, and the rounding has to happen before the value
+ * reaches a log line, a cache key or a query — not after. `parseLocation` returns the rounded
+ * value and the original is dropped on the floor.
+ *
+ * **`Number()` is not used for numeric parsing.** `Number('')` is 0, `Number(' ')` is 0 and
+ * `Number('1e999')` is `Infinity`; each would pass a naive range check. Parsing goes through an
+ * explicit pattern and a finiteness test, so `NaN`, `Infinity`, `1e999`, `0x1f` and `''` are all
+ * rejected rather than silently becoming a coordinate.
+ */
+
+import {
+  CHANGE_WINDOWS,
+  HAZARD_FAMILIES,
+  USER_COORDINATE_DECIMALS,
+  isLocationKey,
+  roundUserCoordinate,
+  type ChangeWindow,
+  type HazardFamily,
+  type InvalidParam,
+} from '@geonerva/domain';
+
+import { ApiProblemError } from './problem.ts';
+
+/** §13.2: "String params are length-capped." */
+export const MAX_QUERY_LENGTH = 64;
+export const MAX_LOCATION_KEY_LENGTH = 32;
+export const MAX_PUBLIC_ID_LENGTH = 32;
+export const MAX_EVIDENCE_ID_LENGTH = 80;
+
+/** A validated location: either a named place key or a rounded coordinate pair. */
+export type LocationParam =
+  | { readonly kind: 'key'; readonly key: string }
+  | { readonly kind: 'coordinates'; readonly lat: number; readonly lon: number };
+
+/** Collects failures so one response can report every invalid parameter, not just the first. */
+class ParamCollector {
+  private readonly failures: InvalidParam[] = [];
+
+  fail(name: string, reason: string): void {
+    this.failures.push({ name, reason });
+  }
+
+  /** Throws `VALIDATION_FAILED` when anything failed. Never echoes a submitted value. */
+  assertValid(): void {
+    if (this.failures.length === 0) return;
+    throw new ApiProblemError({
+      code: 'VALIDATION_FAILED',
+      detail: 'One or more parameters did not satisfy the documented rules.',
+      invalidParams: this.failures,
+    });
+  }
+}
+
+/**
+ * Rejects any parameter the endpoint does not declare.
+ *
+ * Called **first** by every handler. The allowed set is the endpoint's own, so adding a parameter
+ * is a deliberate act and a typo is a 400 rather than a silent no-op.
+ */
+export function rejectUnknownParams(search: URLSearchParams, allowed: readonly string[]): void {
+  const permitted = new Set(allowed);
+  const unknown = [...new Set([...search.keys()].filter((key) => !permitted.has(key)))].sort();
+  if (unknown.length === 0) return;
+  throw new ApiProblemError({
+    code: 'UNKNOWN_PARAMETER',
+    detail: `This endpoint accepts only: ${allowed.join(', ')}.`,
+    /*
+     * The parameter *name* is echoed and its value is not. A name is bounded by the check below
+     * and is what the caller needs in order to fix the request; the value is arbitrary input.
+     */
+    invalidParams: unknown.map((name) => ({
+      name: name.length > 40 ? `${name.slice(0, 40)}…` : name,
+      reason: 'is not a parameter of this endpoint',
+    })),
+  });
+}
+
+/**
+ * A finite decimal number, parsed strictly.
+ *
+ * Deliberately not `Number()`. The pattern admits an optional sign, digits, an optional fraction
+ * and nothing else — so `Infinity`, `NaN`, `1e999`, `0x1f`, `''`, `' 1'` and `'1,5'` are all
+ * rejected before any range comparison, rather than becoming `0` or `Infinity` and then passing
+ * one.
+ */
+export function parseFiniteNumber(raw: string): number | null {
+  if (!/^[+-]?\d{1,12}(?:\.\d{1,12})?$/u.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * `place` or `lat,lon`, exactly one of them.
+ *
+ * Both is a 400 rather than a precedence rule: two locations in one request is ambiguous, and
+ * picking one silently would mean a caller could be shown a briefing for a place they did not ask
+ * about. The coordinate branch returns the **rounded** value.
+ */
+export function parseLocation(search: URLSearchParams): LocationParam {
+  const collector = new ParamCollector();
+  const place = search.get('place');
+  const latRaw = search.get('lat');
+  const lonRaw = search.get('lon');
+  const hasCoordinates = latRaw !== null || lonRaw !== null;
+
+  if (place !== null && hasCoordinates) {
+    collector.fail('place', 'cannot be combined with lat and lon');
+    collector.assertValid();
+  }
+
+  if (place !== null) {
+    if (place.length > MAX_LOCATION_KEY_LENGTH) {
+      collector.fail('place', `must be at most ${String(MAX_LOCATION_KEY_LENGTH)} characters`);
+    } else if (!isLocationKey(place)) {
+      collector.fail('place', 'must be a location key such as p:2542997 or c:31.63,-8.00');
+    }
+    collector.assertValid();
+    return { kind: 'key', key: place };
+  }
+
+  if (!hasCoordinates) {
+    collector.fail('place', 'is required, or supply lat and lon');
+    collector.assertValid();
+  }
+
+  if (latRaw === null) collector.fail('lat', 'is required when lon is supplied');
+  if (lonRaw === null) collector.fail('lon', 'is required when lat is supplied');
+  collector.assertValid();
+
+  const lat = latRaw === null ? null : parseFiniteNumber(latRaw);
+  const lon = lonRaw === null ? null : parseFiniteNumber(lonRaw);
+  if (lat === null) collector.fail('lat', 'must be a finite decimal number');
+  if (lon === null) collector.fail('lon', 'must be a finite decimal number');
+  collector.assertValid();
+
+  if (lat !== null && (lat < -90 || lat > 90)) {
+    collector.fail('lat', 'must be within [-90, 90]');
+  }
+  /*
+   * §13.2 writes `lon ∈ [−180, 180]`, and the value is normalized — so +180 and −180 are the same
+   * meridian. The inclusive check accepts both spellings; normalization then folds +180 to −180.
+   */
+  if (lon !== null && (lon < -180 || lon > 180)) {
+    collector.fail('lon', 'must be within [-180, 180]');
+  }
+  collector.assertValid();
+
+  return {
+    kind: 'coordinates',
+    lat: roundUserCoordinate(lat ?? 0),
+    lon: roundUserCoordinate(normalizeLongitude(lon ?? 0)),
+  };
+}
+
+/** +180 and −180 name one meridian; folding gives a single canonical cache key. */
+function normalizeLongitude(lon: number): number {
+  return lon === 180 ? -180 : lon;
+}
+
+/** `window=6h|24h|7d`, defaulting to the documented 24 h (§10.1). */
+export function parseWindow(search: URLSearchParams, name = 'window'): ChangeWindow {
+  const raw = search.get(name);
+  if (raw === null) return '24h';
+  if ((CHANGE_WINDOWS as readonly string[]).includes(raw)) return raw as ChangeWindow;
+  throw new ApiProblemError({
+    code: 'VALIDATION_FAILED',
+    detail: 'The comparison window is not one of the supported values.',
+    invalidParams: [{ name, reason: `must be one of: ${CHANGE_WINDOWS.join(', ')}` }],
+  });
+}
+
+/**
+ * `as_of` — a knowledge time.
+ *
+ * Absent means now. A future value is `AS_OF_IN_FUTURE` and not a clamp, because silently moving
+ * it would answer a question the caller did not ask; invariant I2 is that replay never sees the
+ * future, and the honest response to being asked for the future is to say so. The horizon check
+ * lives in the service, which knows the per-family horizons.
+ *
+ * A small tolerance absorbs clock skew between the caller and the server. Without it a client
+ * sending `new Date().toISOString()` fails intermittently for reasons it cannot see.
+ */
+export const AS_OF_FUTURE_TOLERANCE_MS = 5_000;
+
+export function parseAsOf(search: URLSearchParams, now: Date, name = 'as_of'): Date {
+  const raw = search.get(name);
+  if (raw === null) return now;
+
+  if (
+    raw.length > 40 ||
+    !/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/u.test(raw)
+  ) {
+    throw new ApiProblemError({
+      code: 'VALIDATION_FAILED',
+      detail: 'The knowledge time must be an ISO-8601 instant with an explicit offset or Z.',
+      invalidParams: [{ name, reason: 'must be an ISO-8601 instant, e.g. 2026-09-21T00:00:00Z' }],
+    });
+  }
+
+  const parsed = new Date(raw.replace(' ', 'T'));
+  if (Number.isNaN(parsed.getTime())) {
+    throw new ApiProblemError({
+      code: 'VALIDATION_FAILED',
+      detail: 'The knowledge time is not a valid instant.',
+      invalidParams: [{ name, reason: 'must be a valid ISO-8601 instant' }],
+    });
+  }
+
+  if (parsed.getTime() > now.getTime() + AS_OF_FUTURE_TOLERANCE_MS) {
+    throw new ApiProblemError({
+      code: 'AS_OF_IN_FUTURE',
+      detail: 'GeoNerva cannot report on a time that has not happened yet.',
+    });
+  }
+
+  return parsed;
+}
+
+/** `families[]` from the enum. Repeated or comma-separated, deduplicated and sorted. */
+export function parseFamilies(search: URLSearchParams, name = 'families'): readonly HazardFamily[] {
+  const raw = search.getAll(name).flatMap((value) => value.split(','));
+  if (raw.length === 0) return HAZARD_FAMILIES;
+
+  const collector = new ParamCollector();
+  const known = new Set<string>(HAZARD_FAMILIES);
+  const chosen = new Set<HazardFamily>();
+  for (const value of raw) {
+    const trimmed = value.trim();
+    if (trimmed === '') continue;
+    if (!known.has(trimmed)) {
+      collector.fail(name, `must contain only: ${HAZARD_FAMILIES.join(', ')}`);
+      break;
+    }
+    chosen.add(trimmed as HazardFamily);
+  }
+  collector.assertValid();
+  /*
+   * Sorted, so `families=FLOODS,EARTHQUAKES` and `families=EARTHQUAKES,FLOODS` are one cache key
+   * rather than two. §13.3 keys the CDN on the canonical URL and this is half of what makes a URL
+   * canonical.
+   */
+  return HAZARD_FAMILIES.filter((family) => chosen.has(family));
+}
+
+/** A bounded positive integer, e.g. `limit`. Out-of-range is a 400, never a silent clamp. */
+export function parseLimit(
+  search: URLSearchParams,
+  options: { readonly name?: string; readonly max: number; readonly fallback: number },
+): number {
+  const name = options.name ?? 'limit';
+  const raw = search.get(name);
+  if (raw === null) return options.fallback;
+
+  if (!/^\d{1,4}$/u.test(raw)) {
+    throw new ApiProblemError({
+      code: 'VALIDATION_FAILED',
+      detail: 'The limit must be a small positive integer.',
+      invalidParams: [{ name, reason: 'must be a positive integer' }],
+    });
+  }
+  const value = Number(raw);
+  if (value < 1 || value > options.max) {
+    throw new ApiProblemError({
+      code: 'VALIDATION_FAILED',
+      detail: 'The limit is outside the range this endpoint allows.',
+      invalidParams: [{ name, reason: `must be within [1, ${String(options.max)}]` }],
+    });
+  }
+  return value;
+}
+
+/** A free-text search term: length-capped, and control characters rejected rather than stripped. */
+export function parseQuery(search: URLSearchParams, name = 'q'): string {
+  const raw = search.get(name);
+  const collector = new ParamCollector();
+  if (raw === null || raw.trim().length < 2) {
+    collector.fail(name, 'must be at least 2 characters');
+    collector.assertValid();
+  }
+  const value = (raw ?? '').trim();
+  if (value.length > MAX_QUERY_LENGTH) {
+    collector.fail(name, `must be at most ${String(MAX_QUERY_LENGTH)} characters`);
+  }
+  /*
+   * Rejected rather than sanitized. Stripping would make two different requests into one cache
+   * key and would hide the fact that the input was malformed; a control character in a search
+   * term is not a typo a user makes.
+   */
+  if (/[\p{Cc}\p{Cf}]/u.test(value)) {
+    collector.fail(name, 'must not contain control characters');
+  }
+  collector.assertValid();
+  return value;
+}
+
+/** A public id (`EQ-26-7K3F9Q`, `FR-26-…`), shape-checked before it reaches a query. */
+export function parsePublicId(raw: string, name = 'publicId'): string {
+  if (raw.length > MAX_PUBLIC_ID_LENGTH || !/^[A-Z]{2}-\d{2}-[0-9A-Z]{4,12}$/u.test(raw)) {
+    throw new ApiProblemError({
+      code: 'VALIDATION_FAILED',
+      detail: 'That identifier is not the shape GeoNerva issues.',
+      invalidParams: [{ name, reason: 'must be a GeoNerva public id, e.g. EQ-26-7K3F9Q' }],
+    });
+  }
+  return raw;
+}
+
+/** Re-exported so callers do not import the rounding rule from two places. */
+export { USER_COORDINATE_DECIMALS };

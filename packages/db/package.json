@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./asof": "./src/asof.ts",
+    "./client": "./src/client.ts",
     "./schema": "./src/generated/database.ts",
     "./testing": "./src/testing/test-database.ts",
     "./testing/factories": "./src/testing/factories.ts"

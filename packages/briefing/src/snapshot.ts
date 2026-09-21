@@ -81,7 +81,7 @@ import {
   type Reason,
   type RelevanceAssessment,
   type SnapshotOverall,
-  type SourceHealthView,
+  toSourceHealthView,
   type SubjectSummary,
 } from '@geonerva/domain';
 import {
@@ -257,7 +257,7 @@ export async function buildSnapshot(options: BuildSnapshotOptions): Promise<Snap
   );
   const sourceHealth = health.byProduct
     .filter((entry) => relevantKeys.has(healthKey(entry.sourceId, entry.productId)))
-    .map(toHealthView)
+    .map(toSourceHealthView)
     .sort(
       (left, right) =>
         compare(left.sourceId, right.sourceId) ||
@@ -372,7 +372,7 @@ async function buildFamilyCard(
   const sourceHealth = input.coverage.sources
     .map((source) => input.healthByKey.get(healthKey(source.sourceId, source.productId)))
     .filter((entry): entry is SourceHealthAsOf => entry !== undefined)
-    .map(toHealthView);
+    .map(toSourceHealthView);
   for (const entry of sourceHealth) {
     if (entry.evidenceId !== null) evidence.add(entry.evidenceId);
   }
@@ -1369,30 +1369,6 @@ function buildOverall(families: Readonly<Record<HazardFamily, FamilyCard>>): Sna
     notCoveredFamilies,
     reasons: [],
     evidenceIds,
-  };
-}
-
-function toHealthView(entry: SourceHealthAsOf): SourceHealthView {
-  return {
-    sourceId: entry.sourceId,
-    productId: entry.productId,
-    status: entry.status,
-    lastAttemptAt: entry.lastAttemptAt?.toISOString() ?? null,
-    lastSuccessAt: entry.lastSuccessAt?.toISOString() ?? null,
-    newestObservedAt: entry.newestObservedAt?.toISOString() ?? null,
-    consecutiveFailures: entry.consecutiveFailures,
-    lastErrorClass: entry.lastErrorClass,
-    reasons: entry.reasons,
-    expected: {
-      pollIntervalS: entry.expected.pollIntervalS,
-      fetchFreshWithinS: entry.expected.fetchFreshWithinS,
-      fetchStaleAfterS: entry.expected.fetchStaleAfterS,
-      unavailableAfterS: entry.expected.unavailableAfterS,
-      dataCurrentWithinS: entry.expected.dataCurrentWithinS,
-      dataStaleAfterS: entry.expected.dataStaleAfterS,
-      quietIsNormal: entry.expected.quietIsNormal,
-    },
-    evidenceId: entry.evidenceId,
   };
 }
 

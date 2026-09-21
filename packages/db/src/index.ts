@@ -69,8 +69,16 @@ export {
   observationsAsOf,
   newestDetectionIngestAt,
   observationsNow,
+  clusterEvidenceAsOf,
+  correlationEvidenceAsOf,
+  observationEvidenceAsOf,
   productCoverageFor,
+  runEvidenceAsOf,
+  runSummariesAsOf,
+  runTally24hAsOf,
+  sourceCatalog,
   sourceCutoffsAsOf,
+  workerHeartbeatAsOf,
 } from './asof.ts';
 export type {
   AttributionRow,
@@ -80,8 +88,17 @@ export type {
   LinkRow,
   ObservationRow,
   ObservationsAsOfOptions,
+  ClusterEvidenceRow,
+  CorrelationEvidenceRow,
+  ObservationEvidenceRow,
   ProductCoverageRow,
+  RunEvidenceRow,
+  RunSummaryRow,
+  RunTallyRow,
   SourceHealthAsOf,
+  SourceProductRow,
+  SourceRow,
+  WorkerHeartbeatRow,
 } from './asof.ts';
 
 export * from './repositories/index.ts';

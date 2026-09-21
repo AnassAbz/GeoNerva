@@ -1046,3 +1046,473 @@ export async function attributionsFor(
   `.execute(db);
   return [...result.rows];
 }
+
+/** One committed run, shaped for `RunSummaryView`. */
+export interface RunSummaryRow {
+  readonly id: string;
+  readonly source_id: string;
+  readonly product_id: number | null;
+  readonly trigger: string;
+  readonly status: string;
+  readonly started_at: Date;
+  readonly finished_at: Date | null;
+  readonly committed_at: Date;
+  readonly n_received: number;
+  readonly n_new_records: number;
+  readonly n_new_versions: number;
+  readonly n_unchanged: number;
+  readonly n_rejected: number;
+  readonly newest_observed_at: Date | null;
+  readonly error_class: string | null;
+}
+
+/**
+ * The most recent committed runs per source, as known at `asOf`.
+ *
+ * **Committed only.** `committed_at` is the timestamp replay filters on, so a run still in flight
+ * is invisible here by construction — `NULL <= asOf` is never true. That is the honest answer: a
+ * `RUNNING` run has produced no knowledge yet, and showing it would let the data-status page
+ * report activity whose results no reader can see.
+ *
+ * Bounded by `perSource` through a window function rather than a query per source, so the endpoint
+ * costs one round trip whatever the source count — which is also what keeps it from becoming a
+ * request-amplification lever.
+ *
+ * `error_message` is deliberately **not** selected. It is sanitized and capped at write time, but
+ * `RunSummaryView` has no field for it and a public endpoint is the wrong place to serve provider
+ * error text; an operator reads it from the database.
+ */
+export async function runSummariesAsOf(
+  db: Kysely<DB>,
+  options: { readonly asOf: Date; readonly perSource?: number },
+): Promise<RunSummaryRow[]> {
+  const perSource = Math.max(1, Math.min(options.perSource ?? 10, 50));
+  const result = await sql<RunSummaryRow>`
+    SELECT id, source_id, product_id, trigger, status, started_at, finished_at, committed_at,
+           n_received, n_new_records, n_new_versions, n_unchanged, n_rejected,
+           newest_observed_at, error_class
+    FROM (
+      SELECT r.id::text        AS id,
+             r.source_id,
+             r.product_id,
+             r.trigger,
+             r.status,
+             r.started_at,
+             r.finished_at,
+             r.committed_at,
+             r.n_received,
+             r.n_new_records,
+             r.n_new_versions,
+             r.n_unchanged,
+             r.n_rejected,
+             r.newest_observed_at,
+             r.error_class,
+             row_number() OVER (
+               PARTITION BY r.source_id ORDER BY r.committed_at DESC, r.id DESC
+             ) AS seq
+      FROM geonerva.ingestion_runs r
+      WHERE r.committed_at IS NOT NULL
+        AND r.committed_at <= ${options.asOf}
+    ) ranked
+    WHERE seq <= ${perSource}
+    ORDER BY source_id, committed_at DESC, id DESC
+  `.execute(db);
+  return [...result.rows];
+}
+
+/** Committed runs per source in the 24 hours before `asOf`, and how many of them succeeded. */
+export interface RunTallyRow {
+  readonly source_id: string;
+  readonly total: number;
+  readonly succeeded: number;
+}
+
+/**
+ * The 24-hour success tally, so that `successRate24h` can be read honestly.
+ *
+ * The denominator travels with the rate. "100 % successful" from one run is a different statement
+ * from the same figure over two hundred, which is why `SourceStatusEntry` carries `runCount24h`
+ * beside the rate: a proportion without its sample size reassures without informing.
+ *
+ * `PARTIAL` is **not** counted as a success. A run that committed some records and rejected others
+ * did not do its job, and folding it into the success rate would hide exactly the slow degradation
+ * the data-status page exists to show.
+ */
+export async function runTally24hAsOf(db: Kysely<DB>, asOf: Date): Promise<RunTallyRow[]> {
+  const since = new Date(asOf.getTime() - 24 * 60 * 60 * 1000);
+  const result = await sql<RunTallyRow>`
+    SELECT r.source_id,
+           count(*)::int                                      AS total,
+           count(*) FILTER (WHERE r.status = 'SUCCEEDED')::int AS succeeded
+    FROM geonerva.ingestion_runs r
+    WHERE r.committed_at IS NOT NULL
+      AND r.committed_at <= ${asOf}
+      AND r.committed_at >= ${since}
+    GROUP BY r.source_id
+    ORDER BY r.source_id
+  `.execute(db);
+  return [...result.rows];
+}
+
+/** The ingestion worker heartbeat row. */
+export interface WorkerHeartbeatRow {
+  readonly last_seen_at: Date;
+  readonly version: string | null;
+}
+
+/**
+ * The worker heartbeat, if it was already in the past at `asOf`.
+ *
+ * ### This one read is not replayable, and says so
+ *
+ * `worker_heartbeat` is a **single row updated in place** every minute (migration 0002): there is
+ * no history, so what the heartbeat said at a past `asOf` is not recoverable. The filter here is
+ * therefore the only honest one available — a heartbeat stamped after `asOf` is future knowledge
+ * and is withheld — but the consequence is that a replay returns `null`, which the read model can
+ * only render as "GeoNerva cannot state the worker liveness at this knowledge time".
+ *
+ * That is a deliberate asymmetry with every other read in this file, and it is acceptable because
+ * worker liveness is an operational signal about GeoNerva rather than a fact about a hazard. It is
+ * never allowed to influence hazard availability: a source is `UNAVAILABLE` because its own runs
+ * say so (ADR-022), not because this row is missing.
+ */
+export async function workerHeartbeatAsOf(
+  db: Kysely<DB>,
+  asOf: Date,
+): Promise<WorkerHeartbeatRow | null> {
+  const result = await sql<WorkerHeartbeatRow>`
+    SELECT last_seen_at, version
+    FROM geonerva.worker_heartbeat
+    WHERE last_seen_at <= ${asOf}
+    ORDER BY last_seen_at DESC
+    LIMIT 1
+  `.execute(db);
+  return result.rows[0] ?? null;
+}
+
+/** One provider, as the data-status page describes it. */
+export interface SourceRow {
+  readonly source_id: string;
+  readonly name: string;
+  readonly homepage: string | null;
+  readonly licence: string;
+  readonly attribution_text: string;
+  readonly terms_url: string | null;
+  readonly disclaimer: string | null;
+  readonly coverage_note: string | null;
+  /** True when the source carries a coverage polygon; `false` means global coverage. */
+  readonly coverage_geometry_available: boolean;
+  readonly enabled: boolean;
+}
+
+/** One feed or sensor belonging to a source. */
+export interface SourceProductRow {
+  readonly product_id: number;
+  readonly source_id: string;
+  readonly code: string;
+  readonly hazard_types: readonly string[];
+  readonly capabilities: readonly string[];
+  readonly platform: string | null;
+  readonly instrument: string | null;
+  readonly resolution_m: number | null;
+  readonly status: string;
+  readonly active_from: string | null;
+  readonly active_to: string | null;
+  readonly enabled: boolean;
+}
+
+/**
+ * The source and product catalogue.
+ *
+ * **Not parameterized by `asOf`, and named so that it does not pretend to be.** `sources` and
+ * `source_products` are reference data updated in place by migrations and by configuration
+ * changes; they are not versioned, so there is no past state to read. Taking an `asOf` argument
+ * that every row satisfied would be a worse lie than leaving it out.
+ *
+ * The practical consequence is narrow: a replay describes today's *catalogue* — a retired sensor
+ * shows as retired even when replaying a time it was active — while every *fact*, every health
+ * judgement and every run the same response reports is bounded by the knowledge time.
+ *
+ * The coverage polygon is reported only as present-or-absent. It is never rendered by this
+ * endpoint, and shipping it would make a cached response tens of kilobytes for no reader.
+ */
+export async function sourceCatalog(db: Kysely<DB>): Promise<{
+  readonly sources: readonly SourceRow[];
+  readonly products: readonly SourceProductRow[];
+}> {
+  const sourceResult = await sql<SourceRow>`
+    SELECT s.id                     AS source_id,
+           s.name,
+           s.homepage,
+           s.licence,
+           s.attribution_text,
+           s.terms_url,
+           s.disclaimer,
+           s.coverage_note,
+           (s.coverage IS NOT NULL) AS coverage_geometry_available,
+           s.enabled
+    FROM geonerva.sources s
+    ORDER BY s.id
+  `.execute(db);
+
+  const productResult = await sql<SourceProductRow>`
+    SELECT p.id                 AS product_id,
+           p.source_id,
+           p.code,
+           p.hazard_types,
+           p.capabilities,
+           p.platform,
+           p.instrument,
+           p.resolution_m,
+           p.status,
+           p.active_from::text  AS active_from,
+           p.active_to::text    AS active_to,
+           p.enabled
+    FROM geonerva.source_products p
+    ORDER BY p.source_id, p.id
+  `.execute(db);
+
+  return { sources: [...sourceResult.rows], products: [...productResult.rows] };
+}
+
+/*
+ * ── Evidence detail (`GET /api/v1/evidence/{id}`) ───────────────────────────────
+ *
+ * One function per primary kind, each returning the row the frozen `EvidenceDetail` payload needs.
+ * They are separate rather than one polymorphic query because the four kinds share no columns:
+ * an observation version, a cluster summary, an ingestion run and a correlation link are four
+ * different tables with four different knowledge-time columns (`ingested_at`, `as_of`,
+ * `committed_at`, `linked_at`), and the whole point of this file is that each one is filtered on
+ * the column that actually participates in replay.
+ *
+ * **None of them reads `raw_source_records`.** Migration 0007 revokes `SELECT` on that table from
+ * `geonerva_web`, so a join to it would not merely omit a field — it would make the endpoint fail
+ * with a permission error for the role that serves it. `observation_versions.raw_record_id` is
+ * readable, so the query reports whether a raw record exists without reading it. See ADR-038 for
+ * the resulting gap in `ObservationEvidenceDetail`.
+ */
+
+/** `EV:OBS:<id>` — one immutable observation version. */
+export interface ObservationEvidenceRow {
+  readonly version_id: string;
+  readonly version_seq: number;
+  readonly source_id: string;
+  readonly product_id: number | null;
+  readonly primary_key: string;
+  readonly hazard_type: string;
+  readonly lifecycle_status: string;
+  readonly observed_at: Date;
+  readonly valid_from: Date | null;
+  readonly valid_to: Date | null;
+  readonly source_updated_at: Date | null;
+  readonly ingested_at: Date;
+  readonly contributor: string | null;
+  readonly content_sha256: string;
+  readonly source_url: string | null;
+  /** Whether a raw payload row exists. Its contents are not readable by the web role. */
+  readonly raw_record_present: boolean;
+}
+
+/**
+ * One observation version, if GeoNerva knew it at `asOf`.
+ *
+ * The merge filter that every other read in this file applies is **absent here on purpose**. A
+ * merged record's versions survive the merge (§4.6) and an evidence ID that was cited in an older
+ * response must keep resolving, or the citation rots — which is the one thing an append-only
+ * store is supposed to prevent. Whether the *record* is still separately listed is a question for
+ * `observationsAsOf`; whether this *version* existed is a question about one immutable row.
+ */
+export async function observationEvidenceAsOf(
+  db: Kysely<DB>,
+  options: { readonly asOf: Date; readonly versionId: string },
+): Promise<ObservationEvidenceRow | null> {
+  const result = await sql<ObservationEvidenceRow>`
+    SELECT v.id::text                       AS version_id,
+           v.version_seq,
+           r.source_id,
+           r.product_id,
+           r.primary_key,
+           v.hazard_type,
+           v.lifecycle_status,
+           v.observed_at,
+           v.valid_from,
+           v.valid_to,
+           v.source_updated_at,
+           v.ingested_at,
+           v.contributor,
+           encode(v.content_sha256, 'hex')  AS content_sha256,
+           v.source_url,
+           (v.raw_record_id IS NOT NULL)    AS raw_record_present
+    FROM geonerva.observation_versions v
+    JOIN geonerva.source_records r ON r.id = v.source_record_id
+    WHERE v.id = ${options.versionId}::bigint
+      AND v.ingested_at <= ${options.asOf}
+  `.execute(db);
+  return result.rows[0] ?? null;
+}
+
+/** `EV:FCV:<id>` — one fire-cluster summary version. */
+export interface ClusterEvidenceRow {
+  readonly cluster_version_id: string;
+  readonly cluster_public_id: string;
+  readonly as_of: Date;
+  readonly n_total: number;
+  readonly n_24h: number;
+  readonly overpasses_24h: number;
+  readonly first_detected_at: Date;
+  readonly last_detected_at: Date;
+  readonly frp_sum_24h: number | null;
+  readonly frp_max: number | null;
+  readonly max_confidence: string | null;
+  readonly product_ids: readonly number[];
+  readonly content_sha256: string;
+}
+
+/** One cluster summary version, if it had been computed by `asOf`. */
+export async function clusterEvidenceAsOf(
+  db: Kysely<DB>,
+  options: { readonly asOf: Date; readonly clusterVersionId: string },
+): Promise<ClusterEvidenceRow | null> {
+  const result = await sql<ClusterEvidenceRow>`
+    SELECT v.id::text                       AS cluster_version_id,
+           c.public_id                      AS cluster_public_id,
+           v.as_of,
+           v.n_total,
+           v.n_24h,
+           v.overpasses_24h,
+           v.first_detected_at,
+           v.last_detected_at,
+           v.frp_sum_24h,
+           v.frp_max,
+           v.max_confidence,
+           v.product_ids,
+           encode(v.content_sha256, 'hex')  AS content_sha256
+    FROM geonerva.fire_cluster_versions v
+    JOIN geonerva.fire_clusters c ON c.id = v.cluster_id
+    WHERE v.id = ${options.clusterVersionId}::bigint
+      AND v.as_of <= ${options.asOf}
+  `.execute(db);
+  return result.rows[0] ?? null;
+}
+
+/** `EV:RUN:<uuid>` — one ingestion run, the evidence behind every health statement. */
+export interface RunEvidenceRow {
+  readonly run_id: string;
+  readonly source_id: string;
+  readonly product_id: number | null;
+  readonly trigger: string;
+  readonly status: string;
+  readonly started_at: Date;
+  readonly finished_at: Date | null;
+  readonly committed_at: Date | null;
+  readonly http_status: number | null;
+  readonly bytes_received: number | null;
+  readonly n_received: number;
+  readonly n_new_records: number;
+  readonly n_new_versions: number;
+  readonly n_unchanged: number;
+  readonly n_rejected: number;
+  readonly newest_observed_at: Date | null;
+  readonly error_class: string | null;
+  /** Sanitized and bounded to 1 KB at write time (`sanitizeDetail`, SECURITY.md M7). */
+  readonly error_message: string | null;
+  readonly payload_sha256: string | null;
+  readonly worker_version: string | null;
+}
+
+/**
+ * One ingestion run, if it had committed by `asOf`.
+ *
+ * `error_message` **is** served here, unlike in `runSummariesAsOf`, because `EvidenceDetail`
+ * declares the field and the write path earns it: every path that closes a failed run passes the
+ * detail through `sanitizeDetail`, and the one path that could see a driver error substitutes
+ * `describeDatabaseFailure` — the SQLSTATE and constraint name — rather than the message, precisely
+ * because a `node-postgres` error carries host and port. That is what makes the field safe to
+ * expose; it is a property of the writer, not of this query, and it is asserted there.
+ */
+export async function runEvidenceAsOf(
+  db: Kysely<DB>,
+  options: { readonly asOf: Date; readonly runId: string },
+): Promise<RunEvidenceRow | null> {
+  const result = await sql<RunEvidenceRow>`
+    SELECT i.id::text  AS run_id,
+           i.source_id,
+           i.product_id,
+           i.trigger,
+           i.status,
+           i.started_at,
+           i.finished_at,
+           i.committed_at,
+           i.http_status,
+           i.bytes_received,
+           i.n_received,
+           i.n_new_records,
+           i.n_new_versions,
+           i.n_unchanged,
+           i.n_rejected,
+           i.newest_observed_at,
+           i.error_class,
+           i.error_message,
+           i.payload_sha256,
+           i.worker_version
+    FROM geonerva.ingestion_runs i
+    WHERE i.id = ${options.runId}::uuid
+      AND i.committed_at IS NOT NULL
+      AND i.committed_at <= ${options.asOf}
+  `.execute(db);
+  return result.rows[0] ?? null;
+}
+
+/** `EV:COR:<id>` — one correlation decision. */
+export interface CorrelationEvidenceRow {
+  readonly link_id: string;
+  readonly canonical_event_public_id: string;
+  readonly source_record_primary_key: string;
+  readonly source_id: string;
+  readonly relation: string;
+  readonly match_kind: string;
+  readonly confidence: string | null;
+  readonly reasons: unknown;
+  readonly algorithm_version: string;
+  readonly linked_at: Date;
+  readonly unlinked_at: Date | null;
+  readonly unlink_reason: string | null;
+}
+
+/**
+ * One correlation link, if it had been made by `asOf`.
+ *
+ * `unlinked_at` is returned **unfiltered**, and that is the interesting part. A link that was
+ * later closed is still a real decision that was cited while it was open, so the evidence resolves
+ * — but the response says when it was closed and why. Filtering closed links out would make a
+ * citation in an old response un-resolvable; filtering the `unlinked_at` *value* out would make a
+ * withdrawn decision look current. Neither is the truth, and the truth here is cheap.
+ *
+ * The one thing that is filtered is future knowledge: an `unlinked_at` after `asOf` is reported as
+ * `null`, because at that knowledge time the link was still open.
+ */
+export async function correlationEvidenceAsOf(
+  db: Kysely<DB>,
+  options: { readonly asOf: Date; readonly linkId: string },
+): Promise<CorrelationEvidenceRow | null> {
+  const result = await sql<CorrelationEvidenceRow>`
+    SELECT l.id::text            AS link_id,
+           e.public_id           AS canonical_event_public_id,
+           r.primary_key         AS source_record_primary_key,
+           r.source_id,
+           l.relation,
+           l.match_kind,
+           l.confidence::text    AS confidence,
+           l.reasons,
+           l.algorithm_version,
+           l.linked_at,
+           CASE WHEN l.unlinked_at <= ${options.asOf} THEN l.unlinked_at END AS unlinked_at,
+           CASE WHEN l.unlinked_at <= ${options.asOf} THEN l.unlink_reason END AS unlink_reason
+    FROM geonerva.canonical_links l
+    JOIN geonerva.canonical_events e ON e.id = l.canonical_event_id
+    JOIN geonerva.source_records r ON r.id = l.source_record_id
+    WHERE l.id = ${options.linkId}::bigint
+      AND l.linked_at <= ${options.asOf}
+  `.execute(db);
+  return result.rows[0] ?? null;
+}

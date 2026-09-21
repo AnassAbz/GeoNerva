@@ -17,6 +17,24 @@ export interface LatLon {
 /** Decimal places user-supplied coordinates are rounded to at the API boundary (≈ 1.1 km). */
 export const USER_COORDINATE_DECIMALS = 2;
 
+/**
+ * Rounds a user-supplied coordinate to `USER_COORDINATE_DECIMALS`.
+ *
+ * ADR-015 and invariant I15: a visitor's position is rounded to two decimals — about 1.1 km —
+ * **at the API boundary**, before it reaches a log line, a cache key or a query. This lives beside
+ * the constant and beside `formatCoordinateKey`, which *validates* that a coordinate was already
+ * rounded and throws otherwise: one rounder, one validator, no chance of them disagreeing about
+ * what "rounded" means.
+ *
+ * `-0` is folded to `0`. They are the same meridian or parallel, and `(-0).toFixed(2)` is
+ * `"-0.00"`, which would be a second cache key for one location.
+ */
+export function roundUserCoordinate(value: number): number {
+  const factor = 10 ** USER_COORDINATE_DECIMALS;
+  const rounded = Math.round(value * factor) / factor;
+  return rounded === 0 ? 0 : rounded;
+}
+
 /** Latitude bounds, inclusive. */
 export const MIN_LATITUDE = -90;
 export const MAX_LATITUDE = 90;

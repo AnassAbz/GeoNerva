@@ -21,6 +21,8 @@
  */
 
 export { READ_MODEL_SCHEMA_VERSION, UNAVAILABLE_REASONS, CHANGE_WINDOWS } from './common.ts';
+
+export { toFreshnessPolicyView, toSourceHealthView } from './health-view.ts';
 export type {
   Agreement,
   AsOfContext,

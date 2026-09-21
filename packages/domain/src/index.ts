@@ -75,6 +75,7 @@ export {
   MIN_LATITUDE,
   MIN_LONGITUDE,
   USER_COORDINATE_DECIMALS,
+  roundUserCoordinate,
   boundingBoxSchema,
   crossesAntimeridian,
   isNormalizedLongitude,
