@@ -18,7 +18,13 @@ import {
   type SubjectSummary,
 } from '@geonerva/domain';
 
-import { LEXICON_CLASSES, buildCopy, scanLexicon, type CopyInput } from './index.ts';
+import {
+  EXEMPTIBLE_CLASSES,
+  LEXICON_CLASSES,
+  buildCopy,
+  scanLexicon,
+  type CopyInput,
+} from './index.ts';
 
 const MARRAKECH: LocationRef = {
   key: 'p:2542997',
@@ -388,6 +394,28 @@ describe('the lexicon scanner itself', () => {
     const quote = 'the centre is expected to hit the coast on Tuesday';
     expect(scanLexicon(`JTWC says: "${quote}".`, { verbatimQuotes: [quote] })).toEqual([]);
     expect(scanLexicon('The centre is expected to hit the coast on Tuesday.')).toHaveLength(1);
+  });
+
+  it('never lets a quote excuse a safety claim, however it is worded', () => {
+    /*
+     * The narrowing that matters. `verbatimQuotes` is assembled from database columns — coverage
+     * notes and disclaimers — and if such a column were ever populated from a provider feed, a
+     * broad exemption would let a string a provider controls license "you are safe" in generated
+     * text. No caveat, disclaimer or forecast has a legitimate need to assert the reader's safety,
+     * so `SAFETY` is not exemptible at all.
+     */
+    const hostile = 'According to the bulletin, you are safe and there is no danger here.';
+    expect(
+      scanLexicon(hostile, { verbatimQuotes: [hostile] }).map((hit) => hit.lexiconClass),
+    ).toEqual(['SAFETY', 'SAFETY']);
+    expect(EXEMPTIBLE_CLASSES.has('SAFETY')).toBe(false);
+    expect(EXEMPTIBLE_CLASSES.has('THERMAL_AS_WILDFIRE')).toBe(false);
+  });
+
+  it('never lets a quote excuse calling a thermal detection a wildfire', () => {
+    // A category error regardless of authorship: VIIRS detects heat, not fire.
+    const quote = 'A wildfire is burning in the area.';
+    expect(scanLexicon(quote, { verbatimQuotes: [quote], thermalContext: true })).toHaveLength(1);
   });
 
   it('allows a provider caveat that denies a real-time promise', () => {

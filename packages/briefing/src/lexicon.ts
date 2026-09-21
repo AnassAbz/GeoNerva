@@ -65,13 +65,45 @@ export interface LexiconOptions {
    * written "real-time" would make the honest caveat unsayable and push the code toward
    * paraphrasing someone else's limitation.
    *
-   * The exemption is deliberately narrow: a hit is excused only when a supplied quote contains
-   * the phrase **and** that quote appears verbatim in the scanned text. It cannot launder a
-   * sentence GeoNerva wrote itself, and for model output it can only ever cover strings the
-   * validator already knows came from the packet.
+   * The exemption is narrow in two ways, and the second matters more than the first.
+   *
+   * **By match:** a hit is excused only when a supplied quote contains the phrase *and* that quote
+   * appears verbatim in the scanned text, so it cannot launder a sentence GeoNerva wrote itself.
+   *
+   * **By class:** it applies **only** to `PREDICTION` and `REAL_TIME` — see `EXEMPTIBLE_CLASSES`.
+   * A `SAFETY` claim or a thermal detection called a wildfire is never excusable, whoever wrote
+   * the words.
    */
   readonly verbatimQuotes?: readonly string[];
 }
+
+/**
+ * The classes a verbatim quote may excuse, and the two that it may never.
+ *
+ * `PREDICTION` is §11.4's own exemption: a cyclone track *is* a forecast and the issuing agency's
+ * wording is the most actionable thing on the card. `REAL_TIME` was forced by FIRMS, whose
+ * coverage note reads "Near-real-time detections arrive about three hours after the satellite
+ * overpass" — a sentence that denies the very promise the class exists to forbid.
+ *
+ * `SAFETY` and `THERMAL_AS_WILDFIRE` are **never** exemptible, and excluding them is the point of
+ * having a list at all:
+ *
+ *  - No provider caveat, disclaimer or forecast has a legitimate need to assert that the reader is
+ *    safe. Allowing the exemption to reach this class would mean a string in a database column —
+ *    or, if that column is ever populated from a provider feed, a string a provider controls —
+ *    could excuse "you are safe" in generated text. That is the single most expensive sentence
+ *    this system can emit, and no wording of a quote should be able to license it.
+ *  - Calling a thermal detection a wildfire is a category error regardless of authorship. VIIRS
+ *    detects heat; §9.2's mandatory caveat says so on the same card.
+ *
+ * Generalising the exemption to every class was the first implementation, and narrowing it is a
+ * deliberate correction rather than an oversight being tidied: the broad version made a
+ * configuration value into a security boundary.
+ */
+export const EXEMPTIBLE_CLASSES: ReadonlySet<LexiconClass> = new Set<LexiconClass>([
+  'PREDICTION',
+  'REAL_TIME',
+]);
 
 /**
  * Phrases per class.
@@ -144,13 +176,14 @@ export function scanLexicon(text: string, options: LexiconOptions = {}): Lexicon
         if (index === -1) break;
         from = index + phrase.length;
         /*
-         * A phrase inside relayed verbatim text is allowed, and only there. The check is that some
-         * supplied quote contains the phrase *and* appears in the scanned text — so relaying a
-         * provider's wording is fine while writing the same words outside a quote is not.
+         * A phrase inside relayed verbatim text is allowed, and only there, and only for a class
+         * that may be excused at all. The match test is that some supplied quote contains the
+         * phrase *and* appears in the scanned text — so relaying a provider's wording is fine
+         * while writing the same words outside a quote is not.
          */
-        const exempt = exemptions.some(
-          (quote) => quote.includes(phrase) && normalized.includes(quote),
-        );
+        const exempt =
+          EXEMPTIBLE_CLASSES.has(lexiconClass) &&
+          exemptions.some((quote) => quote.includes(phrase) && normalized.includes(quote));
         if (!exempt) hits.push({ lexiconClass, phrase, index });
       }
     }

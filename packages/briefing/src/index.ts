@@ -11,7 +11,7 @@ export { CanonicalizationError, canonicalJson, contentSha256 } from './content-h
 export { familyWords, resolveCoverage } from './coverage.ts';
 export type { FamilyCoverageResult, FamilySource } from './coverage.ts';
 
-export { LEXICON_CLASSES, isLexiconClean, scanLexicon } from './lexicon.ts';
+export { EXEMPTIBLE_CLASSES, LEXICON_CLASSES, isLexiconClean, scanLexicon } from './lexicon.ts';
 export type { LexiconClass, LexiconHit, LexiconOptions } from './lexicon.ts';
 
 export { replayHorizonFor } from './replay-horizon.ts';
