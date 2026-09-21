@@ -800,3 +800,62 @@ export async function derivationsAsOf(
     lastSucceededEngineVersion: row.last_succeeded_engine_version,
   }));
 }
+
+/** One source product, with whether it covers a given point. */
+export interface ProductCoverageRow {
+  readonly source_id: string;
+  readonly source_name: string;
+  readonly product_id: number;
+  readonly product_code: string;
+  readonly hazard_types: readonly string[];
+  readonly source_enabled: boolean;
+  readonly product_enabled: boolean;
+  readonly product_status: string;
+  readonly active_from: Date | null;
+  readonly active_to: Date | null;
+  /** `true` when the source's coverage polygon contains the point, or coverage is global. */
+  readonly covers_point: boolean;
+  readonly coverage_note: string | null;
+}
+
+/**
+ * Which products could tell GeoNerva about a given place.
+ *
+ * Coverage is a property of the **source set**, not of the data: ECCC is Canada-only and no
+ * amount of healthy polling makes it report a warning for Marrakech. `sources.coverage` is a
+ * polygon and `NULL` means global, so the point test is the whole question — and it is answered
+ * here, in the one package allowed to hold SQL, rather than by a hard-coded list of source ids.
+ *
+ * **A stated limitation.** Source configuration is not versioned, so this reflects the
+ * configuration as it stands now, not as it stood at `asOf`. A replay from before a source was
+ * added will therefore describe that family using today's source set. The alternative — a
+ * bitemporal configuration table — is a real design, and it is not one this phase invented
+ * quietly; `activeFrom`/`activeTo` are returned so a caller can at least see a product that was
+ * not yet operating.
+ */
+export async function productCoverageFor(
+  db: Kysely<DB>,
+  point: LatLon,
+): Promise<ProductCoverageRow[]> {
+  const result = await sql<ProductCoverageRow>`
+    SELECT s.id                AS source_id,
+           s.name              AS source_name,
+           p.id                AS product_id,
+           p.code              AS product_code,
+           p.hazard_types      AS hazard_types,
+           s.enabled           AS source_enabled,
+           p.enabled           AS product_enabled,
+           p.status            AS product_status,
+           p.active_from,
+           p.active_to,
+           (s.coverage IS NULL OR ST_Intersects(
+              s.coverage,
+              ST_SetSRID(ST_MakePoint(${point.lon}, ${point.lat}), 4326)::geography))
+                               AS covers_point,
+           s.coverage_note
+    FROM geonerva.sources s
+    JOIN geonerva.source_products p ON p.source_id = s.id
+    ORDER BY s.id, p.id
+  `.execute(db);
+  return [...result.rows];
+}

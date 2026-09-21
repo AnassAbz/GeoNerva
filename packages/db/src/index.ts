@@ -66,6 +66,7 @@ export {
   linksAsOf,
   observationsAsOf,
   observationsNow,
+  productCoverageFor,
   sourceCutoffsAsOf,
 } from './asof.ts';
 export type {
@@ -74,6 +75,7 @@ export type {
   LinkRow,
   ObservationRow,
   ObservationsAsOfOptions,
+  ProductCoverageRow,
   SourceHealthAsOf,
 } from './asof.ts';
 
