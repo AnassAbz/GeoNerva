@@ -884,3 +884,165 @@ export async function newestDetectionIngestAt(
   `.execute(db);
   return result.rows[0]?.newest ?? null;
 }
+
+/** One manifest row, before it becomes an `EvidenceItem`. */
+export interface EvidenceRow {
+  readonly id: string;
+  readonly kind: string;
+  readonly summary: string;
+  readonly source_id: string | null;
+  readonly product_id: number | null;
+  readonly observed_at: Date | null;
+  readonly ingested_at: Date;
+  readonly url: string | null;
+}
+
+/**
+ * Resolves evidence IDs into manifest rows (invariant I9).
+ *
+ * Every ID referenced anywhere in a response must appear in that response's manifest, so this is
+ * the function that makes a citation resolvable rather than decorative. It reads the **immutable**
+ * rows the IDs point at — an observation version, a correlation link, an ingestion run, a cluster
+ * version — none of which can change once written, which is why they can be cited at all.
+ *
+ * Content-addressed kinds (`BAS`, `REL`, `CHG`) are **not** looked up: their ID *is* the hash of
+ * the computation, they are self-contained in the manifest, and there is no row to fetch. The
+ * caller supplies those directly.
+ *
+ * `asOf` bounds every lookup, so a manifest built for a replay cannot resolve an ID to something
+ * that did not exist yet. An ID outside the knowledge time comes back missing, which surfaces as a
+ * manifest gap rather than as a silent time-travelling citation.
+ */
+export async function evidenceItemsAsOf(
+  db: Kysely<DB>,
+  options: { readonly asOf: Date; readonly ids: readonly string[] },
+): Promise<EvidenceRow[]> {
+  const byKind = new Map<string, string[]>();
+  for (const id of options.ids) {
+    const parts = id.split(':');
+    const kind = parts[1];
+    const body = parts[2];
+    if (kind === undefined || body === undefined) continue;
+    const bucket = byKind.get(kind);
+    if (bucket === undefined) byKind.set(kind, [body]);
+    else bucket.push(body);
+  }
+
+  const rows: EvidenceRow[] = [];
+
+  const observationIds = byKind.get('OBS') ?? [];
+  if (observationIds.length > 0) {
+    const result = await sql<EvidenceRow>`
+      SELECT 'EV:OBS:' || v.id::text AS id,
+             'OBS'                   AS kind,
+             r.source_id || ' ' || r.primary_key || ' version ' || v.version_seq::text AS summary,
+             r.source_id             AS source_id,
+             r.product_id            AS product_id,
+             v.observed_at           AS observed_at,
+             v.ingested_at           AS ingested_at,
+             v.source_url            AS url
+      FROM geonerva.observation_versions v
+      JOIN geonerva.source_records r ON r.id = v.source_record_id
+      WHERE v.id = ANY(${sql.val(observationIds)}::bigint[])
+        AND v.ingested_at <= ${options.asOf}
+      ORDER BY v.id
+    `.execute(db);
+    rows.push(...result.rows);
+  }
+
+  const linkIds = byKind.get('COR') ?? [];
+  if (linkIds.length > 0) {
+    const result = await sql<EvidenceRow>`
+      SELECT 'EV:COR:' || l.id::text AS id,
+             'COR'                   AS kind,
+             'correlation ' || l.match_kind || ' ' || l.relation || ' for ' || e.public_id
+                                     AS summary,
+             r.source_id             AS source_id,
+             r.product_id            AS product_id,
+             NULL::timestamptz       AS observed_at,
+             l.linked_at             AS ingested_at,
+             NULL::text              AS url
+      FROM geonerva.canonical_links l
+      JOIN geonerva.canonical_events e ON e.id = l.canonical_event_id
+      JOIN geonerva.source_records r ON r.id = l.source_record_id
+      WHERE l.id = ANY(${sql.val(linkIds)}::bigint[])
+        AND l.linked_at <= ${options.asOf}
+      ORDER BY l.id
+    `.execute(db);
+    rows.push(...result.rows);
+  }
+
+  const runIds = byKind.get('RUN') ?? [];
+  if (runIds.length > 0) {
+    const result = await sql<EvidenceRow>`
+      SELECT 'EV:RUN:' || i.id::text AS id,
+             'RUN'                   AS kind,
+             i.source_id || ' ingestion run, ' || i.status AS summary,
+             i.source_id             AS source_id,
+             i.product_id            AS product_id,
+             i.newest_observed_at    AS observed_at,
+             i.committed_at          AS ingested_at,
+             NULL::text              AS url
+      FROM geonerva.ingestion_runs i
+      WHERE i.id = ANY(${sql.val(runIds)}::uuid[])
+        AND i.committed_at IS NOT NULL
+        AND i.committed_at <= ${options.asOf}
+      ORDER BY i.id
+    `.execute(db);
+    rows.push(...result.rows);
+  }
+
+  const clusterVersionIds = byKind.get('FCV') ?? [];
+  if (clusterVersionIds.length > 0) {
+    const result = await sql<EvidenceRow>`
+      SELECT 'EV:FCV:' || v.id::text AS id,
+             'FCV'                   AS kind,
+             'fire cluster ' || c.public_id || ' summary, ' || v.n_total::text || ' detections'
+                                     AS summary,
+             'firms'                 AS source_id,
+             NULL::smallint          AS product_id,
+             v.last_detected_at      AS observed_at,
+             v.as_of                 AS ingested_at,
+             NULL::text              AS url
+      FROM geonerva.fire_cluster_versions v
+      JOIN geonerva.fire_clusters c ON c.id = v.cluster_id
+      WHERE v.id = ANY(${sql.val(clusterVersionIds)}::bigint[])
+        AND v.as_of <= ${options.asOf}
+      ORDER BY v.id
+    `.execute(db);
+    rows.push(...result.rows);
+  }
+
+  return rows.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+}
+
+/** Attribution and licence per source, for the footer and `/methodology`. */
+export interface AttributionRow {
+  readonly source_id: string;
+  readonly name: string;
+  readonly homepage: string | null;
+  readonly licence: string;
+  readonly attribution_text: string;
+  readonly terms_url: string | null;
+  readonly disclaimer: string | null;
+}
+
+/**
+ * Attribution for the given sources.
+ *
+ * Not optional and not summarizable: several providers' terms require the attribution text and
+ * the disclaimer verbatim, which is why both are columns rather than something the UI composes.
+ */
+export async function attributionsFor(
+  db: Kysely<DB>,
+  sourceIds: readonly string[],
+): Promise<AttributionRow[]> {
+  if (sourceIds.length === 0) return [];
+  const result = await sql<AttributionRow>`
+    SELECT id AS source_id, name, homepage, licence, attribution_text, terms_url, disclaimer
+    FROM geonerva.sources
+    WHERE id = ANY(${sql.val(sourceIds)}::text[])
+    ORDER BY id
+  `.execute(db);
+  return [...result.rows];
+}

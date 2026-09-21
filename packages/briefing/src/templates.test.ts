@@ -378,7 +378,7 @@ describe('the lexicon scanner itself', () => {
     ).toHaveLength(1);
   });
 
-  it('allows prediction wording only inside a quoted official forecast', () => {
+  it('allows prediction wording only inside relayed verbatim text', () => {
     /*
      * §11.4's exemption. A cyclone track *is* a forecast, and refusing to relay the issuing
      * agency's words would suppress the most actionable thing on the card — but the exemption is
@@ -386,8 +386,26 @@ describe('the lexicon scanner itself', () => {
      * rejected.
      */
     const quote = 'the centre is expected to hit the coast on Tuesday';
-    expect(scanLexicon(`JTWC says: "${quote}".`, { officialForecastQuotes: [quote] })).toEqual([]);
+    expect(scanLexicon(`JTWC says: "${quote}".`, { verbatimQuotes: [quote] })).toEqual([]);
     expect(scanLexicon('The centre is expected to hit the coast on Tuesday.')).toHaveLength(1);
+  });
+
+  it('allows a provider caveat that denies a real-time promise', () => {
+    /*
+     * A real provider forced this. FIRMS's own coverage note reads "Near-real-time detections
+     * arrive about three hours after the satellite overpass" — a sentence that *denies* real-time
+     * and is the provider's wording. Scanning it as though GeoNerva had written "real-time" would
+     * make the honest caveat unsayable and push the code toward paraphrasing someone else's
+     * limitation.
+     */
+    const note =
+      'Global. Near-real-time detections arrive about three hours after the satellite overpass.';
+    expect(scanLexicon(note)).toHaveLength(1);
+    expect(scanLexicon(note, { verbatimQuotes: [note] })).toEqual([]);
+    // And it still cannot launder GeoNerva's own sentence.
+    expect(
+      scanLexicon('GeoNerva gives you a real-time view.', { verbatimQuotes: [note] }),
+    ).toHaveLength(1);
   });
 
   it('is not fooled by a typographic apostrophe or by spacing', () => {

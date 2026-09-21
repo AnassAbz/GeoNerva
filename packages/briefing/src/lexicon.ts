@@ -53,14 +53,24 @@ export interface LexiconOptions {
    */
   readonly thermalContext?: boolean;
   /**
-   * Phrases the provider's own forecast field uses, which may be quoted verbatim.
+   * Text GeoNerva is **relaying verbatim** rather than composing: provider caveats, coverage
+   * notes, disclaimers, and official forecast wording.
    *
-   * §11.4 allows prediction wording "unless quoting an official forecast field": a cyclone track
-   * *is* a forecast, and refusing to relay the issuing agency's own words would suppress the most
-   * actionable thing on the card. The exemption is by **exact substring of a supplied quote**, not
-   * by a looser rule, so it cannot be used to launder a sentence GeoNerva wrote itself.
+   * §11.4 grants this for prediction language — "unless quoting an official forecast field" —
+   * because a cyclone track *is* a forecast and refusing to relay the issuing agency's words
+   * would suppress the most actionable thing on the card. It applies to every class for the same
+   * reason, which a real provider forced: FIRMS's own coverage note reads *"Near-real-time
+   * detections arrive about three hours after the satellite overpass"*. That sentence **denies** a
+   * real-time promise, and it is the provider's wording — scanning it as though GeoNerva had
+   * written "real-time" would make the honest caveat unsayable and push the code toward
+   * paraphrasing someone else's limitation.
+   *
+   * The exemption is deliberately narrow: a hit is excused only when a supplied quote contains
+   * the phrase **and** that quote appears verbatim in the scanned text. It cannot launder a
+   * sentence GeoNerva wrote itself, and for model output it can only ever cover strings the
+   * validator already knows came from the packet.
    */
-  readonly officialForecastQuotes?: readonly string[];
+  readonly verbatimQuotes?: readonly string[];
 }
 
 /**
@@ -119,7 +129,7 @@ const PHRASES: Readonly<Record<LexiconClass, readonly string[]>> = {
  */
 export function scanLexicon(text: string, options: LexiconOptions = {}): LexiconHit[] {
   const normalized = text.toLowerCase().replaceAll('’', "'").replace(/\s+/gu, ' ');
-  const exemptions = (options.officialForecastQuotes ?? []).map((quote) =>
+  const exemptions = (options.verbatimQuotes ?? []).map((quote) =>
     quote.toLowerCase().replaceAll('’', "'").replace(/\s+/gu, ' '),
   );
 
@@ -134,13 +144,13 @@ export function scanLexicon(text: string, options: LexiconOptions = {}): Lexicon
         if (index === -1) break;
         from = index + phrase.length;
         /*
-         * A phrase inside a quoted official forecast is allowed, and only there. The check is that
-         * some supplied quote contains the phrase *and* appears in the text — so relaying an
-         * agency's wording is fine while writing the same words outside a quote is not.
+         * A phrase inside relayed verbatim text is allowed, and only there. The check is that some
+         * supplied quote contains the phrase *and* appears in the scanned text — so relaying a
+         * provider's wording is fine while writing the same words outside a quote is not.
          */
-        const exempt =
-          lexiconClass === 'PREDICTION' &&
-          exemptions.some((quote) => quote.includes(phrase) && normalized.includes(quote));
+        const exempt = exemptions.some(
+          (quote) => quote.includes(phrase) && normalized.includes(quote),
+        );
         if (!exempt) hits.push({ lexiconClass, phrase, index });
       }
     }

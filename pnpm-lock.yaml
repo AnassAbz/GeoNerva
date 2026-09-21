@@ -264,6 +264,9 @@ importers:
 
   packages/briefing:
     dependencies:
+      '@geonerva/changes':
+        specifier: workspace:*
+        version: link:../changes
       '@geonerva/correlation':
         specifier: workspace:*
         version: link:../correlation

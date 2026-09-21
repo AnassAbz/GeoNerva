@@ -59,9 +59,11 @@ export type {
 } from './migrator/runner.ts';
 
 export {
+  attributionsFor,
   clusterVersionsAsOf,
   clusterVersionsNow,
   derivationsAsOf,
+  evidenceItemsAsOf,
   healthAsOf,
   linksAsOf,
   observationsAsOf,
@@ -71,8 +73,10 @@ export {
   sourceCutoffsAsOf,
 } from './asof.ts';
 export type {
+  AttributionRow,
   ClusterVersionRow,
   DerivationStatusAsOf,
+  EvidenceRow,
   LinkRow,
   ObservationRow,
   ObservationsAsOfOptions,

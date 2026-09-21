@@ -16,6 +16,9 @@ export type { LexiconClass, LexiconHit, LexiconOptions } from './lexicon.ts';
 
 export { replayHorizonFor } from './replay-horizon.ts';
 
+export { EvidenceManifestError, buildBriefing } from './briefing.ts';
+export type { BriefingBuild, BuildBriefingOptions } from './briefing.ts';
+
 export { TEMPLATE_VERSION, buildCopy } from './templates.ts';
 export type { CopyInput } from './templates.ts';
 
