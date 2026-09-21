@@ -258,7 +258,17 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sources
 
-  packages/ai: {}
+  packages/ai:
+    dependencies:
+      '@geonerva/briefing':
+        specifier: workspace:*
+        version: link:../briefing
+      '@geonerva/domain':
+        specifier: workspace:*
+        version: link:../domain
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
 
   packages/baselines: {}
 

@@ -10,5 +10,10 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@geonerva/briefing": "workspace:*",
+    "@geonerva/domain": "workspace:*",
+    "zod": "4.6.5"
   }
 }
