@@ -26,7 +26,13 @@ import {
   HYSTERESIS_MISFIT,
   IDENTITY_REF_CONFIDENCE,
 } from './earthquake.config.ts';
-import { computeMisfit, magnitudeVeto, type MisfitTerms, type Solution } from './misfit.ts';
+import {
+  computeMisfit,
+  isRepublication,
+  magnitudeVeto,
+  type MisfitTerms,
+  type Solution,
+} from './misfit.ts';
 
 export type CorrelationVerdict = 'MATCH' | 'POSSIBLE_MATCH' | 'NO_MATCH';
 export type MatchKind = 'IDENTITY_REF' | 'SPATIOTEMPORAL' | 'SEED';
@@ -74,6 +80,18 @@ function reason(
 ): CorrelationReason {
   return { code, text, params };
 }
+
+/**
+ * Code-unit ordering, deliberately not `localeCompare`.
+ *
+ * These tiebreaks decide which event a record joins and which solution supplies the headline, and
+ * both reach the snapshot's `contentSha256`. A locale-aware comparison depends on the ICU data the
+ * runtime was built with, so the same facts would hash differently on a full-ICU server and a
+ * small-ICU container — which is exactly the hazard `packages/briefing/src/content-hash.ts`
+ * documents and avoids.
+ */
+export const byCodeUnit = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
 
 const round = (value: number, decimals: number): number => {
   const factor = 10 ** decimals;
@@ -184,13 +202,17 @@ export function decideSpatiotemporal(record: Solution, candidates: readonly Cand
     .filter((candidate) => candidate.excluded === null)
     .sort((left, right) =>
       left.terms.misfit === right.terms.misfit
-        ? left.canonicalEventId.localeCompare(right.canonicalEventId)
+        ? byCodeUnit(left.canonicalEventId, right.canonicalEventId)
         : left.terms.misfit - right.terms.misfit,
     );
   const ordered = [...scored].sort((left, right) =>
     left.terms.misfit === right.terms.misfit
-      ? left.canonicalEventId.localeCompare(right.canonicalEventId)
+      ? byCodeUnit(left.canonicalEventId, right.canonicalEventId)
       : left.terms.misfit - right.terms.misfit,
+  );
+
+  const representatives = new Map(
+    candidates.map((candidate) => [candidate.canonicalEventId, candidate.representative]),
   );
 
   const best = eligible[0];
@@ -255,10 +277,27 @@ export function decideSpatiotemporal(record: Solution, candidates: readonly Cand
   );
 
   if (best.terms.misfit <= DECISION.matchMisfit && gap >= DECISION.uniquenessGap) {
+    /*
+     * **A republication is not a second opinion, however it was matched** (ADR-030).
+     *
+     * The veto already knows how to recognise one — it is suspended for exactly this case, because
+     * a republished stale magnitude is an expected disagreement rather than evidence of two
+     * different earthquakes. The relation has to carry the same knowledge, or the event ends up
+     * holding two `SAME_EVENT` members, `assessAgreement` counts two independent sources, and a
+     * copy agreeing with its original is reported as corroboration. ADR-030 says it plainly: such
+     * a record "is linked as `DERIVED_COPY`, not as an independent source".
+     *
+     * This is the P0 Luzon pair: USGS credits `us`, EMSC credits `NEIC`, ΔM 1.3 at Δt 0 s and
+     * 0 km. Without this branch it was reported as two independent sources in `CONFLICT` — the
+     * worst available answer, since the truth is one solution restated with a stale magnitude.
+     */
+    const representative = representatives.get(best.canonicalEventId);
+    const republication = representative !== undefined && isRepublication(record, representative);
+
     return {
       verdict: 'MATCH',
       matchKind: 'SPATIOTEMPORAL',
-      relation: 'SAME_EVENT',
+      relation: republication ? 'DERIVED_COPY' : 'SAME_EVENT',
       canonicalEventId: best.canonicalEventId,
       confidence: confidenceFor(best.terms.misfit),
       reasons: [
@@ -270,6 +309,17 @@ export function decideSpatiotemporal(record: Solution, candidates: readonly Cand
             : `The next closest event is ${round(gap, 2)} worse, which is a clear margin.`,
           { gap: Number.isFinite(gap) ? round(gap, 3) : null },
         ),
+        ...(republication
+          ? [
+              reason(
+                'REPUBLICATION',
+                `This report republishes the other source’s solution${
+                  record.contributor === null ? '' : ` (credited to ${record.contributor})`
+                }, so it is not an independent confirmation.`,
+                { contributor: record.contributor },
+              ),
+            ]
+          : []),
       ],
       scored: ordered,
       algorithmVersion: EARTHQUAKE_ALGORITHM_VERSION,

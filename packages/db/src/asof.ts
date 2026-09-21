@@ -859,3 +859,28 @@ export async function productCoverageFor(
   `.execute(db);
   return [...result.rows];
 }
+
+/**
+ * The newest fire detection visible at `asOf`, by ingestion time, within a radius.
+ *
+ * This is the input the **clustering** derivation reads. Without it the fire card's derivation
+ * axis is measured against GDACS wildfire *events* — a different provider, a different table, and
+ * usually empty — so the axis cannot fire, and a place with 235,707 unclustered detections
+ * reports "no fire activity to report". The whole point of the axis is that GeoNerva's own
+ * pipeline failing must be visible, and it can only be visible against the right input.
+ */
+export async function newestDetectionIngestAt(
+  db: Kysely<DB>,
+  options: { readonly asOf: Date; readonly near: { point: LatLon; radiusM: number } },
+): Promise<Date | null> {
+  const result = await sql<{ newest: Date | null }>`
+    SELECT max(d.ingested_at) AS newest
+    FROM geonerva.fire_detections d
+    WHERE d.ingested_at <= ${options.asOf}
+      AND ST_DWithin(
+            d.geog,
+            ST_SetSRID(ST_MakePoint(${options.near.point.lon}, ${options.near.point.lat}), 4326)::geography,
+            ${options.near.radiusM})
+  `.execute(db);
+  return result.rows[0]?.newest ?? null;
+}

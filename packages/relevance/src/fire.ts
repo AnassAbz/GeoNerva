@@ -34,6 +34,26 @@ export const FIRE_MODEL_VERSION = 'fire-1';
 /** A cluster's activity state, from `fire_cluster_versions`. */
 export type FireClusterState = 'ACTIVE' | 'COOLING' | 'DORMANT';
 
+/**
+ * `ACTIVE` is "detection ≤ 24 h" (ARCHITECTURE §9.2, stated).
+ *
+ * The `COOLING`/`DORMANT` boundary is **not** stated there, so it is taken from the one other
+ * number the design already fixes: clustering runs over "detections from the last 72 h" (§7), and
+ * the detection partitions are dropped on the same horizon (§12). A cluster whose newest detection
+ * is older than the window the clusterer can see is history, not activity — which is exactly what
+ * `DORMANT` means, and why the model refuses to assess one.
+ */
+export const FIRE_ACTIVE_HOURS = 24;
+export const FIRE_COOLING_HOURS = 72;
+
+/** The cluster's state, from the age of its newest detection. */
+export function fireClusterState(hoursSinceLastDetection: number): FireClusterState {
+  if (!Number.isFinite(hoursSinceLastDetection) || hoursSinceLastDetection < 0) return 'DORMANT';
+  if (hoursSinceLastDetection <= FIRE_ACTIVE_HOURS) return 'ACTIVE';
+  if (hoursSinceLastDetection <= FIRE_COOLING_HOURS) return 'COOLING';
+  return 'DORMANT';
+}
+
 /** §9.2's distance bounds, in km. */
 export const FIRE_NEAR_KM = 10;
 export const FIRE_MID_KM = 30;

@@ -20,6 +20,7 @@
 import type { AgreementLevel, LatLon } from '@geonerva/domain';
 import { vincentyDistanceMeters } from '@geonerva/geo';
 
+import { byCodeUnit } from './decide.ts';
 import { magnitudeFamily } from './misfit.ts';
 
 /** One source's contribution to a canonical event. */
@@ -257,8 +258,13 @@ export function chooseHeadlineMagnitude(
       const leftMw = magnitudeFamily(left.member.magnitudeType) === 'MW' ? 0 : 1;
       const rightMw = magnitudeFamily(right.member.magnitudeType) === 'MW' ? 0 : 1;
       if (leftMw !== rightMw) return leftMw - rightMw;
-      // Still tied: order by source record id, so the headline does not depend on row order.
-      return left.member.sourceRecordId.localeCompare(right.member.sourceRecordId);
+      /*
+       * Still tied: order by source record id, so the headline does not depend on row order — by
+       * code unit rather than by locale, because this choice decides the magnitude, the title and
+       * the distance a snapshot reports, and therefore its `contentSha256`. A locale-aware
+       * comparison would make that hash depend on the ICU data the runtime was built with.
+       */
+      return byCodeUnit(left.member.sourceRecordId, right.member.sourceRecordId);
     });
 
   return ranked[0] ?? null;

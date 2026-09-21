@@ -155,6 +155,20 @@ module.exports = {
       to: { path: '^packages/db/src/repositories/', reachable: true },
     },
     {
+      name: 'briefing-reads-facts-only-through-asof',
+      comment:
+        'P6 review finding. The `web-reads-facts-only-through-asof` rule is enforced from ' +
+        '`apps/web`, so it stays vacuously green until the first route handler imports a ' +
+        'service — and `packages/briefing` had already made every repository reachable by ' +
+        'importing the `@geonerva/db` root barrel. A repository read returns the newest row ' +
+        'rather than the row as of T, so a replay would silently show the present. Briefing ' +
+        'imports `@geonerva/db/asof`, which is what that subpath exists for. Tests may reach ' +
+        'repositories: they are building the state the read path then reads.',
+      severity: 'error',
+      from: { path: '^packages/briefing/', pathNot: TEST_FILES },
+      to: { path: '^packages/db/src/repositories/', reachable: true },
+    },
+    {
       name: 'worker-does-not-import-web',
       severity: 'error',
       from: { path: '^apps/worker/' },

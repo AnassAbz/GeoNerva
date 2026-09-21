@@ -9,6 +9,22 @@
  * The rule is derived from configuration — hazard types on products, the coverage polygon on the
  * source — and never from a hard-coded list of source ids (ARCHITECTURE §3, rule 4). Adding a
  * European flood source would change these cards without a line of code here.
+ *
+ * ### A completeness caveat is not partial coverage [P6 review]
+ *
+ * These are two different facts and an earlier version of this file conflated them. Every seeded
+ * source carries a `coverage_note` — USGS's "complete only from about M4.5 outside the United
+ * States", EMSC's denser European network — and treating any note as `PARTIAL` made **every
+ * family at every location on Earth** permanently partial. That is not a harmless
+ * over-cautiousness: `resolveAvailability` reports `PARTIAL_COVERAGE` before it can ever reach
+ * `NOTHING_TO_REPORT` or `OK`, and `resolveDataConfidence` returns `LOW` unconditionally for
+ * partial coverage — so `MEDIUM` and `HIGH` became unreachable and the `corroborated` input, which
+ * the whole independent-source count exists to feed, could no longer change any outcome.
+ *
+ * `PARTIAL` now means what the name says: **some of this family is covered here and some is not**,
+ * which is a property of the hazard types and the coverage polygons. A provider's caveat about the
+ * completeness of its own catalogue is a **caveat**: it travels with the card, it is always
+ * rendered, and it does not silence three other axes.
  */
 
 import {
@@ -18,7 +34,7 @@ import {
   type FamilyCoverage,
   type HazardFamily,
 } from '@geonerva/domain';
-import type { ProductCoverageRow } from '@geonerva/db';
+import type { ProductCoverageRow } from '@geonerva/db/asof';
 
 /** One product that feeds a family here, after coverage has been resolved. */
 export interface FamilySource {
@@ -34,6 +50,15 @@ export interface FamilyCoverageResult {
   readonly sources: readonly FamilySource[];
   /** Products for this family that exist but do not reach here, so a note can name the gap. */
   readonly outOfAreaSources: readonly FamilySource[];
+  /**
+   * The contributing providers' own completeness caveats, verbatim.
+   *
+   * Rendered on the card, never summarized: the limitation belongs to the provider, and
+   * paraphrasing it would put GeoNerva's words on their caveat.
+   */
+  readonly notes: readonly string[];
+  /** Hazard types in this family that no product covers here. Empty means the family is whole. */
+  readonly uncoveredHazardTypes: readonly string[];
 }
 
 /**
@@ -46,28 +71,54 @@ export interface FamilyCoverageResult {
  */
 export function resolveCoverage(
   rows: readonly ProductCoverageRow[],
+  asOf: Date,
 ): Readonly<Record<HazardFamily, FamilyCoverageResult>> {
   const byFamily = {} as Record<HazardFamily, FamilyCoverageResult>;
 
   for (const family of HAZARD_FAMILIES) {
-    const hazardTypes = new Set<string>(HAZARD_TYPES_BY_FAMILY[family]);
+    const hazardTypes = HAZARD_TYPES_BY_FAMILY[family];
+    const wanted = new Set<string>(hazardTypes);
     const forFamily = rows.filter((row) =>
-      row.hazard_types.some((hazardType) => hazardTypes.has(hazardType)),
+      row.hazard_types.some((hazardType) => wanted.has(hazardType)),
     );
-    const usable = forFamily.filter(
-      (row) => row.source_enabled && row.product_enabled && row.product_status !== 'RETIRED',
-    );
+    const usable = forFamily.filter((row) => isOperating(row, asOf));
     const here = usable.filter((row) => row.covers_point);
     const elsewhere = usable.filter((row) => !row.covers_point);
 
+    /*
+     * A hazard type with no product covering this place is a real gap in the family, and it is
+     * what `PARTIAL` is for. `OTHER` holds volcanoes, droughts, tsunamis and a catch-all; GDACS
+     * covers the first two and nothing covers the rest, so a card claiming to report "volcanoes
+     * and droughts" must not also imply it would have told you about a tsunami.
+     */
+    const covered = new Set(here.flatMap((row) => row.hazard_types));
+    const uncoveredHazardTypes = hazardTypes.filter((hazardType) => !covered.has(hazardType));
+    const notes = [...new Set(here.map((row) => row.coverage_note).filter(isPresent))].sort();
+
     byFamily[family] = {
-      coverage: coverageOf(family, here, elsewhere),
+      coverage: coverageOf(family, here, elsewhere, uncoveredHazardTypes),
       sources: here.map(sourceOf),
       outOfAreaSources: elsewhere.map(sourceOf),
+      notes,
+      uncoveredHazardTypes,
     };
   }
 
   return byFamily;
+}
+
+/**
+ * Whether a product was operating at the knowledge time.
+ *
+ * `active_from` is why this takes `asOf` at all: NOAA-21 launched in 2023, so a replay of 2020
+ * that counted it as covering fire activity would report a satellite that was not in orbit — and
+ * would then render the resulting emptiness as an observation.
+ */
+function isOperating(row: ProductCoverageRow, asOf: Date): boolean {
+  if (!row.source_enabled || !row.product_enabled || row.product_status === 'RETIRED') return false;
+  if (row.active_from !== null && row.active_from.getTime() > asOf.getTime()) return false;
+  if (row.active_to !== null && row.active_to.getTime() < asOf.getTime()) return false;
+  return true;
 }
 
 function sourceOf(row: ProductCoverageRow): FamilySource {
@@ -91,6 +142,7 @@ function coverageOf(
   family: HazardFamily,
   here: readonly ProductCoverageRow[],
   elsewhere: readonly ProductCoverageRow[],
+  uncoveredHazardTypes: readonly string[],
 ): FamilyCoverage {
   if (here.length === 0) {
     return {
@@ -102,16 +154,14 @@ function coverageOf(
     };
   }
 
-  /*
-   * A completeness caveat on any contributing source makes the family `PARTIAL`.
-   *
-   * The note is the provider's own wording from `sources.coverage_note` — "complete only from
-   * about M4.5 outside the United States" — rather than a summary of it, because the limitation
-   * belongs to the provider and paraphrasing it would put GeoNerva's words on their caveat.
-   */
-  const notes = [...new Set(here.map((row) => row.coverage_note).filter(isPresent))].sort();
-  if (notes.length > 0) {
-    return { level: 'PARTIAL' satisfies CoverageLevel, note: notes.join(' ') };
+  if (uncoveredHazardTypes.length > 0) {
+    return {
+      level: 'PARTIAL' satisfies CoverageLevel,
+      note: `Part of this category is not covered here: ${uncoveredHazardTypes
+        .map((hazardType) => hazardType.toLowerCase().replaceAll('_', ' '))
+        .sort()
+        .join(', ')}.`,
+    };
   }
 
   return { level: 'COVERED' satisfies CoverageLevel, note: null };

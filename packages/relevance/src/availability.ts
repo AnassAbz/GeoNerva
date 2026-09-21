@@ -85,6 +85,14 @@ export const AVAILABILITY_REASONS = [
   'DERIVATION_NOT_RUN',
   /** The derivation ran, but data has been ingested since; its items are behind the facts. */
   'DERIVATION_STALE',
+  /**
+   * Subjects were found here that no relevance model could assess — a hazard type with no model,
+   * or a record missing the field the model bands on. "We have no model for this" is not
+   * "nothing is happening", and a card that dropped them silently would say the second.
+   */
+  'SUBJECTS_NOT_ASSESSED',
+  /** The knowledge time is older than the retention profile can answer for (ADR-035). */
+  'BEYOND_REPLAY_HORIZON',
   /** The family is covered and healthy, and there is genuinely nothing to report. */
   'NOTHING_TO_REPORT',
   /** Coverage here is incomplete in a way that changes what an absence means. */
@@ -135,8 +143,25 @@ export interface AvailabilityInput {
   readonly sources: readonly SourceAvailabilityInput[];
   /** How many items the as-of read returned. Never the sole input — see the header. */
   readonly itemCount: number;
+  /**
+   * Subjects that were found and then could not be assessed by any relevance model.
+   *
+   * They are not items — there is no level to show — but they are emphatically not absence
+   * either, and the difference decides whether a zero may be rendered. A GDACS drought alert
+   * covering this place, with no drought model written, must not produce "nothing to report".
+   */
+  readonly unassessedCount?: number;
   /** Omitted for families read straight from the fact store, which is most of them. */
   readonly derivation?: DerivationStateInput;
+  /**
+   * True when `asOf` is older than the family's replay horizon (ADR-035).
+   *
+   * Retention drops data; a query over dropped data returns nothing. ADR-035 is explicit that
+   * this "must be reported as *outside the indexed window*, never as an empty result — an empty
+   * list here would be the system saying nothing happened when what it means is that it no longer
+   * remembers."
+   */
+  readonly beyondReplayHorizon?: boolean;
 }
 
 export interface AvailabilityVerdict {
@@ -188,6 +213,24 @@ export function resolveAvailability(input: AvailabilityInput): AvailabilityVerdi
     };
   }
 
+  /*
+   * The replay horizon, checked after coverage and before health.
+   *
+   * After coverage because a place with no source cannot have a *forgotten* one. Before health
+   * because health at a knowledge time beyond the horizon is itself unreliable — the run history
+   * it is derived from is subject to the same retention — and because the honest answer to "what
+   * happened here two years ago" is "outside the indexed window", not "the feed was healthy and
+   * quiet".
+   */
+  if (input.beyondReplayHorizon === true) {
+    return {
+      availability: 'UNAVAILABLE',
+      reason: 'BEYOND_REPLAY_HORIZON',
+      mayRenderZero: false,
+      unusableSources,
+    };
+  }
+
   const usable = input.sources.filter(
     (source) => !CANNOT_SUPPORT_A_CLAIM.has(source.status) && source.hasEverSucceeded,
   );
@@ -215,6 +258,23 @@ export function resolveAvailability(input: AvailabilityInput): AvailabilityVerdi
    */
   const derived = derivationVerdict(input, unusableSources);
   if (derived !== null) return derived;
+
+  /*
+   * Subjects found but not assessable.
+   *
+   * The family is `AVAILABLE` — the items that *were* assessed are real and must be shown — but no
+   * zero may be rendered beside them, because the count excludes hazards GeoNerva is holding and
+   * cannot describe. This is the same shape as a stale derivation: the list is true as far as it
+   * goes, and the number is not.
+   */
+  if ((input.unassessedCount ?? 0) > 0) {
+    return {
+      availability: 'AVAILABLE',
+      reason: 'SUBJECTS_NOT_ASSESSED',
+      mayRenderZero: false,
+      unusableSources,
+    };
+  }
 
   /*
    * At least one source answered, so data may be shown. What is left is *which* qualified kind of

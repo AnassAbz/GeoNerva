@@ -65,6 +65,7 @@ export {
   healthAsOf,
   linksAsOf,
   observationsAsOf,
+  newestDetectionIngestAt,
   observationsNow,
   productCoverageFor,
   sourceCutoffsAsOf,

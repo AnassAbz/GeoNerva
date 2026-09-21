@@ -45,8 +45,14 @@ describe('the same content hashes the same way', () => {
     expect(canonicalJson({ B: 1, a: 2 })).toBe('{"B":1,"a":2}');
   });
 
-  it('ignores undefined properties, which are never content', () => {
-    expect(canonicalJson({ a: 1, b: undefined })).toBe('{"a":1}');
+  it('refuses an undefined property rather than filtering it out', () => {
+    /*
+     * Filtering is exactly what `JSON.stringify` does, and reason #3 for not using it:
+     * `{a: 1, b: undefined}` would hash identically to `{a: 1}`, which is the "fails to vary when
+     * content changes" half of the failure this module exists to prevent. The read models say a
+     * missing value is an explicit `unavailable`, so an `undefined` here is a bug to fail on.
+     */
+    expect(() => canonicalJson({ a: 1, b: undefined })).toThrow(/undefined is never content/);
   });
 });
 

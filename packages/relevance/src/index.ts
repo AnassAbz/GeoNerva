@@ -55,6 +55,8 @@ export {
 export type { CycloneInput, FloodInput, GdacsAlertLevel, VolcanoInput } from './gdacs-families.ts';
 
 export {
+  FIRE_ACTIVE_HOURS,
+  FIRE_COOLING_HOURS,
   FIRE_GROWTH_FLOOR,
   FIRE_HIGH_DETECTIONS_24H,
   FIRE_HIGH_OVERPASSES_24H,
@@ -64,5 +66,6 @@ export {
   FIRE_OFFICIAL_ALERT_KM,
   FIRE_OUTER_KM,
   assessFire,
+  fireClusterState,
 } from './fire.ts';
 export type { FireClusterState, FireInput } from './fire.ts';

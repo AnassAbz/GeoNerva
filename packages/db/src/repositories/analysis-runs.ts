@@ -30,6 +30,16 @@ type Db = Kysely<DB> | Transaction<DB>;
 /** The `kind` values `analysis_runs` accepts. Mirrors the CHECK in migration 0006. */
 export const ANALYSIS_RUN_KINDS = [
   'CORRELATION',
+  /**
+   * Opening a canonical event for a single-source hazard, which makes no matching decision.
+   *
+   * Distinct from `CORRELATION` on purpose. Both used to write `CORRELATION`, and because the
+   * derivation axis keys on `kind`, an hourly GDACS seed run vouched for an earthquake matcher
+   * that had never run — so the earthquake card reported "nothing to report" beside unlinked
+   * records. The one axis that exists to catch GeoNerva's own pipeline failing was being satisfied
+   * by a different pipeline.
+   */
+  'SEED',
   'CLUSTERING',
   'SNAPSHOT',
   'BASELINE',
@@ -54,10 +64,21 @@ export interface StartAnalysisRunInput {
 /**
  * Opens a run.
  *
- * There is deliberately **no lease** here, unlike `acquireRunLease` for ingestion. An overlapping
- * ingestion poll would write duplicate facts; an overlapping derivation recomputes the same
- * answer from the same append-only inputs, which is wasteful and not incorrect. Adding a lock
- * would be a scheduling decision, and it belongs to the scheduler rather than to the audit table.
+ * There is **no lease** here, unlike `acquireRunLease` for ingestion, and the honest statement of
+ * what that costs is not the same for every kind.
+ *
+ * For `SNAPSHOT` and `BASELINE`, an overlapping run recomputes the same answer from the same
+ * append-only inputs: wasteful, not incorrect. For `CORRELATION` and `SEED` it is **not** merely
+ * wasteful, because those mint identities. Correlation refreshes `canonical_event_state` after
+ * each record commits and generates candidates from that projection, so two overlapping runs
+ * processing disjoint records can each open a canonical event for one earthquake before the
+ * other's projection lands — two events, each reporting `SINGLE_SOURCE`.
+ *
+ * Today the worker is single-instance and the scheduler does not overlap runs, so this is a
+ * latent risk rather than an observed failure; it is recorded in `docs/reviews/gate-g6.md` and
+ * belongs with the scheduling work in P10. A lock here would be a scheduling decision made in an
+ * audit table, which is the wrong place for it — but the previous version of this comment claimed
+ * the risk did not exist, which was worse than not mentioning it.
  */
 export async function startAnalysisRun(db: Db, input: StartAnalysisRunInput): Promise<string> {
   const id = input.id ?? randomUUID();

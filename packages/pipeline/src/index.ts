@@ -34,6 +34,7 @@ export type { FireIngestionOutcome, RunFireIngestionOptions } from './fire-inges
 
 export {
   SEEDED_HAZARD_TYPES,
+  SEED_ALGORITHM_VERSION,
   correlateEarthquakes,
   projectCanonicalEvent,
   seedSingleSourceEvents,

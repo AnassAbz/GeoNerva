@@ -387,3 +387,85 @@ describe('a family whose items are derived, not ingested', () => {
     expect(verdict.mayRenderZero).toBe(true);
   });
 });
+
+describe('a knowledge time beyond the replay horizon', () => {
+  /*
+   * ADR-035: "After the window a replay must report *outside the indexed window*, never an empty
+   * result. An empty list here would be the system saying nothing happened when what it means is
+   * that it no longer remembers."
+   */
+  it('is UNAVAILABLE, not a quiet family', () => {
+    const verdict = resolveAvailability({
+      coverage: 'COVERED',
+      sources: [fresh('usgs')],
+      itemCount: 0,
+      beyondReplayHorizon: true,
+    });
+    expect(verdict.availability).toBe('UNAVAILABLE');
+    expect(verdict.reason).toBe('BEYOND_REPLAY_HORIZON');
+    expect(verdict.mayRenderZero).toBe(false);
+  });
+
+  it('still reports a place with no source as NOT_COVERED', () => {
+    // A place with no source cannot have a *forgotten* one; coverage is the more specific answer.
+    const verdict = resolveAvailability({
+      coverage: 'NOT_COVERED',
+      sources: [],
+      itemCount: 0,
+      beyondReplayHorizon: true,
+    });
+    expect(verdict.reason).toBe('NOT_COVERED_HERE');
+  });
+});
+
+describe('subjects that could not be assessed', () => {
+  it('refuses to render a zero beside hazards it cannot describe', () => {
+    /*
+     * A GDACS drought alert covering this place, with no drought model written. The card must not
+     * say "no volcanoes and droughts to report": GeoNerva is holding one and has nothing to say
+     * about it, which is a different sentence.
+     */
+    const verdict = resolveAvailability({
+      coverage: 'COVERED',
+      sources: [fresh('gdacs')],
+      itemCount: 0,
+      unassessedCount: 1,
+    });
+    expect(verdict.availability).toBe('AVAILABLE');
+    expect(verdict.reason).toBe('SUBJECTS_NOT_ASSESSED');
+    expect(verdict.mayRenderZero).toBe(false);
+  });
+
+  it('still shows the items that were assessed', () => {
+    // Withholding real assessments because a sibling could not be assessed would be worse.
+    const verdict = resolveAvailability({
+      coverage: 'COVERED',
+      sources: [fresh('gdacs')],
+      itemCount: 3,
+      unassessedCount: 1,
+    });
+    expect(verdict.availability).toBe('AVAILABLE');
+    expect(verdict.mayRenderZero).toBe(false);
+  });
+
+  it('leaves a family with nothing unassessed exactly as it was', () => {
+    const verdict = resolveAvailability({
+      coverage: 'COVERED',
+      sources: [fresh('usgs')],
+      itemCount: 0,
+      unassessedCount: 0,
+    });
+    expect(verdict.reason).toBe('NOTHING_TO_REPORT');
+    expect(verdict.mayRenderZero).toBe(true);
+  });
+
+  it('reports an outage rather than an unassessed subject when the sources are down', () => {
+    const verdict = resolveAvailability({
+      coverage: 'COVERED',
+      sources: [withStatus('gdacs', 'UNAVAILABLE')],
+      itemCount: 0,
+      unassessedCount: 1,
+    });
+    expect(verdict.reason).toBe('ALL_SOURCES_UNUSABLE');
+  });
+});

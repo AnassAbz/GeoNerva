@@ -16,7 +16,13 @@
 import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { createCanonicalEvent, createDb, linkRecord, type DB } from '@geonerva/db';
+import {
+  createCanonicalEvent,
+  createDb,
+  generateFireClusterPublicId,
+  linkRecord,
+  type DB,
+} from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import { seedObservation, seedRun } from '@geonerva/db/testing/factories';
 import { parseEvidenceId, type LocationRef } from '@geonerva/domain';
@@ -86,7 +92,10 @@ async function healthySource(sourceId: string, productCode: string): Promise<voi
 }
 
 /** A finished derivation, so the derivation axis does not report the family as un-run. */
-async function derivationRan(kind: 'CORRELATION' | 'CLUSTERING', finishedAt: Date): Promise<void> {
+async function derivationRan(
+  kind: 'CORRELATION' | 'CLUSTERING' | 'SEED',
+  finishedAt: Date,
+): Promise<void> {
   await sql`
     INSERT INTO geonerva.analysis_runs
       (id, kind, engine_version, started_at, finished_at, status)
@@ -238,15 +247,15 @@ describe('an empty result is never an answer on its own', () => {
     expect(card.availability).toBe('AVAILABLE');
     expect(card.items).toEqual([]);
     /*
-     * `PARTIAL_COVERAGE` rather than `NOTHING_TO_REPORT`, and that is the right answer: USGS and
-     * EMSC both publish a completeness caveat, so an empty earthquake card here means "nothing
-     * above the threshold these catalogues are complete to", not "nothing happened". The zero is
-     * still renderable — a usable source did look — but the caveat travels with it.
+     * `NOTHING_TO_REPORT`, and the providers' completeness caveats travel with it as caveats
+     * rather than as a coverage level. Treating any caveat as `PARTIAL` made every family at every
+     * location permanently partial, which silenced this reason, `OK`, and both upper confidence
+     * grades — so the independent-source count could never change an outcome.
      */
-    expect(card.availability).toBe('AVAILABLE');
-    expect(card.dataConfidence.reasons[0]?.code).toBe('AVAILABILITY_PARTIAL_COVERAGE');
-    expect(card.coverage.level).toBe('PARTIAL');
+    expect(card.dataConfidence.reasons[0]?.code).toBe('AVAILABILITY_NOTHING_TO_REPORT');
+    expect(card.coverage.level).toBe('COVERED');
     expect(card.caveats.length).toBeGreaterThan(0);
+    expect(card.caveats.join(' ')).toContain('M4.5');
   });
 
   it('reports UNAVAILABLE when every source for a family has never succeeded', async () => {
@@ -704,5 +713,266 @@ describe('provenance', () => {
       expect(new Date(horizon.earliestAsOf).getTime()).toBeLessThan(AS_OF.getTime());
       expect(horizon.note.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('the P6 review findings, as regressions', () => {
+  /** A fire cluster with its detections, so the clustering derivation has a real input. */
+  async function seedFireCluster(options: {
+    readonly km: number;
+    readonly lastDetectedAt: Date;
+    readonly n24h?: number;
+  }): Promise<string> {
+    const at = north(options.km);
+    const product = await sql<{ id: number }>`
+      SELECT id FROM geonerva.source_products
+      WHERE source_id = 'firms' AND code = 'VIIRS_NOAA20_NRT'
+    `.execute(db);
+    const productId = product.rows[0]?.id ?? 0;
+
+    const cluster = await sql<{ id: string; public_id: string }>`
+      INSERT INTO geonerva.fire_clusters (id, public_id, created_at, status)
+      VALUES (gen_random_uuid(), ${generateFireClusterPublicId(INGEST)}, ${INGEST}, 'ACTIVE')
+      RETURNING id::text AS id, public_id
+    `.execute(db);
+    const clusterId = cluster.rows[0]?.id ?? '';
+
+    await sql`
+      INSERT INTO geonerva.fire_cluster_versions
+        (cluster_id, as_of, n_total, n_24h, overpasses_24h, first_detected_at, last_detected_at,
+         frp_sum_24h, frp_max, max_confidence, product_ids, centroid, hull, content_sha256)
+      VALUES (${clusterId}::uuid, ${INGEST}, ${options.n24h ?? 12}, ${options.n24h ?? 12}, 2,
+              ${options.lastDetectedAt}, ${options.lastDetectedAt}, 40.0, 12.0, 'NOMINAL',
+              ARRAY[${productId}]::smallint[],
+              ST_SetSRID(ST_MakePoint(${at.lon}, ${at.lat}), 4326)::geography, NULL,
+              sha256(${clusterId}::text::bytea))
+    `.execute(db);
+    return clusterId;
+  }
+
+  it('shows a fire cluster as an item, instead of never reading one', async () => {
+    /*
+     * `hazardTypesOf('FIRE_ACTIVITY')` returned `['WILDFIRE_EVENT']` and briefing never called
+     * `clusterVersionsAsOf`, so no fire cluster could reach a card at all — and the derivation
+     * axis was measured against GDACS wildfire events rather than FIRMS detections, so it could
+     * not fire either. The card said "no fire activity to report" over unclustered detections.
+     */
+    await healthySource('firms', 'VIIRS_NOAA20_NRT');
+    await derivationRan('CLUSTERING', new Date(INGEST.getTime() + 60_000));
+    await seedFireCluster({ km: 5, lastDetectedAt: new Date(AS_OF.getTime() - 60 * 60 * 1000) });
+
+    const { snapshot } = await build();
+    const card = snapshot.families.FIRE_ACTIVITY;
+    expect(card.availability).toBe('AVAILABLE');
+    expect(card.items).toHaveLength(1);
+    expect(card.items[0]?.subjectRef).toMatch(/^FC:/);
+    expect(card.items[0]?.hazardType).toBe('THERMAL_ACTIVITY');
+    // §9.2's caveat is mandatory: a thermal detection is not a confirmed wildfire.
+    expect(card.items[0]?.relevance.caveats.join(' ')).toContain('not confirmed wildfires');
+  });
+
+  it('counts a subject it cannot assess instead of deleting it', async () => {
+    /*
+     * A GDACS drought alert has no drought model. Dropping it and then reporting `itemCount: 0`
+     * turns "we have no model for this" into "nothing is happening", through a channel
+     * availability could not otherwise see. `assessEarthquake`'s own contract says the caller must
+     * "list it as unassessed rather than as unimportant".
+     */
+    await healthySource('gdacs', 'DR');
+    await healthySource('gdacs', 'VO');
+    await derivationRan('SEED', new Date(INGEST.getTime() + 60_000));
+
+    const seeded = await seedObservation(db, {
+      sourceId: 'gdacs',
+      hazardType: 'DROUGHT',
+      primaryKey: 'DR-1',
+      aliases: ['DR-1'],
+      ingestedAt: INGEST,
+      observedAt: T0,
+      centroid: north(30),
+      magnitude: null,
+      severityScheme: 'GDACS_ALERT',
+      severityValue: 'Red',
+    });
+    const event = await createCanonicalEvent(db, { hazardType: 'DROUGHT', createdAt: INGEST });
+    await db.transaction().execute(async (trx) => {
+      await linkRecord(trx, {
+        canonicalEventId: event.id,
+        sourceRecordId: seeded.sourceRecordId,
+        relation: 'PRIMARY',
+        matchKind: 'SEED',
+        algorithmVersion: 'seed-1',
+        linkedAt: INGEST,
+      });
+    });
+
+    const { snapshot } = await build();
+    const card = snapshot.families.OTHER;
+    expect(card.items).toEqual([]);
+    // Not "nothing to report": GeoNerva is holding a Red drought alert it cannot describe.
+    expect(card.availability).toBe('UNAVAILABLE');
+    expect(card.dataConfidence.reasons[0]?.code).toBe('AVAILABILITY_SUBJECTS_NOT_ASSESSED');
+  });
+
+  it('refuses a knowledge time past the replay horizon instead of returning nothing', async () => {
+    /*
+     * ADR-035: "After the window a replay must report *outside the indexed window*, never an empty
+     * result." Retention drops the data, the query returns nothing, and every other axis still
+     * reads healthy — so without this the system says nothing happened when it means it no longer
+     * remembers.
+     */
+    await healthySource('usgs', 'comcat');
+    const longAgo = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000);
+    const { snapshot } = await buildSnapshot({
+      db,
+      location: MARRAKECH,
+      asOf: longAgo,
+      engineVersion: ENGINE,
+      generatedAt: new Date(),
+    });
+
+    const card = snapshot.families.EARTHQUAKES;
+    expect(card.availability).toBe('UNAVAILABLE');
+    expect(card.dataConfidence.reasons[0]?.code).toBe('AVAILABILITY_BEYOND_REPLAY_HORIZON');
+    expect(card.items).toEqual([]);
+  });
+
+  it('does not report an earthquake from outside the recency window as current', async () => {
+    /*
+     * Without a window the snapshot answers "what has ever been true here within 1,500 km". A 2011
+     * record 370 km from Tokyo ranks HIGH on magnitude and distance alone — which is all §9.1 uses
+     * — and the product's headline becomes "There is something here worth your attention",
+     * permanently, about an earthquake from 2011 (ADR-037).
+     */
+    await healthySource('usgs', 'comcat');
+    await healthySource('emsc', 'rts');
+    await healthySource('gdacs', 'EQ');
+    await derivationRan('CORRELATION', new Date(INGEST.getTime() + 60_000));
+
+    const longAgo = new Date(AS_OF.getTime() - 200 * 24 * 60 * 60 * 1000);
+    const seeded = await seedObservation(db, {
+      sourceId: 'usgs',
+      primaryKey: 'old-big',
+      aliases: ['old-big'],
+      ingestedAt: INGEST,
+      observedAt: longAgo,
+      centroid: north(100),
+      magnitude: 7.6,
+      magnitudeType: 'mww',
+      depthKm: 20,
+    });
+    const event = await createCanonicalEvent(db, { hazardType: 'EARTHQUAKE', createdAt: INGEST });
+    await db.transaction().execute(async (trx) => {
+      await linkRecord(trx, {
+        canonicalEventId: event.id,
+        sourceRecordId: seeded.sourceRecordId,
+        relation: 'PRIMARY',
+        matchKind: 'SPATIOTEMPORAL',
+        algorithmVersion: 'eq-corr-1',
+        linkedAt: INGEST,
+      });
+    });
+
+    const { snapshot } = await build();
+    expect(snapshot.families.EARTHQUAKES.items).toEqual([]);
+    expect(snapshot.overall.headlineCode).not.toBe('HIGH_RELEVANCE_PRESENT');
+  });
+
+  it('does not let a seed run vouch for earthquake correlation', async () => {
+    /*
+     * Both runners wrote `kind: 'CORRELATION'`, and the derivation axis keys on `kind`. An hourly
+     * GDACS seed run therefore reported the earthquake matcher as current while it had never run,
+     * and the card said "no earthquakes to report" beside unlinked records.
+     */
+    await healthySource('usgs', 'comcat');
+    await healthySource('emsc', 'rts');
+    await healthySource('gdacs', 'EQ');
+    await derivationRan('SEED', new Date(INGEST.getTime() + 60_000));
+    await seedObservation(db, {
+      sourceId: 'usgs',
+      primaryKey: 'us-unlinked',
+      aliases: ['us-unlinked'],
+      ingestedAt: INGEST,
+      observedAt: T0,
+      centroid: north(20),
+      magnitude: 5.4,
+      depthKm: 10,
+    });
+
+    const { snapshot } = await build();
+    expect(snapshot.families.EARTHQUAKES.availability).toBe('UNAVAILABLE');
+    expect(snapshot.families.EARTHQUAKES.dataConfidence.reasons[0]?.code).toBe(
+      'AVAILABILITY_DERIVATION_NOT_RUN',
+    );
+  });
+
+  it('separates a provider completeness caveat from partial coverage', async () => {
+    /*
+     * Treating any `coverage_note` as PARTIAL made every family at every location permanently
+     * partial, which meant `resolveAvailability` never reached `NOTHING_TO_REPORT` or `OK` and
+     * `resolveDataConfidence` returned LOW unconditionally — so the independent-source count could
+     * not change any outcome. The caveat belongs on the card, not in the level.
+     */
+    await healthySource('usgs', 'comcat');
+    await healthySource('emsc', 'rts');
+    await healthySource('gdacs', 'EQ');
+    const { snapshot } = await build();
+
+    expect(snapshot.families.EARTHQUAKES.coverage.level).toBe('COVERED');
+    expect(snapshot.families.EARTHQUAKES.caveats.join(' ')).toContain('M4.5');
+    /*
+     * `OTHER` is genuinely partial: GDACS covers volcanoes and droughts, and nothing covers
+     * tsunamis, so the card must not imply it would have told you about one.
+     */
+    expect(snapshot.families.OTHER.coverage.level).toBe('PARTIAL');
+    expect(snapshot.families.OTHER.coverage.note).toContain('tsunami');
+  });
+
+  it('cites every correlation link behind an agreement claim, and compares the fields', async () => {
+    /*
+     * The claim "2 independent sources agree" rests on all of the decisions that put these records
+     * into one event; citing one leaves the rest unresolvable. And `FieldComparison` is documented
+     * as "what makes CONFLICT explainable" — an empty array made it the opposite.
+     */
+    await healthySource('usgs', 'comcat');
+    await healthySource('emsc', 'rts');
+    await healthySource('gdacs', 'EQ');
+    await derivationRan('CORRELATION', new Date(INGEST.getTime() + 60_000));
+
+    const { canonicalEventId } = await seedLinkedEarthquake({ primaryKey: 'us1', magnitude: 5.4 });
+    await seedLinkedEarthquake({
+      primaryKey: 'em1',
+      sourceId: 'emsc',
+      canonicalEventId,
+      relation: 'SAME_EVENT',
+      magnitude: 5.5,
+    });
+
+    const { snapshot, evidenceIds } = await build();
+    const item = snapshot.families.EARTHQUAKES.items[0];
+    const correlationIds = (item?.evidenceIds ?? []).filter(
+      (id) => parseEvidenceId(id).kind === 'COR',
+    );
+    expect(correlationIds).toHaveLength(2);
+    for (const id of correlationIds) expect(evidenceIds).toContain(id);
+
+    const magnitude = item?.agreement?.comparisons.find(
+      (comparison) => comparison.code === 'MAGNITUDE',
+    );
+    expect(magnitude?.values).toHaveLength(2);
+    expect(magnitude?.spread).not.toBeNull();
+    // The numbers the sentence quotes are carried, so nothing in it is ungrounded.
+    expect(item?.agreement?.reasons[0]?.params['nIndependentSources']).toBe(2);
+  });
+
+  it('reports the health of the sources that cover this place, and no others', async () => {
+    /*
+     * Returning every product put an unrelated feed's cadence, failure count and run UUID into a
+     * public cacheable response — and, because source health is inside the hashed content, made an
+     * unrelated source's next poll change the content hash of every location's snapshot.
+     */
+    await healthySource('usgs', 'comcat');
+    const { snapshot } = await build();
+    expect(snapshot.sourceHealth.map((entry) => entry.sourceId)).not.toContain('eccc');
   });
 });

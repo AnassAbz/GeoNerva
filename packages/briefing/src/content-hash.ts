@@ -91,9 +91,18 @@ export function canonicalJson(value: unknown, path = ''): string {
     throw new CanonicalizationError(path, 'Date is not a read-model type; use an ISO string');
   }
 
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, item]) => item !== undefined)
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  /*
+   * An `undefined` property throws rather than being filtered out.
+   *
+   * Filtering is precisely `JSON.stringify`'s behaviour, which this module's own header gives as
+   * reason #3 for not using it: `{a: 1, b: undefined}` and `{a: 1}` would hash identically, which
+   * is the "fails to vary when content changes" half of the failure the file exists to prevent.
+   * The read models say a missing value is an explicit `unavailable`, so an `undefined` reaching
+   * here is a bug worth failing on — and it was reaching here silently.
+   */
+  const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  );
 
   const parts = entries.map(
     ([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item, `${path}.${key}`)}`,

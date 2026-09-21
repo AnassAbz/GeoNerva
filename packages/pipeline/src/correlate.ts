@@ -571,6 +571,14 @@ export async function projectCanonicalEvent(
  * are their own subject with their own public ids, and weather alerts because no covered source
  * produces them for v1.
  */
+/**
+ * Seeding has its own version, because it is its own derivation.
+ *
+ * Stamping a seed run with the earthquake algorithm's version claimed provenance it does not
+ * have: no earthquake rule ran, and no matching decision was made.
+ */
+export const SEED_ALGORITHM_VERSION = 'seed-1';
+
 export const SEEDED_HAZARD_TYPES: readonly HazardType[] = [
   ...HAZARD_TYPES_BY_FAMILY.FLOODS,
   ...HAZARD_TYPES_BY_FAMILY.CYCLONES,
@@ -600,9 +608,9 @@ export async function seedSingleSourceEvents(
 ): Promise<SeedResult> {
   const asOf = options.asOf ?? new Date();
   const runId = await startAnalysisRun(db, {
-    kind: 'CORRELATION',
+    kind: 'SEED',
     asOf,
-    engineVersion: EARTHQUAKE_ALGORITHM_VERSION,
+    engineVersion: SEED_ALGORITHM_VERSION,
     startedAt: new Date(),
   });
 
@@ -633,7 +641,7 @@ export async function seedSingleSourceEvents(
               params: { hazardType },
             },
           ],
-          algorithmVersion: EARTHQUAKE_ALGORITHM_VERSION,
+          algorithmVersion: SEED_ALGORITHM_VERSION,
           linkedAt: asOf,
         });
         return event.id;
@@ -645,13 +653,13 @@ export async function seedSingleSourceEvents(
     await finishAnalysisRun(db, {
       id: runId,
       status: 'SUCCEEDED',
-      stats: { kind: 'SEED', considered, created },
+      stats: { considered, created },
     });
   } catch (error) {
     await finishAnalysisRun(db, {
       id: runId,
       status: 'FAILED',
-      stats: { kind: 'SEED', considered, created },
+      stats: { considered, created },
       errorClass: 'INTERNAL',
     });
     throw error;
@@ -689,7 +697,7 @@ async function projectSeededEvent(
     canonicalEventId,
     hazardType,
     asOf,
-    engineVersion: EARTHQUAKE_ALGORITHM_VERSION,
+    engineVersion: SEED_ALGORITHM_VERSION,
     observedAt: member.observed_at,
     centroid: { lat: member.lat, lon: member.lon },
     isActive: true,

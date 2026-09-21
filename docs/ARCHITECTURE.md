@@ -103,7 +103,7 @@ domain, geo, http, config ◄── sources
 domain, geo, http, config ◄── geocoding
 domain, config ◄── db
 domain, geo ◄── correlation | relevance | baselines | changes      (pure engines; no IO)
-domain, geo, db, relevance, baselines, changes, config ◄── briefing
+domain, geo, db, relevance, baselines, changes, correlation, config ◄── briefing
 domain, geo, sources, db, correlation, briefing, http, config ◄── pipeline
 domain, briefing, config ◄── ai
 briefing, geocoding, ai, config ◄── apps/web

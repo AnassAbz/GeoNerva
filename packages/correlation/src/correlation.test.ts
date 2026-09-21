@@ -401,3 +401,78 @@ describe('revision hysteresis', () => {
     expect(revisionKeepsLink(1.51).reason.code).toBe('REVISION_BROKE_MATCH');
   });
 });
+
+describe('a republication matched spatiotemporally', () => {
+  /*
+   * ADR-030: "An EMSC observation whose contributor is the same agency as the matched USGS record
+   * is linked as DERIVED_COPY, not as an independent source." The magnitude veto already knows how
+   * to recognise one — it is suspended for exactly this case — so the relation has to carry the
+   * same knowledge, or the event holds two SAME_EVENT members and a copy agreeing with its
+   * original is counted as corroboration.
+   */
+  const usgs: Solution = {
+    sourceId: 'usgs',
+    epicentre: { lat: 15.0, lon: 120.0 },
+    originTime: new Date('2026-06-05T00:00:00.000Z'),
+    magnitude: 4.5,
+    magnitudeType: 'mb',
+    contributor: 'us',
+  };
+
+  function candidateFor(representative: Solution): Candidate {
+    return {
+      canonicalEventId: '00000000-0000-4000-8000-000000000001',
+      representative,
+      memberSourceIds: [representative.sourceId],
+    };
+  }
+
+  it('links an EMSC report credited to the other source as DERIVED_COPY', () => {
+    // The P0 Luzon pair: identical time and place, ΔM 1.3, EMSC crediting NEIC.
+    const emsc: Solution = {
+      sourceId: 'emsc',
+      epicentre: usgs.epicentre,
+      originTime: usgs.originTime,
+      magnitude: 3.2,
+      magnitudeType: 'm',
+      contributor: 'NEIC',
+    };
+    const decision = decideSpatiotemporal(emsc, [candidateFor(usgs)]);
+
+    expect(decision.verdict).toBe('MATCH');
+    expect(decision.relation).toBe('DERIVED_COPY');
+    expect(decision.reasons.map((reason) => reason.code)).toContain('REPUBLICATION');
+  });
+
+  it('links two genuinely independent solutions as SAME_EVENT', () => {
+    const emsc: Solution = {
+      sourceId: 'emsc',
+      epicentre: usgs.epicentre,
+      originTime: usgs.originTime,
+      magnitude: 4.6,
+      magnitudeType: 'mb',
+      contributor: 'EMSC',
+    };
+    const decision = decideSpatiotemporal(emsc, [candidateFor(usgs)]);
+
+    expect(decision.verdict).toBe('MATCH');
+    expect(decision.relation).toBe('SAME_EVENT');
+    expect(decision.reasons.map((reason) => reason.code)).not.toContain('REPUBLICATION');
+  });
+
+  it('does not call a record a republication because the values happen to agree', () => {
+    /*
+     * Independence is decided by who computed the solution, never by whether the values agree
+     * (ADR-030) — deciding it from the values would be circular.
+     */
+    const emsc: Solution = {
+      sourceId: 'emsc',
+      epicentre: usgs.epicentre,
+      originTime: usgs.originTime,
+      magnitude: usgs.magnitude,
+      magnitudeType: usgs.magnitudeType,
+      contributor: null,
+    };
+    expect(decideSpatiotemporal(emsc, [candidateFor(usgs)]).relation).toBe('SAME_EVENT');
+  });
+});

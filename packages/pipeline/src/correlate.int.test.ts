@@ -635,6 +635,23 @@ describe('hazards with only one source', () => {
     expect(await grouping()).toEqual([['FL-2']]);
   });
 
+  it('records itself as SEED, so it cannot vouch for the earthquake matcher', async () => {
+    /*
+     * Both runners wrote `kind: 'CORRELATION'`, and the derivation axis that tells "no earthquakes
+     * here" from "correlation has not run" keys on `kind`. An hourly GDACS seed run therefore
+     * reported the matcher as current while it had never run.
+     */
+    await seedGdacs('FL-3', 'FLOOD');
+    await seedSingleSourceEvents(db, { asOf: AS_OF });
+
+    const runs = await sql<{ kind: string; engine_version: string }>`
+      SELECT kind, engine_version FROM geonerva.analysis_runs
+    `.execute(db);
+    expect(runs.rows.map((row) => row.kind)).toEqual(['SEED']);
+    // And not the earthquake algorithm's version: no earthquake rule ran.
+    expect(runs.rows[0]?.engine_version).toBe('seed-1');
+  });
+
   it('leaves earthquakes to the matcher', async () => {
     // Seeding an earthquake would open an event that correlation then has to merge away.
     await seed({ sourceId: 'usgs', primaryKey: 'us1' });
