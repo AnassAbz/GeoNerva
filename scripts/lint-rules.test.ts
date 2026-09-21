@@ -6,9 +6,25 @@
 import { fileURLToPath } from 'node:url';
 
 import { ESLint } from 'eslint';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 const eslint = new ESLint({ cwd: fileURLToPath(new URL('..', import.meta.url)) });
+
+/**
+ * The first lint of the run is warmed here, not inside a test.
+ *
+ * `lintText` loads the whole repository configuration on its first call — flat config, every
+ * plugin, every `files` matcher — and on a loaded machine that took longer than vitest's 5 s
+ * default `testTimeout`. The result was an intermittent failure of whichever case happened to run
+ * first (always `dot access`, because `it.each` runs in order), with a message about a timeout and
+ * nothing about lint rules: reproduced twice in fifteen consecutive runs before this hook existed.
+ *
+ * A `beforeAll` runs under `hookTimeout`, which is the right bound for setup work, and it makes
+ * every per-test measurement afterwards a measurement of *linting* rather than of module loading.
+ */
+beforeAll(async () => {
+  await eslint.lintText('export const warm = 1;', { filePath: 'scripts/__warmup__.mjs' });
+}, 60_000);
 
 async function firedRules(code: string, filePath: string): Promise<string[]> {
   const [result] = await eslint.lintText(code, { filePath });
