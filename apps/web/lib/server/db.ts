@@ -95,7 +95,18 @@ export function database(): DatabaseHandle {
     throw new Error('DATABASE_URL is not set');
   }
 
-  handle = createDatabase(webPoolOptions(connectionString, process.env.NODE_ENV));
+  /*
+   * Destructured rather than accessed.
+   *
+   * `process.env.NODE_ENV` and `process.env['NODE_ENV']` are each valid in one of this
+   * repository's two TypeScript programs and rejected by the other: the web program has Next's
+   * `ProcessEnv` augmentation, which declares `NODE_ENV` and so makes eslint's `dot-notation`
+   * require the dot, while the root program sees it through the index signature, where
+   * `noPropertyAccessFromIndexSignature` forbids exactly that. Destructuring is the one form both
+   * accept.
+   */
+  const { NODE_ENV } = process.env;
+  handle = createDatabase(webPoolOptions(connectionString, NODE_ENV));
   return handle;
 }
 

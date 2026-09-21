@@ -1,0 +1,4775 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "GeoNerva domain API",
+    "version": "0.0.0",
+    "description": "Read-only hazard intelligence. Every response is parameterized by a knowledge time, every claim carries the evidence it came from, and an absence is always reported as an absence rather than as a zero. See docs/ARCHITECTURE.md §13."
+  },
+  "paths": {
+    "/api/v1/briefing": {
+      "get": {
+        "summary": "Full location briefing: snapshot, changes, deterministic copy and evidence manifest.",
+        "description": "Full location briefing: snapshot, changes, deterministic copy and evidence manifest.",
+        "operationId": "getBriefing",
+        "responses": {
+          "200": {
+            "description": "The response contract, as frozen in `packages/domain`.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "varies: live s-maxage=120, swr=600; as_of older than 1 h s-maxage=86400, immutable"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schemaVersion": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "location": {
+                      "$ref": "#/$defs/__schema1"
+                    },
+                    "window": {
+                      "$ref": "#/$defs/__schema2"
+                    },
+                    "generatedAt": {
+                      "$ref": "#/$defs/__schema3"
+                    },
+                    "asOfContext": {
+                      "$ref": "#/$defs/__schema4"
+                    },
+                    "engineVersion": {
+                      "$ref": "#/$defs/__schema6"
+                    },
+                    "snapshot": {
+                      "$ref": "#/$defs/__schema7"
+                    },
+                    "changes": {
+                      "$ref": "#/$defs/__schema33"
+                    },
+                    "copy": {
+                      "$ref": "#/$defs/__schema35"
+                    },
+                    "ai": {
+                      "$ref": "#/$defs/__schema37"
+                    },
+                    "evidenceManifest": {
+                      "$ref": "#/$defs/__schema38"
+                    },
+                    "attribution": {
+                      "$ref": "#/$defs/__schema39"
+                    },
+                    "contentSha256": {
+                      "$ref": "#/$defs/__schema40"
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "location",
+                    "window",
+                    "generatedAt",
+                    "asOfContext",
+                    "engineVersion",
+                    "snapshot",
+                    "changes",
+                    "copy",
+                    "ai",
+                    "evidenceManifest",
+                    "attribution",
+                    "contentSha256"
+                  ],
+                  "additionalProperties": false,
+                  "$defs": {
+                    "__schema0": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "__schema1": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        },
+                        "lat": {
+                          "type": "number",
+                          "minimum": -90,
+                          "maximum": 90
+                        },
+                        "lon": {
+                          "type": "number",
+                          "minimum": -180,
+                          "maximum": 180
+                        },
+                        "timezone": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "countryCode": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "admin1": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "label",
+                        "lat",
+                        "lon",
+                        "timezone",
+                        "countryCode",
+                        "admin1"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema2": {
+                      "type": "string",
+                      "enum": [
+                        "6h",
+                        "24h",
+                        "7d",
+                        "since"
+                      ]
+                    },
+                    "__schema3": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+                    },
+                    "__schema4": {
+                      "type": "object",
+                      "properties": {
+                        "asOf": {
+                          "$ref": "#/$defs/__schema3"
+                        },
+                        "isReplay": {
+                          "type": "boolean"
+                        },
+                        "replayHorizon": {
+                          "type": "object",
+                          "properties": {
+                            "profile": {
+                              "type": "string",
+                              "enum": [
+                                "lean",
+                                "standard"
+                              ]
+                            },
+                            "byFamily": {
+                              "type": "object",
+                              "properties": {
+                                "EARTHQUAKES": {
+                                  "$ref": "#/$defs/__schema5"
+                                },
+                                "FIRE_ACTIVITY": {
+                                  "$ref": "#/$defs/__schema5"
+                                },
+                                "FLOODS": {
+                                  "$ref": "#/$defs/__schema5"
+                                },
+                                "CYCLONES": {
+                                  "$ref": "#/$defs/__schema5"
+                                },
+                                "WEATHER_ALERTS": {
+                                  "$ref": "#/$defs/__schema5"
+                                },
+                                "OTHER": {
+                                  "$ref": "#/$defs/__schema5"
+                                }
+                              },
+                              "required": [
+                                "EARTHQUAKES",
+                                "FIRE_ACTIVITY",
+                                "FLOODS",
+                                "CYCLONES",
+                                "WEATHER_ALERTS",
+                                "OTHER"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "profile",
+                            "byFamily"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "sourceCutoffs": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "$ref": "#/$defs/__schema3"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "asOf",
+                        "isReplay",
+                        "replayHorizon",
+                        "sourceCutoffs"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema5": {
+                      "type": "object",
+                      "properties": {
+                        "earliestAsOf": {
+                          "$ref": "#/$defs/__schema3"
+                        },
+                        "note": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "earliestAsOf",
+                        "note"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema6": {
+                      "type": "string"
+                    },
+                    "__schema7": {
+                      "type": "object",
+                      "properties": {
+                        "asOf": {
+                          "$ref": "#/$defs/__schema3"
+                        },
+                        "engineVersion": {
+                          "type": "string"
+                        },
+                        "generatedAt": {
+                          "$ref": "#/$defs/__schema3"
+                        },
+                        "sourceHealth": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema8"
+                          }
+                        },
+                        "families": {
+                          "type": "object",
+                          "properties": {
+                            "EARTHQUAKES": {
+                              "$ref": "#/$defs/__schema10"
+                            },
+                            "FIRE_ACTIVITY": {
+                              "$ref": "#/$defs/__schema10"
+                            },
+                            "FLOODS": {
+                              "$ref": "#/$defs/__schema10"
+                            },
+                            "CYCLONES": {
+                              "$ref": "#/$defs/__schema10"
+                            },
+                            "WEATHER_ALERTS": {
+                              "$ref": "#/$defs/__schema10"
+                            },
+                            "OTHER": {
+                              "$ref": "#/$defs/__schema10"
+                            }
+                          },
+                          "required": [
+                            "EARTHQUAKES",
+                            "FIRE_ACTIVITY",
+                            "FLOODS",
+                            "CYCLONES",
+                            "WEATHER_ALERTS",
+                            "OTHER"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "overall": {
+                          "type": "object",
+                          "properties": {
+                            "headlineCode": {
+                              "type": "string",
+                              "enum": [
+                                "OFFICIAL_ALERT_AFFECTING_AREA",
+                                "HIGH_RELEVANCE_PRESENT",
+                                "DATA_UNAVAILABLE",
+                                "NO_HIGH_RELEVANCE_ITEMS"
+                              ]
+                            },
+                            "headlineRelevance": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "LOW",
+                                    "MODERATE",
+                                    "HIGH",
+                                    "CRITICAL"
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "headlineText": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "coverageStatement": {
+                              "type": "string"
+                            },
+                            "unavailableFamilies": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "EARTHQUAKES",
+                                  "FIRE_ACTIVITY",
+                                  "FLOODS",
+                                  "CYCLONES",
+                                  "WEATHER_ALERTS",
+                                  "OTHER"
+                                ]
+                              }
+                            },
+                            "notCoveredFamilies": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "EARTHQUAKES",
+                                  "FIRE_ACTIVITY",
+                                  "FLOODS",
+                                  "CYCLONES",
+                                  "WEATHER_ALERTS",
+                                  "OTHER"
+                                ]
+                              }
+                            },
+                            "reasons": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema22"
+                              }
+                            },
+                            "evidenceIds": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema9"
+                              }
+                            }
+                          },
+                          "required": [
+                            "headlineCode",
+                            "headlineRelevance",
+                            "headlineText",
+                            "coverageStatement",
+                            "unavailableFamilies",
+                            "notCoveredFamilies",
+                            "reasons",
+                            "evidenceIds"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "contentSha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "asOf",
+                        "engineVersion",
+                        "generatedAt",
+                        "sourceHealth",
+                        "families",
+                        "overall",
+                        "contentSha256"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema8": {
+                      "type": "object",
+                      "properties": {
+                        "sourceId": {
+                          "type": "string"
+                        },
+                        "productId": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "FRESH",
+                            "DEGRADED",
+                            "STALE",
+                            "UNAVAILABLE"
+                          ]
+                        },
+                        "lastAttemptAt": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/$defs/__schema3"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "lastSuccessAt": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/$defs/__schema3"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "newestObservedAt": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/$defs/__schema3"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "consecutiveFailures": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "lastErrorClass": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "HTTP_4XX",
+                                "HTTP_5XX",
+                                "TIMEOUT",
+                                "TOO_LARGE",
+                                "SCHEMA_DRIFT",
+                                "EMPTY_SUSPICIOUS",
+                                "RATE_LIMITED",
+                                "DB_ERROR",
+                                "LEASE_EXPIRED",
+                                "UNKNOWN",
+                                "NETWORK",
+                                "CONFIG_ERROR",
+                                "ABORTED"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reasons": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "DISABLED",
+                              "NEVER_SUCCEEDED",
+                              "NO_SUCCESS_BEYOND_LIMIT",
+                              "POLL_STALE",
+                              "POLL_AGEING",
+                              "LAST_POLL_FAILED",
+                              "PARTIAL_BATCH",
+                              "DATA_STALE",
+                              "DATA_AGEING",
+                              "DATA_NEVER_SEEN",
+                              "OK"
+                            ]
+                          }
+                        },
+                        "expected": {
+                          "type": "object",
+                          "properties": {
+                            "pollIntervalS": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "fetchFreshWithinS": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "fetchStaleAfterS": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unavailableAfterS": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "dataCurrentWithinS": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "dataStaleAfterS": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "quietIsNormal": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "pollIntervalS",
+                            "fetchFreshWithinS",
+                            "fetchStaleAfterS",
+                            "unavailableAfterS",
+                            "dataCurrentWithinS",
+                            "dataStaleAfterS",
+                            "quietIsNormal"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "evidenceId": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/$defs/__schema9"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "sourceId",
+                        "productId",
+                        "status",
+                        "lastAttemptAt",
+                        "lastSuccessAt",
+                        "newestObservedAt",
+                        "consecutiveFailures",
+                        "lastErrorClass",
+                        "reasons",
+                        "expected",
+                        "evidenceId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema9": {
+                      "type": "string",
+                      "pattern": "^EV:(?:OBS|FCV|FDS|RUN|COR|BAS|REL|CHG):\\S+$"
+                    },
+                    "__schema10": {
+                      "type": "object",
+                      "properties": {
+                        "family": {
+                          "$ref": "#/$defs/__schema11"
+                        },
+                        "availability": {
+                          "$ref": "#/$defs/__schema12"
+                        },
+                        "coverage": {
+                          "$ref": "#/$defs/__schema13"
+                        },
+                        "items": {
+                          "$ref": "#/$defs/__schema16"
+                        },
+                        "truncated": {
+                          "$ref": "#/$defs/__schema27"
+                        },
+                        "itemsTotal": {
+                          "$ref": "#/$defs/__schema28"
+                        },
+                        "metrics": {
+                          "$ref": "#/$defs/__schema29"
+                        },
+                        "dataConfidence": {
+                          "$ref": "#/$defs/__schema30"
+                        },
+                        "sourceHealth": {
+                          "$ref": "#/$defs/__schema31"
+                        },
+                        "caveats": {
+                          "$ref": "#/$defs/__schema32"
+                        }
+                      },
+                      "required": [
+                        "family",
+                        "availability",
+                        "coverage",
+                        "items",
+                        "truncated",
+                        "itemsTotal",
+                        "metrics",
+                        "dataConfidence",
+                        "sourceHealth",
+                        "caveats"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema11": {
+                      "type": "string",
+                      "enum": [
+                        "EARTHQUAKES",
+                        "FIRE_ACTIVITY",
+                        "FLOODS",
+                        "CYCLONES",
+                        "WEATHER_ALERTS",
+                        "OTHER"
+                      ]
+                    },
+                    "__schema12": {
+                      "type": "string",
+                      "enum": [
+                        "AVAILABLE",
+                        "UNAVAILABLE",
+                        "NOT_COVERED"
+                      ]
+                    },
+                    "__schema13": {
+                      "type": "object",
+                      "properties": {
+                        "level": {
+                          "$ref": "#/$defs/__schema14"
+                        },
+                        "note": {
+                          "$ref": "#/$defs/__schema15"
+                        }
+                      },
+                      "required": [
+                        "level",
+                        "note"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema14": {
+                      "type": "string",
+                      "enum": [
+                        "COVERED",
+                        "PARTIAL",
+                        "NOT_COVERED"
+                      ]
+                    },
+                    "__schema15": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 300
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "__schema16": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "subjectRef": {
+                            "$ref": "#/$defs/__schema17"
+                          },
+                          "hazardType": {
+                            "type": "string",
+                            "enum": [
+                              "EARTHQUAKE",
+                              "THERMAL_ACTIVITY",
+                              "WILDFIRE_EVENT",
+                              "FLOOD",
+                              "TROPICAL_CYCLONE",
+                              "VOLCANO",
+                              "DROUGHT",
+                              "WEATHER_ALERT",
+                              "TSUNAMI",
+                              "OTHER"
+                            ]
+                          },
+                          "family": {
+                            "type": "string",
+                            "enum": [
+                              "EARTHQUAKES",
+                              "FIRE_ACTIVITY",
+                              "FLOODS",
+                              "CYCLONES",
+                              "WEATHER_ALERTS",
+                              "OTHER"
+                            ]
+                          },
+                          "publicId": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "observedAt": {
+                            "$ref": "#/$defs/__schema3"
+                          },
+                          "lifecycleStatus": {
+                            "type": "string",
+                            "enum": [
+                              "ACTIVE",
+                              "UPDATED",
+                              "ENDED",
+                              "CANCELLED",
+                              "EXPIRED",
+                              "DELETED",
+                              "MISSING_FROM_SOURCE"
+                            ]
+                          },
+                          "providerSeverity": {
+                            "anyOf": [
+                              {
+                                "$ref": "#/$defs/__schema18"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "distanceKm": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "hypocentralDistanceKm": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "facts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "$ref": "#/$defs/__schema19"
+                                },
+                                "evidenceIds": {
+                                  "type": "array",
+                                  "items": {
+                                    "$ref": "#/$defs/__schema9"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "label",
+                                "value",
+                                "evidenceIds"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "relevance": {
+                            "type": "object",
+                            "properties": {
+                              "level": {
+                                "$ref": "#/$defs/__schema20"
+                              },
+                              "reasons": {
+                                "$ref": "#/$defs/__schema21"
+                              },
+                              "authoritativeBasis": {
+                                "$ref": "#/$defs/__schema23"
+                              },
+                              "caveats": {
+                                "$ref": "#/$defs/__schema24"
+                              },
+                              "evidenceIds": {
+                                "$ref": "#/$defs/__schema25"
+                              },
+                              "modelVersion": {
+                                "$ref": "#/$defs/__schema26"
+                              }
+                            },
+                            "required": [
+                              "level",
+                              "reasons",
+                              "authoritativeBasis",
+                              "caveats",
+                              "evidenceIds",
+                              "modelVersion"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "agreement": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "level": {
+                                    "type": "string",
+                                    "enum": [
+                                      "SINGLE_SOURCE",
+                                      "DERIVED_ONLY",
+                                      "AGREE",
+                                      "MINOR_DIFFERENCES",
+                                      "CONFLICT"
+                                    ]
+                                  },
+                                  "nSources": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "nIndependentSources": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "reasons": {
+                                    "type": "array",
+                                    "items": {
+                                      "$ref": "#/$defs/__schema22"
+                                    }
+                                  },
+                                  "comparisons": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "code": {
+                                          "type": "string"
+                                        },
+                                        "label": {
+                                          "type": "string"
+                                        },
+                                        "values": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "object",
+                                            "properties": {
+                                              "sourceId": {
+                                                "type": "string"
+                                              },
+                                              "contributor": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "value": {
+                                                "$ref": "#/$defs/__schema19"
+                                              },
+                                              "evidenceId": {
+                                                "$ref": "#/$defs/__schema9"
+                                              }
+                                            },
+                                            "required": [
+                                              "sourceId",
+                                              "contributor",
+                                              "value",
+                                              "evidenceId"
+                                            ],
+                                            "additionalProperties": false
+                                          }
+                                        },
+                                        "spread": {
+                                          "anyOf": [
+                                            {
+                                              "$ref": "#/$defs/__schema19"
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "isConflict": {
+                                          "type": "boolean"
+                                        }
+                                      },
+                                      "required": [
+                                        "code",
+                                        "label",
+                                        "values",
+                                        "spread",
+                                        "isConflict"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "level",
+                                  "nSources",
+                                  "nIndependentSources",
+                                  "reasons",
+                                  "comparisons"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "evidenceIds": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/__schema9"
+                            }
+                          },
+                          "href": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "subjectRef",
+                          "hazardType",
+                          "family",
+                          "publicId",
+                          "title",
+                          "observedAt",
+                          "lifecycleStatus",
+                          "providerSeverity",
+                          "distanceKm",
+                          "hypocentralDistanceKm",
+                          "facts",
+                          "relevance",
+                          "agreement",
+                          "evidenceIds",
+                          "href"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "__schema17": {
+                      "type": "string",
+                      "pattern": "^(?:CE|FC|SRC|MET):\\S+$"
+                    },
+                    "__schema18": {
+                      "type": "object",
+                      "properties": {
+                        "scheme": {
+                          "type": "string",
+                          "enum": [
+                            "GDACS_ALERT",
+                            "PAGER",
+                            "ECCC_RISK_COLOUR",
+                            "CAP_SEVERITY"
+                          ]
+                        },
+                        "value": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        }
+                      },
+                      "required": [
+                        "scheme",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema19": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "number"
+                            },
+                            "value": {
+                              "type": "number"
+                            },
+                            "unit": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "decimals": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 12
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "value",
+                            "unit",
+                            "decimals"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "count"
+                            },
+                            "value": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "text"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "severity"
+                            },
+                            "severity": {
+                              "$ref": "#/$defs/__schema18"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "severity"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "timestamp"
+                            },
+                            "value": {
+                              "$ref": "#/$defs/__schema3"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "boolean"
+                            },
+                            "value": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "unavailable"
+                            },
+                            "reason": {
+                              "type": "string",
+                              "enum": [
+                                "NOT_REPORTED_BY_SOURCE",
+                                "SOURCE_UNAVAILABLE",
+                                "NOT_COVERED",
+                                "INSUFFICIENT_HISTORY",
+                                "NOT_APPLICABLE",
+                                "BEYOND_REPLAY_HORIZON"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "reason"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "__schema20": {
+                      "type": "string",
+                      "enum": [
+                        "LOW",
+                        "MODERATE",
+                        "HIGH",
+                        "CRITICAL"
+                      ]
+                    },
+                    "__schema21": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/__schema22"
+                      }
+                    },
+                    "__schema22": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "params": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "type": [
+                              "string",
+                              "number",
+                              "boolean",
+                              "null"
+                            ]
+                          }
+                        },
+                        "evidenceIds": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema9"
+                          }
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "text",
+                        "params",
+                        "evidenceIds"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema23": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "sourceId": {
+                              "type": "string"
+                            },
+                            "sourceName": {
+                              "type": "string"
+                            },
+                            "severity": {
+                              "$ref": "#/$defs/__schema18"
+                            },
+                            "statementVerbatim": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "url": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "evidenceId": {
+                              "$ref": "#/$defs/__schema9"
+                            }
+                          },
+                          "required": [
+                            "sourceId",
+                            "sourceName",
+                            "severity",
+                            "statementVerbatim",
+                            "url",
+                            "evidenceId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "__schema24": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "__schema25": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/__schema9"
+                      }
+                    },
+                    "__schema26": {
+                      "type": "string"
+                    },
+                    "__schema27": {
+                      "type": "boolean"
+                    },
+                    "__schema28": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "__schema29": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/$defs/__schema9"
+                          },
+                          "family": {
+                            "type": "string",
+                            "enum": [
+                              "EARTHQUAKES",
+                              "FIRE_ACTIVITY",
+                              "FLOODS",
+                              "CYCLONES",
+                              "WEATHER_ALERTS",
+                              "OTHER"
+                            ]
+                          },
+                          "metricCode": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "params": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {
+                              "type": [
+                                "string",
+                                "number",
+                                "null"
+                              ]
+                            }
+                          },
+                          "asOf": {
+                            "$ref": "#/$defs/__schema3"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "OK",
+                              "RARE_ACTIVITY",
+                              "INSUFFICIENT_HISTORY",
+                              "INSUFFICIENT_COVERAGE",
+                              "NOT_APPLICABLE"
+                            ]
+                          },
+                          "observedValue": {
+                            "$ref": "#/$defs/__schema19"
+                          },
+                          "reference": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "nWindows": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "nEvents": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "windowDays": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "referenceFrom": {
+                                    "$ref": "#/$defs/__schema3"
+                                  },
+                                  "referenceTo": {
+                                    "$ref": "#/$defs/__schema3"
+                                  },
+                                  "median": {
+                                    "type": "number"
+                                  },
+                                  "p25": {
+                                    "type": "number"
+                                  },
+                                  "p75": {
+                                    "type": "number"
+                                  },
+                                  "p90": {
+                                    "type": "number"
+                                  },
+                                  "p95": {
+                                    "type": "number"
+                                  },
+                                  "mean": {
+                                    "type": "number"
+                                  },
+                                  "ratePerWindow": {
+                                    "type": "number"
+                                  },
+                                  "activityRatio": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "nWindows",
+                                  "nEvents",
+                                  "windowDays",
+                                  "referenceFrom",
+                                  "referenceTo",
+                                  "median",
+                                  "p25",
+                                  "p75",
+                                  "p90",
+                                  "p95",
+                                  "mean",
+                                  "ratePerWindow",
+                                  "activityRatio"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "percentile": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "minimum": 0,
+                                "maximum": 100
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "band": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "BELOW_TYPICAL",
+                                  "TYPICAL",
+                                  "ABOVE_TYPICAL",
+                                  "WELL_ABOVE_TYPICAL"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "interpretation": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "caveats": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "methodVersion": {
+                            "type": "string"
+                          },
+                          "evidenceIds": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/__schema9"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "family",
+                          "metricCode",
+                          "label",
+                          "params",
+                          "asOf",
+                          "status",
+                          "observedValue",
+                          "reference",
+                          "percentile",
+                          "band",
+                          "interpretation",
+                          "caveats",
+                          "methodVersion",
+                          "evidenceIds"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "__schema30": {
+                      "type": "object",
+                      "properties": {
+                        "level": {
+                          "type": "string",
+                          "enum": [
+                            "HIGH",
+                            "MEDIUM",
+                            "LOW"
+                          ]
+                        },
+                        "reasons": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema22"
+                          }
+                        }
+                      },
+                      "required": [
+                        "level",
+                        "reasons"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema31": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/__schema8"
+                      }
+                    },
+                    "__schema32": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "__schema33": {
+                      "type": "object",
+                      "properties": {
+                        "window": {
+                          "type": "string",
+                          "enum": [
+                            "6h",
+                            "24h",
+                            "7d",
+                            "since"
+                          ]
+                        },
+                        "fromAsOf": {
+                          "$ref": "#/$defs/__schema3"
+                        },
+                        "toAsOf": {
+                          "$ref": "#/$defs/__schema3"
+                        },
+                        "headline": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema34"
+                          }
+                        },
+                        "listed": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema34"
+                          }
+                        },
+                        "detail": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema34"
+                          }
+                        },
+                        "suppressed": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema34"
+                          }
+                        },
+                        "suppressedCount": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "emptyStatement": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "window",
+                        "fromAsOf",
+                        "toAsOf",
+                        "headline",
+                        "listed",
+                        "detail",
+                        "suppressed",
+                        "suppressedCount",
+                        "emptyStatement"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema34": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/$defs/__schema9"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "NEW_EVENT",
+                            "EVENT_UPDATED",
+                            "EVENT_ESCALATED",
+                            "EVENT_DEESCALATED",
+                            "EVENT_RESOLVED",
+                            "ACTIVITY_INCREASE",
+                            "ACTIVITY_DECREASE",
+                            "ABNORMAL_ACTIVITY",
+                            "SOURCE_STALE",
+                            "SOURCE_RECOVERED",
+                            "SOURCE_CONFLICT",
+                            "RELEVANCE_INCREASE",
+                            "RELEVANCE_DECREASE",
+                            "ENTERED_AREA",
+                            "LEFT_AREA"
+                          ]
+                        },
+                        "family": {
+                          "type": "string",
+                          "enum": [
+                            "EARTHQUAKES",
+                            "FIRE_ACTIVITY",
+                            "FLOODS",
+                            "CYCLONES",
+                            "WEATHER_ALERTS",
+                            "OTHER"
+                          ]
+                        },
+                        "subjectRef": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/$defs/__schema17"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "metricCode": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "detail": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "before": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/$defs/__schema19"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "after": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/$defs/__schema19"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "fromAsOf": {
+                          "$ref": "#/$defs/__schema3"
+                        },
+                        "toAsOf": {
+                          "$ref": "#/$defs/__schema3"
+                        },
+                        "importance": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100
+                        },
+                        "prominence": {
+                          "type": "string",
+                          "enum": [
+                            "HEADLINE",
+                            "LISTED",
+                            "DETAIL",
+                            "SUPPRESSED"
+                          ]
+                        },
+                        "suppressionReason": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "IMMATERIAL",
+                                "AGED_OUT",
+                                "LOW_RELEVANCE_BOTH",
+                                "HYSTERESIS",
+                                "FAMILY_NOT_COVERED",
+                                "GROUPED"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "lateReport": {
+                          "type": "boolean"
+                        },
+                        "facets": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "NEW_EVENT",
+                                  "EVENT_UPDATED",
+                                  "EVENT_ESCALATED",
+                                  "EVENT_DEESCALATED",
+                                  "EVENT_RESOLVED",
+                                  "ACTIVITY_INCREASE",
+                                  "ACTIVITY_DECREASE",
+                                  "ABNORMAL_ACTIVITY",
+                                  "SOURCE_STALE",
+                                  "SOURCE_RECOVERED",
+                                  "SOURCE_CONFLICT",
+                                  "RELEVANCE_INCREASE",
+                                  "RELEVANCE_DECREASE",
+                                  "ENTERED_AREA",
+                                  "LEFT_AREA"
+                                ]
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "before": {
+                                "anyOf": [
+                                  {
+                                    "$ref": "#/$defs/__schema19"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "after": {
+                                "anyOf": [
+                                  {
+                                    "$ref": "#/$defs/__schema19"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "label",
+                              "before",
+                              "after"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "reasonCodes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "evidenceIds": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema9"
+                          }
+                        },
+                        "engineVersion": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "type",
+                        "family",
+                        "subjectRef",
+                        "metricCode",
+                        "title",
+                        "detail",
+                        "before",
+                        "after",
+                        "fromAsOf",
+                        "toAsOf",
+                        "importance",
+                        "prominence",
+                        "suppressionReason",
+                        "lateReport",
+                        "facets",
+                        "reasonCodes",
+                        "evidenceIds",
+                        "engineVersion"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema35": {
+                      "type": "object",
+                      "properties": {
+                        "headline": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "summary": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "byFamily": {
+                          "type": "object",
+                          "properties": {
+                            "EARTHQUAKES": {
+                              "$ref": "#/$defs/__schema36"
+                            },
+                            "FIRE_ACTIVITY": {
+                              "$ref": "#/$defs/__schema36"
+                            },
+                            "FLOODS": {
+                              "$ref": "#/$defs/__schema36"
+                            },
+                            "CYCLONES": {
+                              "$ref": "#/$defs/__schema36"
+                            },
+                            "WEATHER_ALERTS": {
+                              "$ref": "#/$defs/__schema36"
+                            },
+                            "OTHER": {
+                              "$ref": "#/$defs/__schema36"
+                            }
+                          },
+                          "required": [
+                            "EARTHQUAKES",
+                            "FIRE_ACTIVITY",
+                            "FLOODS",
+                            "CYCLONES",
+                            "WEATHER_ALERTS",
+                            "OTHER"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "caveats": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "templateVersion": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "headline",
+                        "summary",
+                        "byFamily",
+                        "caveats",
+                        "templateVersion"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema36": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "__schema37": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "promptVersion": {
+                              "type": "string"
+                            },
+                            "validationStatus": {
+                              "type": "string",
+                              "enum": [
+                                "PASSED",
+                                "REPAIRED"
+                              ]
+                            },
+                            "sections": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "role": {
+                                    "type": "string"
+                                  },
+                                  "heading": {
+                                    "type": "string"
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  },
+                                  "evidenceIds": {
+                                    "type": "array",
+                                    "items": {
+                                      "$ref": "#/$defs/__schema9"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "role",
+                                  "heading",
+                                  "text",
+                                  "evidenceIds"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "evidenceIds": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema9"
+                              }
+                            },
+                            "disclaimer": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "generatedAt": {
+                              "$ref": "#/$defs/__schema3"
+                            }
+                          },
+                          "required": [
+                            "model",
+                            "promptVersion",
+                            "validationStatus",
+                            "sections",
+                            "evidenceIds",
+                            "disclaimer",
+                            "generatedAt"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "__schema38": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/$defs/__schema9"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "OBS",
+                              "FCV",
+                              "FDS",
+                              "RUN",
+                              "COR",
+                              "BAS",
+                              "REL",
+                              "CHG"
+                            ]
+                          },
+                          "summary": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "sourceId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "productId": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "observedAt": {
+                            "anyOf": [
+                              {
+                                "$ref": "#/$defs/__schema3"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "ingestedAt": {
+                            "$ref": "#/$defs/__schema3"
+                          },
+                          "url": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "resolvable": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "kind",
+                          "summary",
+                          "sourceId",
+                          "productId",
+                          "observedAt",
+                          "ingestedAt",
+                          "url",
+                          "resolvable"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "__schema39": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sourceId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "homepage": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "licence": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "attributionText": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "termsUrl": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "disclaimer": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "sourceId",
+                          "name",
+                          "homepage",
+                          "licence",
+                          "attributionText",
+                          "termsUrl",
+                          "disclaimer"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "__schema40": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request did not satisfy ARCHITECTURE §13.2.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The subject of the request does not exist at this knowledge time.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The API is read-only: only GET and HEAD are supported.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The caller has spent its window (ARCHITECTURE §13.4).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected failure. The body names nothing but a trace id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "summary": "Map features for a viewport, quantized to a tile-aligned bbox.",
+        "description": "**Not yet served.** needs a bbox as-of read; `observationsAsOf` and `clusterVersionsAsOf` take a point and a radius.",
+        "operationId": "getEvents",
+        "responses": {
+          "400": {
+            "description": "The request did not satisfy ARCHITECTURE §13.2.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The subject of the request does not exist at this knowledge time.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The API is read-only: only GET and HEAD are supported.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The caller has spent its window (ARCHITECTURE §13.4).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected failure. The body names nothing but a trace id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "needs a bbox as-of read; `observationsAsOf` and `clusterVersionsAsOf` take a point and a radius.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/{publicId}": {
+      "get": {
+        "summary": "Canonical event detail: observations, version timeline, agreement, correlation.",
+        "description": "**Not yet served.** the `EventDetail` contract has no runtime schema yet.",
+        "operationId": "getEventsByPublicId",
+        "responses": {
+          "400": {
+            "description": "The request did not satisfy ARCHITECTURE §13.2.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The subject of the request does not exist at this knowledge time.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The API is read-only: only GET and HEAD are supported.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The caller has spent its window (ARCHITECTURE §13.4).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected failure. The body names nothing but a trace id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "the `EventDetail` contract has no runtime schema yet.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fire-clusters/{publicId}": {
+      "get": {
+        "summary": "Fire-cluster detail, version history and detection summary.",
+        "description": "**Not yet served.** the `FireClusterDetail` contract has no runtime schema yet.",
+        "operationId": "getFireClustersByPublicId",
+        "responses": {
+          "400": {
+            "description": "The request did not satisfy ARCHITECTURE §13.2.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The subject of the request does not exist at this knowledge time.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The API is read-only: only GET and HEAD are supported.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The caller has spent its window (ARCHITECTURE §13.4).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected failure. The body names nothing but a trace id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "the `FireClusterDetail` contract has no runtime schema yet.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/history": {
+      "get": {
+        "summary": "Baseline metrics and the time series behind the charts.",
+        "description": "**Not yet served.** `packages/baselines` is an empty stub: there are no baseline metrics to serve.",
+        "operationId": "getHistory",
+        "responses": {
+          "400": {
+            "description": "The request did not satisfy ARCHITECTURE §13.2.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The subject of the request does not exist at this knowledge time.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The API is read-only: only GET and HEAD are supported.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The caller has spent its window (ARCHITECTURE §13.4).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected failure. The body names nothing but a trace id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "`packages/baselines` is an empty stub: there are no baseline metrics to serve.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/places/suggest": {
+      "get": {
+        "summary": "Type-ahead from the local GeoNames table, so keystrokes never leave the server.",
+        "description": "**Not yet served.** `packages/geocoding` is an empty stub and the GeoNames import has not been built.",
+        "operationId": "getPlacesSuggest",
+        "responses": {
+          "400": {
+            "description": "The request did not satisfy ARCHITECTURE §13.2.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The subject of the request does not exist at this knowledge time.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The API is read-only: only GET and HEAD are supported.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The caller has spent its window (ARCHITECTURE §13.4).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected failure. The body names nothing but a trace id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "`packages/geocoding` is an empty stub and the GeoNames import has not been built.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/places/search": {
+      "get": {
+        "summary": "Submit-time geocoding through Nominatim, server-side and cached.",
+        "description": "**Not yet served.** `packages/geocoding` is an empty stub.",
+        "operationId": "getPlacesSearch",
+        "responses": {
+          "400": {
+            "description": "The request did not satisfy ARCHITECTURE §13.2.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The subject of the request does not exist at this knowledge time.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The API is read-only: only GET and HEAD are supported.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The caller has spent its window (ARCHITECTURE §13.4).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected failure. The body names nothing but a trace id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "`packages/geocoding` is an empty stub.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/places/reverse": {
+      "get": {
+        "summary": "A label for a rounded coordinate pair.",
+        "description": "**Not yet served.** `packages/geocoding` is an empty stub.",
+        "operationId": "getPlacesReverse",
+        "responses": {
+          "400": {
+            "description": "The request did not satisfy ARCHITECTURE §13.2.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The subject of the request does not exist at this knowledge time.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The API is read-only: only GET and HEAD are supported.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The caller has spent its window (ARCHITECTURE §13.4).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected failure. The body names nothing but a trace id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "`packages/geocoding` is an empty stub.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evidence/{id}": {
+      "get": {
+        "summary": "Resolve one primary evidence reference (OBS, FCV, RUN, COR).",
+        "description": "Resolve one primary evidence reference (OBS, FCV, RUN, COR).",
+        "operationId": "getEvidenceById",
+        "responses": {
+          "200": {
+            "description": "The response contract, as frozen in `packages/domain`.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "s-maxage=31536000, immutable"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schemaVersion": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "item": {
+                      "$ref": "#/$defs/__schema1"
+                    },
+                    "detail": {
+                      "$ref": "#/$defs/__schema4"
+                    },
+                    "attribution": {
+                      "$ref": "#/$defs/__schema5"
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "item",
+                    "detail",
+                    "attribution"
+                  ],
+                  "additionalProperties": false,
+                  "$defs": {
+                    "__schema0": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "__schema1": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/$defs/__schema2"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "OBS",
+                            "FCV",
+                            "FDS",
+                            "RUN",
+                            "COR",
+                            "BAS",
+                            "REL",
+                            "CHG"
+                          ]
+                        },
+                        "summary": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "sourceId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "productId": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "observedAt": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/$defs/__schema3"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "ingestedAt": {
+                          "$ref": "#/$defs/__schema3"
+                        },
+                        "url": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "resolvable": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "summary",
+                        "sourceId",
+                        "productId",
+                        "observedAt",
+                        "ingestedAt",
+                        "url",
+                        "resolvable"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema2": {
+                      "type": "string",
+                      "pattern": "^EV:(?:OBS|FCV|FDS|RUN|COR|BAS|REL|CHG):\\S+$"
+                    },
+                    "__schema3": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+                    },
+                    "__schema4": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "OBS"
+                            },
+                            "versionId": {
+                              "type": "string"
+                            },
+                            "versionSeq": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "sourceRecordPrimaryKey": {
+                              "type": "string"
+                            },
+                            "hazardType": {
+                              "type": "string"
+                            },
+                            "lifecycleStatus": {
+                              "type": "string",
+                              "enum": [
+                                "ACTIVE",
+                                "UPDATED",
+                                "ENDED",
+                                "CANCELLED",
+                                "EXPIRED",
+                                "DELETED",
+                                "MISSING_FROM_SOURCE"
+                              ]
+                            },
+                            "observedAt": {
+                              "$ref": "#/$defs/__schema3"
+                            },
+                            "validFrom": {
+                              "anyOf": [
+                                {
+                                  "$ref": "#/$defs/__schema3"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "validTo": {
+                              "anyOf": [
+                                {
+                                  "$ref": "#/$defs/__schema3"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "sourceUpdatedAt": {
+                              "anyOf": [
+                                {
+                                  "$ref": "#/$defs/__schema3"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "ingestedAt": {
+                              "$ref": "#/$defs/__schema3"
+                            },
+                            "contributor": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "contentSha256": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            },
+                            "rawExcerpt": {},
+                            "rawPayloadSha256": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "rawPayloadPruned": {
+                              "type": "boolean"
+                            },
+                            "sourceUrl": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "versionId",
+                            "versionSeq",
+                            "sourceRecordPrimaryKey",
+                            "hazardType",
+                            "lifecycleStatus",
+                            "observedAt",
+                            "validFrom",
+                            "validTo",
+                            "sourceUpdatedAt",
+                            "ingestedAt",
+                            "contributor",
+                            "contentSha256",
+                            "rawExcerpt",
+                            "rawPayloadSha256",
+                            "rawPayloadPruned",
+                            "sourceUrl"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "FCV"
+                            },
+                            "clusterVersionId": {
+                              "type": "string"
+                            },
+                            "clusterPublicId": {
+                              "type": "string"
+                            },
+                            "asOf": {
+                              "$ref": "#/$defs/__schema3"
+                            },
+                            "detectionCountTotal": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "detectionCount24h": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "distinctOverpasses24h": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "firstDetectedAt": {
+                              "$ref": "#/$defs/__schema3"
+                            },
+                            "lastDetectedAt": {
+                              "$ref": "#/$defs/__schema3"
+                            },
+                            "frpSum24h": {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "frpMax": {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "maxConfidence": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "productIds": {
+                              "type": "array",
+                              "items": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "detectionSetEvidenceId": {
+                              "$ref": "#/$defs/__schema2"
+                            },
+                            "contentSha256": {
+                              "type": "string",
+                              "pattern": "^[0-9a-f]{64}$"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "clusterVersionId",
+                            "clusterPublicId",
+                            "asOf",
+                            "detectionCountTotal",
+                            "detectionCount24h",
+                            "distinctOverpasses24h",
+                            "firstDetectedAt",
+                            "lastDetectedAt",
+                            "frpSum24h",
+                            "frpMax",
+                            "maxConfidence",
+                            "productIds",
+                            "detectionSetEvidenceId",
+                            "contentSha256"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "RUN"
+                            },
+                            "runId": {
+                              "type": "string"
+                            },
+                            "sourceId": {
+                              "type": "string"
+                            },
+                            "productId": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "trigger": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "startedAt": {
+                              "$ref": "#/$defs/__schema3"
+                            },
+                            "finishedAt": {
+                              "anyOf": [
+                                {
+                                  "$ref": "#/$defs/__schema3"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "committedAt": {
+                              "anyOf": [
+                                {
+                                  "$ref": "#/$defs/__schema3"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "httpStatus": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "bytesReceived": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "counts": {
+                              "type": "object",
+                              "properties": {
+                                "received": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "newRecords": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "newVersions": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "unchanged": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "rejected": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "received",
+                                "newRecords",
+                                "newVersions",
+                                "unchanged",
+                                "rejected"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "newestObservedAt": {
+                              "anyOf": [
+                                {
+                                  "$ref": "#/$defs/__schema3"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "errorClass": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "errorMessage": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "payloadSha256": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "workerVersion": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "runId",
+                            "sourceId",
+                            "productId",
+                            "trigger",
+                            "status",
+                            "startedAt",
+                            "finishedAt",
+                            "committedAt",
+                            "httpStatus",
+                            "bytesReceived",
+                            "counts",
+                            "newestObservedAt",
+                            "errorClass",
+                            "errorMessage",
+                            "payloadSha256",
+                            "workerVersion"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "COR"
+                            },
+                            "linkId": {
+                              "type": "string"
+                            },
+                            "canonicalEventPublicId": {
+                              "type": "string"
+                            },
+                            "sourceRecordPrimaryKey": {
+                              "type": "string"
+                            },
+                            "sourceId": {
+                              "type": "string"
+                            },
+                            "relation": {
+                              "type": "string",
+                              "enum": [
+                                "PRIMARY",
+                                "SAME_EVENT",
+                                "DERIVED_COPY"
+                              ]
+                            },
+                            "matchKind": {
+                              "type": "string",
+                              "enum": [
+                                "IDENTITY_REF",
+                                "SPATIOTEMPORAL",
+                                "SEED"
+                              ]
+                            },
+                            "confidence": {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0,
+                                  "maximum": 1
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "reasons": {},
+                            "algorithmVersion": {
+                              "type": "string"
+                            },
+                            "linkedAt": {
+                              "$ref": "#/$defs/__schema3"
+                            },
+                            "unlinkedAt": {
+                              "anyOf": [
+                                {
+                                  "$ref": "#/$defs/__schema3"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "unlinkReason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "linkId",
+                            "canonicalEventPublicId",
+                            "sourceRecordPrimaryKey",
+                            "sourceId",
+                            "relation",
+                            "matchKind",
+                            "confidence",
+                            "reasons",
+                            "algorithmVersion",
+                            "linkedAt",
+                            "unlinkedAt",
+                            "unlinkReason"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "__schema5": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sourceId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "homepage": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "licence": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "attributionText": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "termsUrl": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "disclaimer": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "sourceId",
+                          "name",
+                          "homepage",
+                          "licence",
+                          "attributionText",
+                          "termsUrl",
+                          "disclaimer"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request did not satisfy ARCHITECTURE §13.2.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The subject of the request does not exist at this knowledge time.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The API is read-only: only GET and HEAD are supported.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The caller has spent its window (ARCHITECTURE §13.4).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected failure. The body names nothing but a trace id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sources/status": {
+      "get": {
+        "summary": "Per-source health, recent runs, policies and attribution.",
+        "description": "Per-source health, recent runs, policies and attribution.",
+        "operationId": "getSourcesStatus",
+        "responses": {
+          "200": {
+            "description": "The response contract, as frozen in `packages/domain`.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "s-maxage=60, stale-while-revalidate=120"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "asOfContext": {
+                      "type": "object",
+                      "properties": {
+                        "asOf": {
+                          "$ref": "#/$defs/__schema0"
+                        },
+                        "isReplay": {
+                          "type": "boolean"
+                        },
+                        "replayHorizon": {
+                          "type": "object",
+                          "properties": {
+                            "profile": {
+                              "type": "string",
+                              "enum": [
+                                "lean",
+                                "standard"
+                              ]
+                            },
+                            "byFamily": {
+                              "type": "object",
+                              "properties": {
+                                "EARTHQUAKES": {
+                                  "$ref": "#/$defs/__schema1"
+                                },
+                                "FIRE_ACTIVITY": {
+                                  "$ref": "#/$defs/__schema1"
+                                },
+                                "FLOODS": {
+                                  "$ref": "#/$defs/__schema1"
+                                },
+                                "CYCLONES": {
+                                  "$ref": "#/$defs/__schema1"
+                                },
+                                "WEATHER_ALERTS": {
+                                  "$ref": "#/$defs/__schema1"
+                                },
+                                "OTHER": {
+                                  "$ref": "#/$defs/__schema1"
+                                }
+                              },
+                              "required": [
+                                "EARTHQUAKES",
+                                "FIRE_ACTIVITY",
+                                "FLOODS",
+                                "CYCLONES",
+                                "WEATHER_ALERTS",
+                                "OTHER"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "profile",
+                            "byFamily"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "sourceCutoffs": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {
+                            "anyOf": [
+                              {
+                                "$ref": "#/$defs/__schema0"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "asOf",
+                        "isReplay",
+                        "replayHorizon",
+                        "sourceCutoffs"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "generatedAt": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sourceId": {
+                            "$ref": "#/$defs/__schema2"
+                          },
+                          "name": {
+                            "$ref": "#/$defs/__schema3"
+                          },
+                          "homepage": {
+                            "$ref": "#/$defs/__schema4"
+                          },
+                          "enabled": {
+                            "$ref": "#/$defs/__schema5"
+                          },
+                          "licence": {
+                            "$ref": "#/$defs/__schema6"
+                          },
+                          "attributionText": {
+                            "$ref": "#/$defs/__schema7"
+                          },
+                          "termsUrl": {
+                            "$ref": "#/$defs/__schema8"
+                          },
+                          "disclaimer": {
+                            "$ref": "#/$defs/__schema9"
+                          },
+                          "coverageNote": {
+                            "$ref": "#/$defs/__schema10"
+                          },
+                          "coverageGeometryAvailable": {
+                            "$ref": "#/$defs/__schema11"
+                          },
+                          "hazardTypes": {
+                            "$ref": "#/$defs/__schema12"
+                          },
+                          "capabilities": {
+                            "$ref": "#/$defs/__schema13"
+                          },
+                          "health": {
+                            "$ref": "#/$defs/__schema14"
+                          },
+                          "products": {
+                            "$ref": "#/$defs/__schema16"
+                          },
+                          "recentRuns": {
+                            "$ref": "#/$defs/__schema17"
+                          },
+                          "successRate24h": {
+                            "$ref": "#/$defs/__schema18"
+                          },
+                          "runCount24h": {
+                            "$ref": "#/$defs/__schema19"
+                          }
+                        },
+                        "required": [
+                          "sourceId",
+                          "name",
+                          "homepage",
+                          "enabled",
+                          "licence",
+                          "attributionText",
+                          "termsUrl",
+                          "disclaimer",
+                          "coverageNote",
+                          "coverageGeometryAvailable",
+                          "hazardTypes",
+                          "capabilities",
+                          "health",
+                          "products",
+                          "recentRuns",
+                          "successRate24h",
+                          "runCount24h"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "worker": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "lastSeenAt": {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            "version": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "isStale": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "lastSeenAt",
+                            "version",
+                            "isStale"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "dataQuality": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "OK",
+                              "WARN",
+                              "ALARM"
+                            ]
+                          },
+                          "value": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "threshold": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "detail": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "checkedAt": {
+                            "$ref": "#/$defs/__schema0"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "label",
+                          "status",
+                          "value",
+                          "threshold",
+                          "detail",
+                          "checkedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "evidenceManifest": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/$defs/__schema15"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "OBS",
+                              "FCV",
+                              "FDS",
+                              "RUN",
+                              "COR",
+                              "BAS",
+                              "REL",
+                              "CHG"
+                            ]
+                          },
+                          "summary": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "sourceId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "productId": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "observedAt": {
+                            "anyOf": [
+                              {
+                                "$ref": "#/$defs/__schema0"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "ingestedAt": {
+                            "$ref": "#/$defs/__schema0"
+                          },
+                          "url": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "resolvable": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "kind",
+                          "summary",
+                          "sourceId",
+                          "productId",
+                          "observedAt",
+                          "ingestedAt",
+                          "url",
+                          "resolvable"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "attribution": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sourceId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "homepage": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "licence": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "attributionText": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "termsUrl": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "disclaimer": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "sourceId",
+                          "name",
+                          "homepage",
+                          "licence",
+                          "attributionText",
+                          "termsUrl",
+                          "disclaimer"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "asOfContext",
+                    "generatedAt",
+                    "sources",
+                    "worker",
+                    "dataQuality",
+                    "evidenceManifest",
+                    "attribution"
+                  ],
+                  "additionalProperties": false,
+                  "$defs": {
+                    "__schema0": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+                    },
+                    "__schema1": {
+                      "type": "object",
+                      "properties": {
+                        "earliestAsOf": {
+                          "$ref": "#/$defs/__schema0"
+                        },
+                        "note": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "earliestAsOf",
+                        "note"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema2": {
+                      "type": "string"
+                    },
+                    "__schema3": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "__schema4": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "__schema5": {
+                      "type": "boolean"
+                    },
+                    "__schema6": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "__schema7": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "__schema8": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "__schema9": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "__schema10": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "__schema11": {
+                      "type": "boolean"
+                    },
+                    "__schema12": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "EARTHQUAKE",
+                          "THERMAL_ACTIVITY",
+                          "WILDFIRE_EVENT",
+                          "FLOOD",
+                          "TROPICAL_CYCLONE",
+                          "VOLCANO",
+                          "DROUGHT",
+                          "WEATHER_ALERT",
+                          "TSUNAMI",
+                          "OTHER"
+                        ]
+                      }
+                    },
+                    "__schema13": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "REALTIME_EVENTS",
+                          "HISTORICAL_EVENTS",
+                          "EVENT_DETAILS",
+                          "EVENT_REVISIONS",
+                          "DELETIONS",
+                          "POLYGONS",
+                          "TRACKS",
+                          "FORECAST_GEOMETRY",
+                          "POINT_DETECTIONS",
+                          "OFFICIAL_WARNINGS",
+                          "IMPACT_ALERT_LEVELS",
+                          "CROSS_REFERENCES"
+                        ]
+                      }
+                    },
+                    "__schema14": {
+                      "type": "object",
+                      "properties": {
+                        "sourceId": {
+                          "type": "string"
+                        },
+                        "productId": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "FRESH",
+                            "DEGRADED",
+                            "STALE",
+                            "UNAVAILABLE"
+                          ]
+                        },
+                        "lastAttemptAt": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "lastSuccessAt": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "newestObservedAt": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/$defs/__schema0"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "consecutiveFailures": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "lastErrorClass": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "HTTP_4XX",
+                                "HTTP_5XX",
+                                "TIMEOUT",
+                                "TOO_LARGE",
+                                "SCHEMA_DRIFT",
+                                "EMPTY_SUSPICIOUS",
+                                "RATE_LIMITED",
+                                "DB_ERROR",
+                                "LEASE_EXPIRED",
+                                "UNKNOWN",
+                                "NETWORK",
+                                "CONFIG_ERROR",
+                                "ABORTED"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reasons": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "DISABLED",
+                              "NEVER_SUCCEEDED",
+                              "NO_SUCCESS_BEYOND_LIMIT",
+                              "POLL_STALE",
+                              "POLL_AGEING",
+                              "LAST_POLL_FAILED",
+                              "PARTIAL_BATCH",
+                              "DATA_STALE",
+                              "DATA_AGEING",
+                              "DATA_NEVER_SEEN",
+                              "OK"
+                            ]
+                          }
+                        },
+                        "expected": {
+                          "type": "object",
+                          "properties": {
+                            "pollIntervalS": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "fetchFreshWithinS": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "fetchStaleAfterS": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "unavailableAfterS": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "dataCurrentWithinS": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "dataStaleAfterS": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "quietIsNormal": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "pollIntervalS",
+                            "fetchFreshWithinS",
+                            "fetchStaleAfterS",
+                            "unavailableAfterS",
+                            "dataCurrentWithinS",
+                            "dataStaleAfterS",
+                            "quietIsNormal"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "evidenceId": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/$defs/__schema15"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "sourceId",
+                        "productId",
+                        "status",
+                        "lastAttemptAt",
+                        "lastSuccessAt",
+                        "newestObservedAt",
+                        "consecutiveFailures",
+                        "lastErrorClass",
+                        "reasons",
+                        "expected",
+                        "evidenceId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "__schema15": {
+                      "type": "string",
+                      "pattern": "^EV:(?:OBS|FCV|FDS|RUN|COR|BAS|REL|CHG):\\S+$"
+                    },
+                    "__schema16": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "code": {
+                            "type": "string"
+                          },
+                          "hazardTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "EARTHQUAKE",
+                                "THERMAL_ACTIVITY",
+                                "WILDFIRE_EVENT",
+                                "FLOOD",
+                                "TROPICAL_CYCLONE",
+                                "VOLCANO",
+                                "DROUGHT",
+                                "WEATHER_ALERT",
+                                "TSUNAMI",
+                                "OTHER"
+                              ]
+                            }
+                          },
+                          "capabilities": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "REALTIME_EVENTS",
+                                "HISTORICAL_EVENTS",
+                                "EVENT_DETAILS",
+                                "EVENT_REVISIONS",
+                                "DELETIONS",
+                                "POLYGONS",
+                                "TRACKS",
+                                "FORECAST_GEOMETRY",
+                                "POINT_DETECTIONS",
+                                "OFFICIAL_WARNINGS",
+                                "IMPACT_ALERT_LEVELS",
+                                "CROSS_REFERENCES"
+                              ]
+                            }
+                          },
+                          "platform": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "instrument": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "resolutionM": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "ACTIVE",
+                              "RETIRING",
+                              "RETIRED"
+                            ]
+                          },
+                          "activeFrom": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "activeTo": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "health": {
+                            "$ref": "#/$defs/__schema14"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "code",
+                          "hazardTypes",
+                          "capabilities",
+                          "platform",
+                          "instrument",
+                          "resolutionM",
+                          "status",
+                          "activeFrom",
+                          "activeTo",
+                          "health"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "__schema17": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "productId": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "trigger": {
+                            "type": "string",
+                            "enum": [
+                              "SCHEDULE",
+                              "MANUAL",
+                              "BACKFILL",
+                              "RECONCILE"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "RUNNING",
+                              "SUCCEEDED",
+                              "PARTIAL",
+                              "FAILED",
+                              "SKIPPED"
+                            ]
+                          },
+                          "startedAt": {
+                            "$ref": "#/$defs/__schema0"
+                          },
+                          "committedAt": {
+                            "anyOf": [
+                              {
+                                "$ref": "#/$defs/__schema0"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "durationMs": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "counts": {
+                            "type": "object",
+                            "properties": {
+                              "received": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "newRecords": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "newVersions": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "unchanged": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "rejected": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "received",
+                              "newRecords",
+                              "newVersions",
+                              "unchanged",
+                              "rejected"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "newestObservedAt": {
+                            "anyOf": [
+                              {
+                                "$ref": "#/$defs/__schema0"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "errorClass": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "HTTP_4XX",
+                                  "HTTP_5XX",
+                                  "TIMEOUT",
+                                  "TOO_LARGE",
+                                  "SCHEMA_DRIFT",
+                                  "EMPTY_SUSPICIOUS",
+                                  "RATE_LIMITED",
+                                  "DB_ERROR",
+                                  "LEASE_EXPIRED",
+                                  "UNKNOWN",
+                                  "NETWORK",
+                                  "CONFIG_ERROR",
+                                  "ABORTED"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "evidenceId": {
+                            "$ref": "#/$defs/__schema15"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "productId",
+                          "trigger",
+                          "status",
+                          "startedAt",
+                          "committedAt",
+                          "durationMs",
+                          "counts",
+                          "newestObservedAt",
+                          "errorClass",
+                          "evidenceId"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "__schema18": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "__schema19": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request did not satisfy ARCHITECTURE §13.2.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The subject of the request does not exist at this knowledge time.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The API is read-only: only GET and HEAD are supported.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The caller has spent its window (ARCHITECTURE §13.4).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected failure. The body names nothing but a trace id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/replay/horizon": {
+      "get": {
+        "summary": "The earliest replayable knowledge time, per hazard family.",
+        "description": "The earliest replayable knowledge time, per hazard family.",
+        "operationId": "getReplayHorizon",
+        "responses": {
+          "200": {
+            "description": "The response contract, as frozen in `packages/domain`.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "s-maxage=3600, stale-while-revalidate=3600"
+                }
+              },
+              "RateLimit-Limit": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Remaining": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "RateLimit-Reset": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "generatedAt": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "horizon": {
+                      "type": "object",
+                      "properties": {
+                        "profile": {
+                          "type": "string",
+                          "enum": [
+                            "lean",
+                            "standard"
+                          ]
+                        },
+                        "byFamily": {
+                          "type": "object",
+                          "properties": {
+                            "EARTHQUAKES": {
+                              "$ref": "#/$defs/__schema1"
+                            },
+                            "FIRE_ACTIVITY": {
+                              "$ref": "#/$defs/__schema1"
+                            },
+                            "FLOODS": {
+                              "$ref": "#/$defs/__schema1"
+                            },
+                            "CYCLONES": {
+                              "$ref": "#/$defs/__schema1"
+                            },
+                            "WEATHER_ALERTS": {
+                              "$ref": "#/$defs/__schema1"
+                            },
+                            "OTHER": {
+                              "$ref": "#/$defs/__schema1"
+                            }
+                          },
+                          "required": [
+                            "EARTHQUAKES",
+                            "FIRE_ACTIVITY",
+                            "FLOODS",
+                            "CYCLONES",
+                            "WEATHER_ALERTS",
+                            "OTHER"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "profile",
+                        "byFamily"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "generatedAt",
+                    "horizon"
+                  ],
+                  "additionalProperties": false,
+                  "$defs": {
+                    "__schema0": {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+                    },
+                    "__schema1": {
+                      "type": "object",
+                      "properties": {
+                        "earliestAsOf": {
+                          "$ref": "#/$defs/__schema0"
+                        },
+                        "note": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "earliestAsOf",
+                        "note"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request did not satisfy ARCHITECTURE §13.2.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The subject of the request does not exist at this knowledge time.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "The API is read-only: only GET and HEAD are supported.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The caller has spent its window (ARCHITECTURE §13.4).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "An unexpected failure. The body names nothing but a trace id.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ProblemDetails": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "integer",
+            "minimum": 400,
+            "maximum": 599
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "VALIDATION_FAILED",
+              "UNKNOWN_PARAMETER",
+              "NOT_FOUND",
+              "LOCATION_NOT_FOUND",
+              "AS_OF_BEFORE_HORIZON",
+              "AS_OF_IN_FUTURE",
+              "BBOX_TOO_LARGE",
+              "RATE_LIMITED",
+              "UPSTREAM_UNAVAILABLE",
+              "METHOD_NOT_ALLOWED",
+              "INTERNAL_ERROR"
+            ]
+          },
+          "invalidParams": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "retryAfterS": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "earliestAsOf": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "affectedFamilies": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "EARTHQUAKES",
+                "FIRE_ACTIVITY",
+                "FLOODS",
+                "CYCLONES",
+                "WEATHER_ALERTS",
+                "OTHER"
+              ]
+            }
+          },
+          "traceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "detail",
+          "instance",
+          "code",
+          "invalidParams",
+          "retryAfterS",
+          "earliestAsOf",
+          "affectedFamilies",
+          "traceId"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

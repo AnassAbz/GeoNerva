@@ -1,0 +1,1094 @@
+/**
+ * Runtime schemas for the frozen read-model contracts, **proved equivalent to the interfaces**.
+ *
+ * ### Why this file exists, and why it is not a second source of truth
+ *
+ * The read models were frozen at G2 as TypeScript interfaces, which vanish at run time. P8's plan
+ * asks for "OpenAPI generated from Zod" and "API contract tests (Zod ↔ OpenAPI)", and both need a
+ * schema that exists while the process is running. Writing one by hand normally means two
+ * descriptions of one contract, drifting apart — precisely the failure this project avoids
+ * elsewhere by having exactly one implementation of anything that matters.
+ *
+ * So each schema carries a **compile-time proof** that its inferred type is the frozen interface,
+ * in both directions:
+ *
+ * ```ts
+ * export type SourceStatusMatches = Expect<Exact<z.infer<typeof sourceStatusSchema>, SourceStatus>>;
+ * ```
+ *
+ * `Expect<T extends true>` fails to compile when `Exact` resolves to `false`. Add a field to the
+ * interface and the schema stops matching; add one to the schema and it stops matching the other
+ * way. There is still one contract; this file is a second *encoding* of it that cannot drift
+ * silently, because `pnpm typecheck` is what stops it.
+ *
+ * ### What the schemas are for, and what they are not for
+ *
+ * They exist to **check GeoNerva's own output** — the contract tests parse every integration
+ * response through the schema for its endpoint, which is the only way invariants like "every
+ * response carries a schemaVersion" become mechanical rather than aspirational — and to generate
+ * the OpenAPI document.
+ *
+ * They are **not** input validation. Request parameters are validated by `apps/web/lib/server/
+ * params.ts` against ARCHITECTURE §13.2, which has rules no response schema expresses (coordinate
+ * rounding, unknown-parameter rejection, length caps). Nothing here should ever be pointed at a
+ * query string.
+ *
+ * ### Modifiers are normalized before comparison
+ *
+ * `z.infer` produces mutable types; the interfaces are `readonly` throughout. `readonly` on a
+ * property does not affect assignability, but `T[]` and `readonly T[]` are not mutually
+ * assignable — so the comparison strips modifiers on both sides with `DeepMutable`. The check is
+ * therefore about *shape*, which is what crosses the wire; JSON has no notion of `readonly`.
+ */
+
+import { z } from 'zod';
+
+import {
+  AGREEMENT_LEVELS,
+  BASELINE_BANDS,
+  BASELINE_STATUSES,
+  CHANGE_PROMINENCES,
+  CHANGE_TYPES,
+  CONFIDENCE_CLASSES,
+  DATA_CONFIDENCE_LEVELS,
+  ERROR_CLASSES,
+  FAMILY_AVAILABILITIES,
+  FIRE_CLUSTER_STATUSES,
+  GEOMETRY_KINDS,
+  GEOMETRY_ROLES,
+  HAZARD_FAMILIES,
+  HAZARD_TYPES,
+  HEADLINE_CODES,
+  LIFECYCLE_STATUSES,
+  PRODUCT_STATUSES,
+  RELEVANCE_LEVELS,
+  RUN_STATUSES,
+  RUN_TRIGGERS,
+  SOURCE_CAPABILITIES,
+  SOURCE_HEALTH_STATUSES,
+  SUPPRESSION_REASONS,
+  type HazardFamily,
+} from '../enums.ts';
+import { EVIDENCE_KINDS } from '../evidence/evidence-id.ts';
+import { SOURCE_HEALTH_REASONS } from '../health/source-health.ts';
+import {
+  GEOJSON_GEOMETRY_TYPES,
+  USER_COORDINATE_DECIMALS,
+  type GeoJsonGeometry,
+} from '../value-objects/geography.ts';
+import { familyCoverageSchema, type LocationRef } from '../value-objects/location.ts';
+import { providerSeveritySchema } from '../value-objects/provider-severity.ts';
+import { CHANGE_WINDOWS, READ_MODEL_SCHEMA_VERSION } from './common.ts';
+import type {
+  Agreement,
+  AsOfContext,
+  Attribution,
+  AuthoritativeBasis,
+  BaselineMetricView,
+  BaselineReference,
+  BriefingCopy,
+  ChangeFacet,
+  ChangeSection,
+  ChangeSignalView,
+  ConfidenceView,
+  DataConfidence,
+  Fact,
+  FactValue,
+  FamilyCard,
+  FieldComparison,
+  FreshnessPolicyView,
+  GeometryView,
+  Reason,
+  RelevanceAssessment,
+  ReplayHorizon,
+  RunSummaryView,
+  SensorRef,
+  SourceHealthView,
+  SourceProductView,
+  SubjectSummary,
+} from './common.ts';
+import { PROBLEM_CODES, type ProblemDetails, type InvalidParam } from './problem.ts';
+import type {
+  CorrelationEvidenceDetail,
+  EvidenceDetail,
+  EvidenceDetailPayload,
+  EvidenceItem,
+  FireClusterVersionEvidenceDetail,
+  IngestionRunEvidenceDetail,
+  ObservationEvidenceDetail,
+} from './evidence-item.ts';
+import type {
+  AiBriefingView,
+  AiSection,
+  LocationBriefing,
+  LocationSnapshotView,
+  SnapshotOverall,
+} from './location-briefing.ts';
+import type { MapFeature, MapFeaturesResponse, ReplayHorizonResponse } from './map-and-places.ts';
+import type {
+  DataQualityCheckView,
+  SourceStatus,
+  SourceStatusEntry,
+  WorkerStatusView,
+} from './source-status.ts';
+
+/*
+ * ── The equivalence proof ──────────────────────────────────────────────────────
+ */
+
+/** Strips `readonly` everywhere, so the comparison is about shape rather than modifiers. */
+type DeepMutable<T> = T extends readonly (infer U)[]
+  ? DeepMutable<U>[]
+  : T extends Date
+    ? T
+    : T extends object
+      ? { -readonly [K in keyof T]: DeepMutable<T[K]> }
+      : T;
+
+/** `true` only when the two types are mutually assignable after normalization. */
+export type Exact<A, B> = [DeepMutable<A>] extends [DeepMutable<B>]
+  ? [DeepMutable<B>] extends [DeepMutable<A>]
+    ? true
+    : false
+  : false;
+
+/** Fails to compile unless `T` is `true`. This is what makes the proofs above load-bearing. */
+export type Expect<T extends true> = T;
+
+/*
+ * ── Primitives ────────────────────────────────────────────────────────────────
+ *
+ * `IsoTimestamp`, `EvidenceId` and `SubjectRef` are all `string` aliases, so the *type* check
+ * cannot distinguish them. The patterns below are therefore doing real work at run time that the
+ * compiler cannot: a `null` where a timestamp belongs, or a bare number where an evidence id
+ * belongs, is caught by the schema and by nothing else.
+ */
+
+/** ISO-8601 in UTC with milliseconds and a `Z` suffix — the one form read models use. */
+const isoTimestamp = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u, 'must be an ISO-8601 UTC instant');
+
+/** `EV:<KIND>:<body>`. The codec's grammar is stricter; this is the shape on the wire. */
+const evidenceId = z.string().regex(new RegExp(`^EV:(?:${EVIDENCE_KINDS.join('|')}):\\S+$`, 'u'));
+
+/** `CE:`, `FC:`, `SRC:` or `MET:` followed by an identifier. */
+const subjectRef = z.string().regex(/^(?:CE|FC|SRC|MET):\S+$/u);
+
+const schemaVersion = z.literal(READ_MODEL_SCHEMA_VERSION);
+
+/**
+ * A GeoJSON geometry, annotated rather than inferred.
+ *
+ * `GeoJsonGeometry` is self-referential (`geometries?: readonly GeoJsonGeometry[]`) and has an
+ * optional `unknown` field, which `z.infer` cannot reproduce exactly. Annotating the schema with
+ * `z.ZodType<GeoJsonGeometry>` makes the equivalence hold by construction instead of by proof,
+ * which is the honest way to say "the compiler checked this one differently".
+ */
+export const geoJsonGeometrySchema: z.ZodType<GeoJsonGeometry> = z.lazy(() =>
+  z.object({
+    type: z.enum(GEOJSON_GEOMETRY_TYPES),
+    coordinates: z.unknown().optional(),
+    geometries: z.array(geoJsonGeometrySchema).optional(),
+  }),
+);
+
+/** A `Readonly<Record<HazardFamily, T>>`: every family present, none extra. */
+function byFamily<T extends z.ZodType>(value: T): z.ZodObject<Record<HazardFamily, T>> {
+  return z.object(
+    Object.fromEntries(HAZARD_FAMILIES.map((family) => [family, value])) as Record<HazardFamily, T>,
+  );
+}
+
+/**
+ * A coordinate carrying at most `USER_COORDINATE_DECIMALS` decimals (invariant I15).
+ *
+ * The check is on the value's **serialization**, because that is what leaves the server:
+ * `Number(value.toFixed(2)) === value` holds exactly when the shortest JSON rendering of the
+ * double has at most two decimals. 31.629512 fails; 31.63, -8 and 0 pass.
+ *
+ * A tolerance-based version — "within 1e-9 of a hundredth" — was written first and accepted
+ * `31.630000000000003`, a float artefact carrying no positional information (about three
+ * nanometres) that nonetheless serializes as fifteen decimals. I15 exists so that a response
+ * cannot *appear* to know where someone is to the metre, so the rendering is the thing to
+ * constrain.
+ *
+ * Checked over the whole two-decimal grid from -180 to 180 and over 36,001 rounded arbitrary
+ * values: `Math.round(x * 100) / 100` always satisfies this, so a properly rounded coordinate is
+ * never rejected.
+ */
+function roundedCoordinate(min: number, max: number): z.ZodNumber {
+  return z
+    .number()
+    .min(min)
+    .max(max)
+    .refine((value) => Number(value.toFixed(USER_COORDINATE_DECIMALS)) === value, {
+      message: `must carry at most ${String(USER_COORDINATE_DECIMALS)} decimals (I15)`,
+    });
+}
+
+/*
+ * ── Shared building blocks ────────────────────────────────────────────────────
+ */
+
+export const factValueSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('number'),
+    value: z.number(),
+    unit: z.string().nullable(),
+    decimals: z.number().int().min(0).max(12),
+  }),
+  z.object({ kind: z.literal('count'), value: z.number().int() }),
+  z.object({ kind: z.literal('text'), value: z.string() }),
+  z.object({ kind: z.literal('severity'), severity: providerSeveritySchema }),
+  z.object({ kind: z.literal('timestamp'), value: isoTimestamp }),
+  z.object({ kind: z.literal('boolean'), value: z.boolean() }),
+  z.object({
+    kind: z.literal('unavailable'),
+    reason: z.enum([
+      'NOT_REPORTED_BY_SOURCE',
+      'SOURCE_UNAVAILABLE',
+      'NOT_COVERED',
+      'INSUFFICIENT_HISTORY',
+      'NOT_APPLICABLE',
+      'BEYOND_REPLAY_HORIZON',
+    ]),
+  }),
+]);
+export type FactValueMatches = Expect<Exact<z.infer<typeof factValueSchema>, FactValue>>;
+
+export const factSchema = z.object({
+  code: z.string(),
+  label: z.string(),
+  value: factValueSchema,
+  evidenceIds: z.array(evidenceId),
+});
+export type FactMatches = Expect<Exact<z.infer<typeof factSchema>, Fact>>;
+
+export const reasonSchema = z.object({
+  code: z.string(),
+  text: z.string(),
+  params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+  evidenceIds: z.array(evidenceId),
+});
+export type ReasonMatches = Expect<Exact<z.infer<typeof reasonSchema>, Reason>>;
+
+export const authoritativeBasisSchema = z.object({
+  sourceId: z.string(),
+  sourceName: z.string(),
+  severity: providerSeveritySchema,
+  statementVerbatim: z.string().nullable(),
+  url: z.string().nullable(),
+  evidenceId,
+});
+export type AuthoritativeBasisMatches = Expect<
+  Exact<z.infer<typeof authoritativeBasisSchema>, AuthoritativeBasis>
+>;
+
+/**
+ * Relevance, with invariant **I10** enforced by the schema rather than only by the engine.
+ *
+ * `CRITICAL` requires an `authoritativeBasis` and every other level forbids one. The engine
+ * already guarantees this; encoding it here means a response that violated it would fail its own
+ * contract test, which is a second, independent check on the claim that matters most — GeoNerva
+ * never raises the loudest level on its own authority.
+ */
+export const relevanceAssessmentSchema = z
+  .object({
+    level: z.enum(RELEVANCE_LEVELS),
+    reasons: z.array(reasonSchema),
+    authoritativeBasis: authoritativeBasisSchema.nullable(),
+    caveats: z.array(z.string()),
+    evidenceIds: z.array(evidenceId),
+    modelVersion: z.string(),
+  })
+  .refine((value) => (value.level === 'CRITICAL') === (value.authoritativeBasis !== null), {
+    message: 'CRITICAL requires an authoritative basis, and no other level may carry one (I10)',
+    path: ['authoritativeBasis'],
+  });
+export type RelevanceAssessmentMatches = Expect<
+  Exact<z.infer<typeof relevanceAssessmentSchema>, RelevanceAssessment>
+>;
+
+export const fieldComparisonSchema = z.object({
+  code: z.string(),
+  label: z.string(),
+  values: z.array(
+    z.object({
+      sourceId: z.string(),
+      contributor: z.string().nullable(),
+      value: factValueSchema,
+      evidenceId,
+    }),
+  ),
+  spread: factValueSchema.nullable(),
+  isConflict: z.boolean(),
+});
+export type FieldComparisonMatches = Expect<
+  Exact<z.infer<typeof fieldComparisonSchema>, FieldComparison>
+>;
+
+export const agreementSchema = z.object({
+  level: z.enum(AGREEMENT_LEVELS),
+  nSources: z.number().int().nonnegative(),
+  nIndependentSources: z.number().int().nonnegative(),
+  reasons: z.array(reasonSchema),
+  comparisons: z.array(fieldComparisonSchema),
+});
+export type AgreementMatches = Expect<Exact<z.infer<typeof agreementSchema>, Agreement>>;
+
+export const attributionSchema = z.object({
+  sourceId: z.string(),
+  name: z.string(),
+  homepage: z.string().nullable(),
+  licence: z.string().min(1),
+  attributionText: z.string().min(1),
+  termsUrl: z.string().nullable(),
+  disclaimer: z.string().nullable(),
+});
+export type AttributionMatches = Expect<Exact<z.infer<typeof attributionSchema>, Attribution>>;
+
+export const geometryViewSchema = z.object({
+  role: z.enum(GEOMETRY_ROLES),
+  kind: z.enum(GEOMETRY_KINDS),
+  geometry: geoJsonGeometrySchema,
+  validAt: isoTimestamp.nullable(),
+  isForecast: z.boolean(),
+  evidenceIds: z.array(evidenceId),
+});
+export type GeometryViewMatches = Expect<Exact<z.infer<typeof geometryViewSchema>, GeometryView>>;
+
+export const freshnessPolicyViewSchema = z.object({
+  pollIntervalS: z.number().int().nonnegative(),
+  fetchFreshWithinS: z.number().int().nonnegative(),
+  fetchStaleAfterS: z.number().int().nonnegative(),
+  unavailableAfterS: z.number().int().nonnegative(),
+  dataCurrentWithinS: z.number().int().nonnegative().nullable(),
+  dataStaleAfterS: z.number().int().nonnegative().nullable(),
+  quietIsNormal: z.boolean(),
+});
+export type FreshnessPolicyViewMatches = Expect<
+  Exact<z.infer<typeof freshnessPolicyViewSchema>, FreshnessPolicyView>
+>;
+
+export const sourceHealthViewSchema = z.object({
+  sourceId: z.string(),
+  productId: z.number().int().nullable(),
+  status: z.enum(SOURCE_HEALTH_STATUSES),
+  lastAttemptAt: isoTimestamp.nullable(),
+  lastSuccessAt: isoTimestamp.nullable(),
+  newestObservedAt: isoTimestamp.nullable(),
+  consecutiveFailures: z.number().int().nonnegative(),
+  lastErrorClass: z.enum(ERROR_CLASSES).nullable(),
+  reasons: z.array(z.enum(SOURCE_HEALTH_REASONS)),
+  expected: freshnessPolicyViewSchema,
+  evidenceId: evidenceId.nullable(),
+});
+export type SourceHealthViewMatches = Expect<
+  Exact<z.infer<typeof sourceHealthViewSchema>, SourceHealthView>
+>;
+
+export const sourceProductViewSchema = z.object({
+  id: z.number().int(),
+  code: z.string(),
+  hazardTypes: z.array(z.enum(HAZARD_TYPES)),
+  capabilities: z.array(z.enum(SOURCE_CAPABILITIES)),
+  platform: z.string().nullable(),
+  instrument: z.string().nullable(),
+  resolutionM: z.number().int().positive().nullable(),
+  status: z.enum(PRODUCT_STATUSES),
+  activeFrom: z.string().nullable(),
+  activeTo: z.string().nullable(),
+  health: sourceHealthViewSchema,
+});
+export type SourceProductViewMatches = Expect<
+  Exact<z.infer<typeof sourceProductViewSchema>, SourceProductView>
+>;
+
+export const runSummaryViewSchema = z.object({
+  id: z.string(),
+  productId: z.number().int().nullable(),
+  trigger: z.enum(RUN_TRIGGERS),
+  status: z.enum(RUN_STATUSES),
+  startedAt: isoTimestamp,
+  committedAt: isoTimestamp.nullable(),
+  durationMs: z.number().int().nullable(),
+  counts: z.object({
+    received: z.number().int().nonnegative(),
+    newRecords: z.number().int().nonnegative(),
+    newVersions: z.number().int().nonnegative(),
+    unchanged: z.number().int().nonnegative(),
+    rejected: z.number().int().nonnegative(),
+  }),
+  newestObservedAt: isoTimestamp.nullable(),
+  errorClass: z.enum(ERROR_CLASSES).nullable(),
+  evidenceId,
+});
+export type RunSummaryViewMatches = Expect<
+  Exact<z.infer<typeof runSummaryViewSchema>, RunSummaryView>
+>;
+
+export const replayHorizonSchema = z.object({
+  profile: z.enum(['lean', 'standard']),
+  byFamily: byFamily(z.object({ earliestAsOf: isoTimestamp, note: z.string().min(1) })),
+});
+export type ReplayHorizonMatches = Expect<
+  Exact<z.infer<typeof replayHorizonSchema>, ReplayHorizon>
+>;
+
+export const asOfContextSchema = z.object({
+  asOf: isoTimestamp,
+  isReplay: z.boolean(),
+  replayHorizon: replayHorizonSchema,
+  sourceCutoffs: z.record(z.string(), isoTimestamp.nullable()),
+});
+export type AsOfContextMatches = Expect<Exact<z.infer<typeof asOfContextSchema>, AsOfContext>>;
+
+export const confidenceViewSchema = z.object({
+  class: z.enum(CONFIDENCE_CLASSES),
+  raw: z.string().nullable(),
+});
+export type ConfidenceViewMatches = Expect<
+  Exact<z.infer<typeof confidenceViewSchema>, ConfidenceView>
+>;
+
+export const sensorRefSchema = z.object({
+  productId: z.number().int(),
+  code: z.string(),
+  platform: z.string().nullable(),
+  instrument: z.string().nullable(),
+  resolutionM: z.number().int().positive().nullable(),
+});
+export type SensorRefMatches = Expect<Exact<z.infer<typeof sensorRefSchema>, SensorRef>>;
+
+export const subjectSummarySchema = z.object({
+  subjectRef,
+  hazardType: z.enum(HAZARD_TYPES),
+  family: z.enum(HAZARD_FAMILIES),
+  publicId: z.string(),
+  title: z.string(),
+  observedAt: isoTimestamp,
+  lifecycleStatus: z.enum(LIFECYCLE_STATUSES),
+  providerSeverity: providerSeveritySchema.nullable(),
+  distanceKm: z.number().nonnegative(),
+  hypocentralDistanceKm: z.number().nonnegative().nullable(),
+  facts: z.array(factSchema),
+  relevance: relevanceAssessmentSchema,
+  agreement: agreementSchema.nullable(),
+  evidenceIds: z.array(evidenceId),
+  href: z.string(),
+});
+export type SubjectSummaryMatches = Expect<
+  Exact<z.infer<typeof subjectSummarySchema>, SubjectSummary>
+>;
+
+export const dataConfidenceSchema = z.object({
+  level: z.enum(DATA_CONFIDENCE_LEVELS),
+  reasons: z.array(reasonSchema),
+});
+export type DataConfidenceMatches = Expect<
+  Exact<z.infer<typeof dataConfidenceSchema>, DataConfidence>
+>;
+
+export const baselineReferenceSchema = z.object({
+  nWindows: z.number().int().nonnegative(),
+  nEvents: z.number().int().nonnegative(),
+  windowDays: z.number().int().positive(),
+  referenceFrom: isoTimestamp,
+  referenceTo: isoTimestamp,
+  median: z.number(),
+  p25: z.number(),
+  p75: z.number(),
+  p90: z.number(),
+  p95: z.number(),
+  mean: z.number(),
+  ratePerWindow: z.number(),
+  activityRatio: z.number().nullable(),
+});
+export type BaselineReferenceMatches = Expect<
+  Exact<z.infer<typeof baselineReferenceSchema>, BaselineReference>
+>;
+
+export const baselineMetricViewSchema = z.object({
+  id: evidenceId,
+  family: z.enum(HAZARD_FAMILIES),
+  metricCode: z.string(),
+  label: z.string(),
+  params: z.record(z.string(), z.union([z.string(), z.number(), z.null()])),
+  asOf: isoTimestamp,
+  status: z.enum(BASELINE_STATUSES),
+  observedValue: factValueSchema,
+  reference: baselineReferenceSchema.nullable(),
+  percentile: z.number().min(0).max(100).nullable(),
+  band: z.enum(BASELINE_BANDS).nullable(),
+  interpretation: z.string().min(1),
+  caveats: z.array(z.string()),
+  methodVersion: z.string(),
+  evidenceIds: z.array(evidenceId),
+});
+export type BaselineMetricViewMatches = Expect<
+  Exact<z.infer<typeof baselineMetricViewSchema>, BaselineMetricView>
+>;
+
+/**
+ * A family card, with invariant **I11** enforced by the schema.
+ *
+ * When `availability` is not `AVAILABLE`, `items` must be empty and `itemsTotal` must be zero.
+ * "No relevant hazards were found" and "GeoNerva cannot see this family here" are different
+ * answers, and this is the one rule that stops the second being rendered as the first.
+ */
+export const familyCardSchema = z
+  .object({
+    family: z.enum(HAZARD_FAMILIES),
+    availability: z.enum(FAMILY_AVAILABILITIES),
+    coverage: familyCoverageSchema,
+    items: z.array(subjectSummarySchema),
+    truncated: z.boolean(),
+    itemsTotal: z.number().int().nonnegative(),
+    metrics: z.array(baselineMetricViewSchema),
+    dataConfidence: dataConfidenceSchema,
+    sourceHealth: z.array(sourceHealthViewSchema),
+    caveats: z.array(z.string()),
+  })
+  .refine(
+    (card) =>
+      card.availability === 'AVAILABLE' || (card.items.length === 0 && card.itemsTotal === 0),
+    {
+      message: 'a family that is not AVAILABLE must carry no items and no count (I11)',
+      path: ['items'],
+    },
+  );
+export type FamilyCardMatches = Expect<Exact<z.infer<typeof familyCardSchema>, FamilyCard>>;
+
+export const briefingCopySchema = z.object({
+  headline: z.string().min(1),
+  summary: z.array(z.string()),
+  byFamily: byFamily(z.array(z.string())),
+  caveats: z.array(z.string()),
+  templateVersion: z.string(),
+});
+export type BriefingCopyMatches = Expect<Exact<z.infer<typeof briefingCopySchema>, BriefingCopy>>;
+
+export const changeFacetSchema = z.object({
+  type: z.enum(CHANGE_TYPES),
+  label: z.string(),
+  before: factValueSchema.nullable(),
+  after: factValueSchema.nullable(),
+});
+export type ChangeFacetMatches = Expect<Exact<z.infer<typeof changeFacetSchema>, ChangeFacet>>;
+
+export const changeSignalViewSchema = z.object({
+  id: evidenceId,
+  type: z.enum(CHANGE_TYPES),
+  family: z.enum(HAZARD_FAMILIES),
+  subjectRef: subjectRef.nullable(),
+  metricCode: z.string().nullable(),
+  title: z.string(),
+  detail: z.string().nullable(),
+  before: factValueSchema.nullable(),
+  after: factValueSchema.nullable(),
+  fromAsOf: isoTimestamp,
+  toAsOf: isoTimestamp,
+  importance: z.number().int().min(0).max(100),
+  prominence: z.enum(CHANGE_PROMINENCES),
+  suppressionReason: z.enum(SUPPRESSION_REASONS).nullable(),
+  lateReport: z.boolean(),
+  facets: z.array(changeFacetSchema),
+  reasonCodes: z.array(z.string()),
+  evidenceIds: z.array(evidenceId),
+  engineVersion: z.string(),
+});
+export type ChangeSignalViewMatches = Expect<
+  Exact<z.infer<typeof changeSignalViewSchema>, ChangeSignalView>
+>;
+
+export const changeSectionSchema = z.object({
+  window: z.enum(CHANGE_WINDOWS),
+  fromAsOf: isoTimestamp,
+  toAsOf: isoTimestamp,
+  headline: z.array(changeSignalViewSchema),
+  listed: z.array(changeSignalViewSchema),
+  detail: z.array(changeSignalViewSchema),
+  suppressed: z.array(changeSignalViewSchema),
+  suppressedCount: z.number().int().nonnegative(),
+  emptyStatement: z.string().nullable(),
+});
+export type ChangeSectionMatches = Expect<
+  Exact<z.infer<typeof changeSectionSchema>, ChangeSection>
+>;
+
+/*
+ * ── Top-level responses ───────────────────────────────────────────────────────
+ */
+
+export const invalidParamSchema = z.object({
+  name: z.string(),
+  reason: z.string(),
+});
+export type InvalidParamMatches = Expect<Exact<z.infer<typeof invalidParamSchema>, InvalidParam>>;
+
+export const problemDetailsSchema = z.object({
+  type: z.string(),
+  title: z.string().min(1),
+  status: z.number().int().min(400).max(599),
+  detail: z.string().nullable(),
+  instance: z.string().nullable(),
+  code: z.enum(PROBLEM_CODES),
+  invalidParams: z.array(invalidParamSchema),
+  retryAfterS: z.number().nonnegative().nullable(),
+  earliestAsOf: isoTimestamp.nullable(),
+  affectedFamilies: z.array(z.enum(HAZARD_FAMILIES)),
+  /*
+   * Nullable, because the contract is. `problemDocument` always mints one — the field exists to
+   * correlate a response with a log line — but a schema stricter than the contract it describes
+   * would reject a legitimate response, and the equivalence proof caught exactly that.
+   */
+  traceId: z.string().nullable(),
+});
+export type ProblemDetailsMatches = Expect<
+  Exact<z.infer<typeof problemDetailsSchema>, ProblemDetails>
+>;
+
+export const evidenceItemSchema = z.object({
+  id: evidenceId,
+  kind: z.enum(EVIDENCE_KINDS),
+  summary: z.string().min(1),
+  sourceId: z.string().nullable(),
+  productId: z.number().int().nullable(),
+  observedAt: isoTimestamp.nullable(),
+  ingestedAt: isoTimestamp,
+  url: z.string().nullable(),
+  resolvable: z.boolean(),
+});
+export type EvidenceItemMatches = Expect<Exact<z.infer<typeof evidenceItemSchema>, EvidenceItem>>;
+
+export const replayHorizonResponseSchema = z.object({
+  schemaVersion,
+  generatedAt: isoTimestamp,
+  horizon: replayHorizonSchema,
+});
+export type ReplayHorizonResponseMatches = Expect<
+  Exact<z.infer<typeof replayHorizonResponseSchema>, ReplayHorizonResponse>
+>;
+
+export const workerStatusViewSchema = z.object({
+  lastSeenAt: isoTimestamp,
+  version: z.string().nullable(),
+  isStale: z.boolean(),
+});
+export type WorkerStatusViewMatches = Expect<
+  Exact<z.infer<typeof workerStatusViewSchema>, WorkerStatusView>
+>;
+
+export const dataQualityCheckViewSchema = z.object({
+  code: z.string(),
+  label: z.string(),
+  status: z.enum(['OK', 'WARN', 'ALARM']),
+  value: z.number().nullable(),
+  threshold: z.number().nullable(),
+  detail: z.string().nullable(),
+  checkedAt: isoTimestamp,
+});
+export type DataQualityCheckViewMatches = Expect<
+  Exact<z.infer<typeof dataQualityCheckViewSchema>, DataQualityCheckView>
+>;
+
+/**
+ * One source on the data-status page.
+ *
+ * `successRate24h` is `nullable` and **not** defaulted to zero, which is the schema stating the
+ * same rule the assembly does: a rate with no runs behind it does not exist, and a zero would read
+ * as "every run failed".
+ */
+export const sourceStatusEntrySchema = z
+  .object({
+    sourceId: z.string(),
+    name: z.string().min(1),
+    homepage: z.string().nullable(),
+    enabled: z.boolean(),
+    licence: z.string().min(1),
+    attributionText: z.string().min(1),
+    termsUrl: z.string().nullable(),
+    disclaimer: z.string().nullable(),
+    coverageNote: z.string().nullable(),
+    coverageGeometryAvailable: z.boolean(),
+    hazardTypes: z.array(z.enum(HAZARD_TYPES)),
+    capabilities: z.array(z.enum(SOURCE_CAPABILITIES)),
+    health: sourceHealthViewSchema,
+    products: z.array(sourceProductViewSchema),
+    recentRuns: z.array(runSummaryViewSchema),
+    successRate24h: z.number().min(0).max(1).nullable(),
+    runCount24h: z.number().int().nonnegative(),
+  })
+  .refine((entry) => (entry.runCount24h === 0) === (entry.successRate24h === null), {
+    message: 'a success rate exists exactly when runs were committed in the window',
+    path: ['successRate24h'],
+  });
+export type SourceStatusEntryMatches = Expect<
+  Exact<z.infer<typeof sourceStatusEntrySchema>, SourceStatusEntry>
+>;
+
+export const sourceStatusSchema = z.object({
+  schemaVersion,
+  asOfContext: asOfContextSchema,
+  generatedAt: isoTimestamp,
+  sources: z.array(sourceStatusEntrySchema),
+  worker: workerStatusViewSchema.nullable(),
+  dataQuality: z.array(dataQualityCheckViewSchema),
+  evidenceManifest: z.array(evidenceItemSchema),
+  attribution: z.array(attributionSchema),
+});
+export type SourceStatusMatches = Expect<Exact<z.infer<typeof sourceStatusSchema>, SourceStatus>>;
+
+/*
+ * ── The briefing ──────────────────────────────────────────────────────────────
+ */
+
+/**
+ * A location reference, with invariant **I15** enforced by the schema.
+ *
+ * `lat` and `lon` carry at most two decimals. The rounding happens at the request boundary
+ * (`params.ts`), so this is a second, independent check on the same rule — and the one that runs
+ * against what actually left the server. A response that reached three decimals would fail its
+ * own contract test rather than being noticed by a reviewer.
+ */
+export const locationRefSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  lat: roundedCoordinate(-90, 90),
+  lon: roundedCoordinate(-180, 180),
+  timezone: z.string().min(1),
+  countryCode: z.string().nullable(),
+  admin1: z.string().nullable(),
+});
+export type LocationRefMatches = Expect<Exact<z.infer<typeof locationRefSchema>, LocationRef>>;
+
+export const snapshotOverallSchema = z.object({
+  headlineCode: z.enum(HEADLINE_CODES),
+  headlineRelevance: z.enum(RELEVANCE_LEVELS).nullable(),
+  headlineText: z.string().min(1),
+  coverageStatement: z.string(),
+  unavailableFamilies: z.array(z.enum(HAZARD_FAMILIES)),
+  notCoveredFamilies: z.array(z.enum(HAZARD_FAMILIES)),
+  reasons: z.array(reasonSchema),
+  evidenceIds: z.array(evidenceId),
+});
+export type SnapshotOverallMatches = Expect<
+  Exact<z.infer<typeof snapshotOverallSchema>, SnapshotOverall>
+>;
+
+export const locationSnapshotViewSchema = z.object({
+  asOf: isoTimestamp,
+  engineVersion: z.string(),
+  generatedAt: isoTimestamp,
+  sourceHealth: z.array(sourceHealthViewSchema),
+  families: byFamily(familyCardSchema),
+  overall: snapshotOverallSchema,
+  contentSha256: z.string().regex(/^[0-9a-f]{64}$/u),
+});
+export type LocationSnapshotViewMatches = Expect<
+  Exact<z.infer<typeof locationSnapshotViewSchema>, LocationSnapshotView>
+>;
+
+export const aiSectionSchema = z.object({
+  role: z.string(),
+  heading: z.string(),
+  text: z.string(),
+  evidenceIds: z.array(evidenceId),
+});
+export type AiSectionMatches = Expect<Exact<z.infer<typeof aiSectionSchema>, AiSection>>;
+
+/**
+ * The AI block, whose absence is the normal case (`AI_MODE=disabled`, owner decision Q4).
+ *
+ * `validationStatus` admits only `PASSED` and `REPAIRED`: a `REJECTED` output is stored for
+ * evaluation and never shown, so a response carrying one would be the validator having been
+ * bypassed. The schema says so rather than trusting the writer.
+ */
+export const aiBriefingViewSchema = z.object({
+  model: z.string(),
+  promptVersion: z.string(),
+  validationStatus: z.enum(['PASSED', 'REPAIRED']),
+  sections: z.array(aiSectionSchema),
+  evidenceIds: z.array(evidenceId),
+  disclaimer: z.string().min(1),
+  generatedAt: isoTimestamp,
+});
+export type AiBriefingViewMatches = Expect<
+  Exact<z.infer<typeof aiBriefingViewSchema>, AiBriefingView>
+>;
+
+/**
+ * `GET /api/v1/briefing`.
+ *
+ * The `superRefine` encodes invariants **I9** and **I12** over the assembled document, which is
+ * the only level at which either can be checked: I9 asks that every evidence id referenced
+ * *anywhere* be in the manifest, and I12 that the AI block reference nothing outside it. Both are
+ * properties of the whole response, not of any field.
+ */
+export const locationBriefingSchema = z
+  .object({
+    schemaVersion,
+    location: locationRefSchema,
+    window: z.enum(CHANGE_WINDOWS),
+    generatedAt: isoTimestamp,
+    asOfContext: asOfContextSchema,
+    engineVersion: z.string(),
+    snapshot: locationSnapshotViewSchema,
+    changes: changeSectionSchema,
+    copy: briefingCopySchema,
+    ai: aiBriefingViewSchema.nullable(),
+    evidenceManifest: z.array(evidenceItemSchema),
+    attribution: z.array(attributionSchema),
+    contentSha256: z.string().regex(/^[0-9a-f]{64}$/u),
+  })
+  .superRefine((briefing, ctx) => {
+    const manifest = new Set(briefing.evidenceManifest.map((item) => item.id));
+
+    for (const id of citedEvidenceIds(briefing)) {
+      if (!manifest.has(id)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['evidenceManifest'],
+          message: `the response cites ${id}, which its manifest does not contain (I9)`,
+        });
+      }
+    }
+
+    for (const id of briefing.ai?.evidenceIds ?? []) {
+      if (!manifest.has(id)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['ai', 'evidenceIds'],
+          message: `the AI text cites ${id}, which is outside the manifest (I12)`,
+        });
+      }
+    }
+  });
+export type LocationBriefingMatches = Expect<
+  Exact<z.infer<typeof locationBriefingSchema>, LocationBriefing>
+>;
+
+/**
+ * Every evidence id the response references, wherever it sits.
+ *
+ * A structural walk rather than a list of known fields: the fields that carry ids are spread
+ * across a dozen nested types, and enumerating them is how I9 gets checked against the 2024 shape
+ * of the document while a new field quietly escapes it. Walking for the key name cannot.
+ */
+function citedEvidenceIds(value: unknown, found = new Set<string>()): Set<string> {
+  if (Array.isArray(value)) {
+    for (const entry of value) citedEvidenceIds(entry, found);
+    return found;
+  }
+  if (value === null || typeof value !== 'object') return found;
+
+  for (const [key, entry] of Object.entries(value)) {
+    /* The manifest is the answer, not a question: its own ids must not be treated as citations. */
+    if (key === 'evidenceManifest') continue;
+    if (key === 'evidenceId' && typeof entry === 'string') found.add(entry);
+    else if (key === 'evidenceIds' && Array.isArray(entry)) {
+      for (const id of entry) if (typeof id === 'string') found.add(id);
+    } else citedEvidenceIds(entry, found);
+  }
+  return found;
+}
+
+/*
+ * ── Evidence detail ───────────────────────────────────────────────────────────
+ */
+
+export const observationEvidenceDetailSchema = z.object({
+  kind: z.literal('OBS'),
+  versionId: z.string(),
+  versionSeq: z.number().int().positive(),
+  sourceRecordPrimaryKey: z.string(),
+  hazardType: z.string(),
+  lifecycleStatus: z.enum(LIFECYCLE_STATUSES),
+  observedAt: isoTimestamp,
+  validFrom: isoTimestamp.nullable(),
+  validTo: isoTimestamp.nullable(),
+  sourceUpdatedAt: isoTimestamp.nullable(),
+  ingestedAt: isoTimestamp,
+  contributor: z.string().nullable(),
+  contentSha256: z.string().regex(/^[0-9a-f]{64}$/u),
+  rawExcerpt: z.unknown(),
+  rawPayloadSha256: z.string().nullable(),
+  rawPayloadPruned: z.boolean(),
+  sourceUrl: z.string().nullable(),
+});
+export type ObservationEvidenceDetailMatches = Expect<
+  Exact<z.infer<typeof observationEvidenceDetailSchema>, ObservationEvidenceDetail>
+>;
+
+export const fireClusterVersionEvidenceDetailSchema = z.object({
+  kind: z.literal('FCV'),
+  clusterVersionId: z.string(),
+  clusterPublicId: z.string(),
+  asOf: isoTimestamp,
+  detectionCountTotal: z.number().int().nonnegative(),
+  detectionCount24h: z.number().int().nonnegative(),
+  distinctOverpasses24h: z.number().int().nonnegative(),
+  firstDetectedAt: isoTimestamp,
+  lastDetectedAt: isoTimestamp,
+  frpSum24h: z.number().nonnegative().nullable(),
+  frpMax: z.number().nonnegative().nullable(),
+  maxConfidence: z.string().nullable(),
+  productIds: z.array(z.number().int()),
+  detectionSetEvidenceId: evidenceId,
+  contentSha256: z.string().regex(/^[0-9a-f]{64}$/u),
+});
+export type FireClusterVersionEvidenceDetailMatches = Expect<
+  Exact<z.infer<typeof fireClusterVersionEvidenceDetailSchema>, FireClusterVersionEvidenceDetail>
+>;
+
+export const ingestionRunEvidenceDetailSchema = z.object({
+  kind: z.literal('RUN'),
+  runId: z.string(),
+  sourceId: z.string(),
+  productId: z.number().int().nullable(),
+  trigger: z.string(),
+  status: z.string(),
+  startedAt: isoTimestamp,
+  finishedAt: isoTimestamp.nullable(),
+  committedAt: isoTimestamp.nullable(),
+  httpStatus: z.number().int().nullable(),
+  bytesReceived: z.number().int().nonnegative().nullable(),
+  counts: z.object({
+    received: z.number().int().nonnegative(),
+    newRecords: z.number().int().nonnegative(),
+    newVersions: z.number().int().nonnegative(),
+    unchanged: z.number().int().nonnegative(),
+    rejected: z.number().int().nonnegative(),
+  }),
+  newestObservedAt: isoTimestamp.nullable(),
+  errorClass: z.string().nullable(),
+  /* At most 1 KB, sanitized at write time (`sanitizeDetail`, SECURITY.md M7). Bound asserted. */
+  errorMessage: z.string().max(1024).nullable(),
+  payloadSha256: z.string().nullable(),
+  workerVersion: z.string().nullable(),
+});
+export type IngestionRunEvidenceDetailMatches = Expect<
+  Exact<z.infer<typeof ingestionRunEvidenceDetailSchema>, IngestionRunEvidenceDetail>
+>;
+
+export const correlationEvidenceDetailSchema = z.object({
+  kind: z.literal('COR'),
+  linkId: z.string(),
+  canonicalEventPublicId: z.string(),
+  sourceRecordPrimaryKey: z.string(),
+  sourceId: z.string(),
+  relation: z.enum(['PRIMARY', 'SAME_EVENT', 'DERIVED_COPY']),
+  matchKind: z.enum(['IDENTITY_REF', 'SPATIOTEMPORAL', 'SEED']),
+  confidence: z.number().min(0).max(1).nullable(),
+  reasons: z.unknown(),
+  algorithmVersion: z.string(),
+  linkedAt: isoTimestamp,
+  unlinkedAt: isoTimestamp.nullable(),
+  unlinkReason: z.string().nullable(),
+});
+export type CorrelationEvidenceDetailMatches = Expect<
+  Exact<z.infer<typeof correlationEvidenceDetailSchema>, CorrelationEvidenceDetail>
+>;
+
+export const evidenceDetailPayloadSchema = z.discriminatedUnion('kind', [
+  observationEvidenceDetailSchema,
+  fireClusterVersionEvidenceDetailSchema,
+  ingestionRunEvidenceDetailSchema,
+  correlationEvidenceDetailSchema,
+]);
+export type EvidenceDetailPayloadMatches = Expect<
+  Exact<z.infer<typeof evidenceDetailPayloadSchema>, EvidenceDetailPayload>
+>;
+
+/**
+ * `GET /api/v1/evidence/{id}`.
+ *
+ * The refinements are the two rules the endpoint exists to keep. The payload's kind and the
+ * manifest entry's kind must agree: a response that resolved `EV:OBS:41` and returned a `RUN`
+ * payload would be internally inconsistent in a way no field-level check catches, and the whole
+ * purpose of the endpoint is that a citation resolves to *what it says it is*. And an item served
+ * here must be one this endpoint can resolve, so `resolvable: false` in its own response is a
+ * contradiction.
+ */
+export const evidenceDetailSchema = z
+  .object({
+    schemaVersion,
+    item: evidenceItemSchema,
+    detail: evidenceDetailPayloadSchema,
+    attribution: z.array(attributionSchema),
+  })
+  .refine((response) => response.item.kind === response.detail.kind, {
+    message: 'the manifest entry and the payload must describe the same kind of evidence',
+    path: ['detail', 'kind'],
+  })
+  .refine((response) => response.item.resolvable, {
+    message: 'an evidence detail may only be served for a kind the endpoint can resolve',
+    path: ['item', 'resolvable'],
+  });
+export type EvidenceDetailMatches = Expect<
+  Exact<z.infer<typeof evidenceDetailSchema>, EvidenceDetail>
+>;
+
+/*
+ * ── Map features ──────────────────────────────────────────────────────────────
+ */
+
+const bboxSchema = z.object({
+  west: z.number().min(-180).max(180),
+  south: z.number().min(-90).max(90),
+  east: z.number().min(-180).max(180),
+  north: z.number().min(-90).max(90),
+});
+
+export const mapFeatureSchema = z.object({
+  subjectRef,
+  publicId: z.string(),
+  kind: z.enum(['canonical_event', 'fire_cluster', 'fire_detection']),
+  hazardType: z.enum(HAZARD_TYPES),
+  family: z.enum(HAZARD_FAMILIES),
+  geometry: geoJsonGeometrySchema,
+  observedAt: isoTimestamp,
+  isActive: z.boolean(),
+  providerSeverity: providerSeveritySchema.nullable(),
+  magnitudeValue: z.number().nullable(),
+  clusterStatus: z.enum(FIRE_CLUSTER_STATUSES).nullable(),
+  confidence: confidenceViewSchema.nullable(),
+  label: z.string(),
+  href: z.string(),
+  evidenceIds: z.array(evidenceId),
+});
+export type MapFeatureMatches = Expect<Exact<z.infer<typeof mapFeatureSchema>, MapFeature>>;
+
+/**
+ * `GET /api/v1/events`.
+ *
+ * `truncated` must agree with the cap and the total: above the cap the response says so rather
+ * than silently dropping features (ARCHITECTURE §7.5). A map that quietly showed 500 of 900 fires
+ * is the failure this refinement makes impossible to ship.
+ */
+export const mapFeaturesResponseSchema = z
+  .object({
+    schemaVersion,
+    asOfContext: asOfContextSchema,
+    bbox: bboxSchema,
+    bboxParts: z.array(bboxSchema).min(1).max(2),
+    zoom: z.number().int().min(0).max(22),
+    families: z.array(z.enum(HAZARD_FAMILIES)),
+    features: z.array(mapFeatureSchema),
+    truncated: z.boolean(),
+    cap: z.number().int().positive(),
+    total: z.number().int().nonnegative(),
+    attribution: z.array(attributionSchema),
+  })
+  .refine((response) => response.features.length <= response.cap, {
+    message: 'the response returned more features than its own cap',
+    path: ['features'],
+  })
+  .refine((response) => response.truncated === response.total > response.features.length, {
+    message: 'truncated must be true exactly when features were dropped',
+    path: ['truncated'],
+  });
+export type MapFeaturesResponseMatches = Expect<
+  Exact<z.infer<typeof mapFeaturesResponseSchema>, MapFeaturesResponse>
+>;

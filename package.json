@@ -16,6 +16,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "depcruise": "depcruise apps packages --config .dependency-cruiser.cjs",
+    "openapi": "node scripts/generate-openapi.ts",
     "test": "pnpm test:unit",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",

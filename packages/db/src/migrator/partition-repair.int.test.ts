@@ -23,14 +23,28 @@ import { MIGRATIONS_DIR } from './migrations.ts';
 
 const ADMIN_URL = 'postgresql://geonerva:geonerva@127.0.0.1:54320/postgres';
 /**
- * Cleanups, each with a name.
+ * Cleanups, each with a name — which is how the 120 s hook timeout in this file was diagnosed.
  *
- * The name exists because of a real diagnostic dead end: this hook has timed out at 120 s during
- * a full integration run twice, and the failure message says only "Hook timed out" — which step
- * it was in is exactly the information needed and exactly what was missing. Measured directly,
- * `DROP DATABASE … WITH (FORCE)` on a freshly migrated database takes ~330 ms while the server is
- * idle, so the drop is *not* the obvious culprit, and guessing further without evidence is how a
- * flake stays unexplained for three phases. Any step over `SLOW_CLEANUP_MS` now reports itself.
+ * The failure message said only "Hook timed out", so the first step was to make each cleanup
+ * report its own duration. The next full run printed
+ * `slow cleanup: drop the database gn_repair_west_test took 69029 ms` against a measured ~330 ms
+ * while the server was idle, which named the statement.
+ *
+ * ### What the drop is actually waiting for
+ *
+ * `DROP DATABASE` issues an **immediate, forced checkpoint and waits for it**. Under a write-heavy
+ * suite that flush is the entire cost. Measured on this database, with several hundred thousand
+ * rows of dirty buffers outstanding:
+ *
+ * | Sequence | Cost |
+ * |---|---|
+ * | dirty buffers, then `DROP DATABASE … WITH (FORCE)` | **14,641 ms** |
+ * | dirty buffers, `CHECKPOINT` (654 ms), then the same drop | **343 ms** |
+ *
+ * So the cleanup now checkpoints first. The flush still happens — it is real work and cannot be
+ * avoided — but it happens in a statement that is not also holding the drop, and the total falls
+ * by more than an order of magnitude. `SLOW_CLEANUP_MS` stays, so a future regression reports
+ * itself rather than presenting as an unexplained timeout.
  */
 interface NamedCleanup {
   readonly what: string;
@@ -88,6 +102,12 @@ async function createDatabaseInZone(name: string, timeZone: string): Promise<str
       const cleanupAdmin = new pg.Client({ connectionString: ADMIN_URL });
       await cleanupAdmin.connect();
       try {
+        /*
+         * Before the drop, not after, and not instead of it. See the header: the drop waits on a
+         * forced checkpoint, and paying that cost in its own statement is what turns a 69-second
+         * cleanup back into a fast one.
+         */
+        await cleanupAdmin.query('CHECKPOINT');
         await cleanupAdmin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
       } finally {
         await cleanupAdmin.end();

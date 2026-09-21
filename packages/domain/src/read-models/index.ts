@@ -23,6 +23,64 @@
 export { READ_MODEL_SCHEMA_VERSION, UNAVAILABLE_REASONS, CHANGE_WINDOWS } from './common.ts';
 
 export { toFreshnessPolicyView, toSourceHealthView } from './health-view.ts';
+
+/*
+ * Runtime schemas for the contracts above, each proved equivalent to its interface at compile
+ * time. They exist so that P8's contract tests can check GeoNerva's own responses and so that the
+ * OpenAPI document has something to be generated from; they are never used to validate a request.
+ */
+export {
+  agreementSchema,
+  aiBriefingViewSchema,
+  aiSectionSchema,
+  asOfContextSchema,
+  attributionSchema,
+  authoritativeBasisSchema,
+  baselineMetricViewSchema,
+  baselineReferenceSchema,
+  briefingCopySchema,
+  changeFacetSchema,
+  changeSectionSchema,
+  changeSignalViewSchema,
+  confidenceViewSchema,
+  correlationEvidenceDetailSchema,
+  dataConfidenceSchema,
+  dataQualityCheckViewSchema,
+  evidenceDetailPayloadSchema,
+  evidenceDetailSchema,
+  evidenceItemSchema,
+  factSchema,
+  factValueSchema,
+  familyCardSchema,
+  fieldComparisonSchema,
+  fireClusterVersionEvidenceDetailSchema,
+  freshnessPolicyViewSchema,
+  geoJsonGeometrySchema,
+  geometryViewSchema,
+  ingestionRunEvidenceDetailSchema,
+  invalidParamSchema,
+  locationBriefingSchema,
+  locationRefSchema,
+  locationSnapshotViewSchema,
+  mapFeatureSchema,
+  mapFeaturesResponseSchema,
+  observationEvidenceDetailSchema,
+  problemDetailsSchema,
+  reasonSchema,
+  relevanceAssessmentSchema,
+  replayHorizonResponseSchema,
+  replayHorizonSchema,
+  runSummaryViewSchema,
+  sensorRefSchema,
+  snapshotOverallSchema,
+  sourceHealthViewSchema,
+  sourceProductViewSchema,
+  sourceStatusEntrySchema,
+  sourceStatusSchema,
+  subjectSummarySchema,
+  workerStatusViewSchema,
+} from './schemas.ts';
+export type { Exact, Expect } from './schemas.ts';
 export type {
   Agreement,
   AsOfContext,
