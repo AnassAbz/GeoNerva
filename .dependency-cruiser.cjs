@@ -184,6 +184,10 @@ module.exports = {
       'relevance',
       'baselines',
       'changes',
+      // Agreement is computed from an event's members at the snapshot's knowledge time, by the
+      // same calibrated rule correlation uses. Reimplementing it here, or reading the "now"
+      // projection cache during a replay, are both worse (ADR-036).
+      'correlation',
       'config',
     ]),
     onlyDependsOn('pipeline', [

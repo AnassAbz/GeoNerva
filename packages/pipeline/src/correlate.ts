@@ -55,6 +55,7 @@ import {
   finishAnalysisRun,
   insertCorrelationCandidate,
   linkRecord,
+  recordsNeedingSeedEvent,
   startAnalysisRun,
   unlinkRecord,
   upsertCanonicalEventState,
@@ -65,6 +66,7 @@ import {
 import type { Kysely } from 'kysely';
 
 import type { HazardType } from '@geonerva/domain';
+import { HAZARD_TYPES_BY_FAMILY } from '@geonerva/domain';
 
 const EARTHQUAKE: HazardType = 'EARTHQUAKE';
 
@@ -554,6 +556,160 @@ export async function projectCanonicalEvent(
       deltaMagnitude: agreement.deltaMagnitude,
       deltaLocationKm: agreement.deltaLocationKm,
       deltaDepthKm: agreement.deltaDepthKm,
+      reasons: agreement.reasons,
+    },
+    nSources: agreement.nSources,
+    nIndependentSources: agreement.nIndependentSources,
+  });
+}
+
+/**
+ * Hazard types that get a canonical event without being correlated.
+ *
+ * Floods, cyclones, volcanoes and droughts come from GDACS and from nowhere else, so there is no
+ * second solution to agree or disagree with. Thermal activity is excluded because fire clusters
+ * are their own subject with their own public ids, and weather alerts because no covered source
+ * produces them for v1.
+ */
+export const SEEDED_HAZARD_TYPES: readonly HazardType[] = [
+  ...HAZARD_TYPES_BY_FAMILY.FLOODS,
+  ...HAZARD_TYPES_BY_FAMILY.CYCLONES,
+  'VOLCANO',
+  'DROUGHT',
+  'WILDFIRE_EVENT',
+];
+
+export interface SeedResult {
+  readonly runId: string;
+  readonly considered: number;
+  readonly created: number;
+}
+
+/**
+ * Gives each single-source hazard record its own canonical event (ARCHITECTURE §6.2).
+ *
+ * The link is `PRIMARY` with match kind `SEED`, and the reason says plainly that no matching was
+ * attempted. That distinction matters on the event page: "one source reported this" and "one
+ * source matched this" are different claims, and `SEED` is the one that does not pretend a
+ * decision was made. `assessAgreement` then reports `SINGLE_SOURCE`, which is the honest level —
+ * not `AGREE`, which a lone record must never reach.
+ */
+export async function seedSingleSourceEvents(
+  db: Kysely<DB>,
+  options: CorrelateOptions = {},
+): Promise<SeedResult> {
+  const asOf = options.asOf ?? new Date();
+  const runId = await startAnalysisRun(db, {
+    kind: 'CORRELATION',
+    asOf,
+    engineVersion: EARTHQUAKE_ALGORITHM_VERSION,
+    startedAt: new Date(),
+  });
+
+  let considered = 0;
+  let created = 0;
+  try {
+    const records = await recordsNeedingSeedEvent(db, {
+      asOf,
+      hazardTypes: SEEDED_HAZARD_TYPES,
+      limit: options.limit,
+    });
+
+    for (const row of records) {
+      considered += 1;
+      const hazardType = (row.hazard_type ?? 'OTHER') as HazardType;
+      const eventId = await db.transaction().execute(async (trx) => {
+        const event = await createCanonicalEvent(trx, { hazardType, createdAt: asOf });
+        await linkRecord(trx, {
+          canonicalEventId: event.id,
+          sourceRecordId: row.source_record_id,
+          relation: 'PRIMARY',
+          matchKind: 'SEED',
+          confidence: null,
+          reasons: [
+            {
+              code: 'SINGLE_SOURCE_FAMILY',
+              text: 'Only one source reports this hazard type, so no matching was attempted.',
+              params: { hazardType },
+            },
+          ],
+          algorithmVersion: EARTHQUAKE_ALGORITHM_VERSION,
+          linkedAt: asOf,
+        });
+        return event.id;
+      });
+      created += 1;
+      await projectSeededEvent(db, eventId, hazardType, asOf);
+    }
+
+    await finishAnalysisRun(db, {
+      id: runId,
+      status: 'SUCCEEDED',
+      stats: { kind: 'SEED', considered, created },
+    });
+  } catch (error) {
+    await finishAnalysisRun(db, {
+      id: runId,
+      status: 'FAILED',
+      stats: { kind: 'SEED', considered, created },
+      errorClass: 'INTERNAL',
+    });
+    throw error;
+  }
+
+  return { runId, considered, created };
+}
+
+/** The projection for a seeded event: one member, and the agreement rule says so. */
+async function projectSeededEvent(
+  db: Kysely<DB>,
+  canonicalEventId: string,
+  hazardType: HazardType,
+  asOf: Date,
+): Promise<void> {
+  const members = await eventMembers(db, canonicalEventId);
+  const member = members[0];
+  if (member === undefined) return;
+
+  const agreement = assessAgreement([
+    {
+      sourceId: member.source_id,
+      sourceRecordId: member.source_record_id,
+      relation: 'PRIMARY',
+      epicentre: { lat: member.lat, lon: member.lon },
+      magnitude: num(member.magnitude),
+      magnitudeType: member.magnitude_type,
+      depthKm: num(member.depth_km),
+      providerStatus: member.provider_status,
+      contributor: member.contributor,
+    },
+  ]);
+
+  await upsertCanonicalEventState(db, {
+    canonicalEventId,
+    hazardType,
+    asOf,
+    engineVersion: EARTHQUAKE_ALGORITHM_VERSION,
+    observedAt: member.observed_at,
+    centroid: { lat: member.lat, lon: member.lon },
+    isActive: true,
+    magnitude: num(member.magnitude),
+    headline: {
+      sourceId: member.source_id,
+      sourceRecordId: member.source_record_id,
+      magnitude: num(member.magnitude),
+      magnitudeType: member.magnitude_type,
+      contributor: member.contributor,
+      providerStatus: member.provider_status,
+      depthKm: num(member.depth_km),
+      title: member.title,
+      sourceUrl: member.source_url,
+    },
+    agreement: {
+      level: agreement.level,
+      deltaMagnitude: null,
+      deltaLocationKm: null,
+      deltaDepthKm: null,
       reasons: agreement.reasons,
     },
     nSources: agreement.nSources,

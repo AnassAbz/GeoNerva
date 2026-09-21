@@ -22,6 +22,8 @@ export interface CorrelationRecordRow {
   readonly source_record_id: string;
   readonly source_id: string;
   readonly primary_key: string;
+  /** Only populated by `recordsNeedingSeedEvent`, where the caller is not family-specific. */
+  readonly hazard_type?: string;
   readonly version_id: string;
   readonly ingested_at: Date;
   readonly observed_at: Date;
@@ -285,4 +287,66 @@ export async function newestEarthquakeIngestAt(db: Db, asOf: Date): Promise<Date
     WHERE r.hazard_type = 'EARTHQUAKE' AND v.ingested_at <= ${asOf}
   `.execute(db);
   return result.rows[0]?.newest ?? null;
+}
+
+/**
+ * Records of a non-correlated hazard type that have no canonical event yet.
+ *
+ * GeoNerva holds exactly **one** source for floods, cyclones, volcanoes and droughts, so there is
+ * nothing to correlate them *against* — ARCHITECTURE §6.2 makes each one its own canonical event.
+ * That is not a decision the matcher made; it is the absence of a second opinion, and the event
+ * exists so the read model has a stable subject to point at.
+ *
+ * Only records with no link at all are returned. Unlike an earthquake, a revision here cannot
+ * break a match, because there is no match to break.
+ */
+export async function recordsNeedingSeedEvent(
+  db: Db,
+  options: {
+    readonly asOf: Date;
+    readonly hazardTypes: readonly string[];
+    readonly limit?: number;
+  },
+): Promise<CorrelationRecordRow[]> {
+  const result = await sql<CorrelationRecordRow>`
+    WITH latest AS (
+      SELECT DISTINCT ON (v.source_record_id)
+             v.source_record_id::text            AS source_record_id,
+             r.source_id,
+             r.primary_key,
+             r.hazard_type,
+             v.id::text                          AS version_id,
+             v.ingested_at,
+             v.observed_at,
+             ST_Y(v.centroid::geometry)          AS lat,
+             ST_X(v.centroid::geometry)          AS lon,
+             v.magnitude,
+             v.magnitude_type,
+             v.depth_km,
+             v.contributor,
+             v.provider_status,
+             v.lifecycle_status,
+             v.derived_from
+      FROM geonerva.observation_versions v
+      JOIN geonerva.source_records r ON r.id = v.source_record_id
+      WHERE r.hazard_type = ANY(${sql.val(options.hazardTypes)}::text[])
+        AND r.merged_into IS NULL
+        AND v.ingested_at <= ${options.asOf}
+      ORDER BY v.source_record_id, v.ingested_at DESC, v.version_seq DESC
+    )
+    SELECT latest.*,
+           NULL::text        AS link_id,
+           NULL::text        AS canonical_event_id,
+           NULL::timestamptz AS linked_at,
+           NULL::text        AS link_algorithm_version
+    FROM latest
+    WHERE latest.lifecycle_status NOT IN ('DELETED', 'MISSING_FROM_SOURCE')
+      AND NOT EXISTS (
+        SELECT 1 FROM geonerva.canonical_links l
+        WHERE l.source_record_id = latest.source_record_id::bigint AND l.unlinked_at IS NULL
+      )
+    ORDER BY latest.observed_at, latest.source_record_id::bigint
+    LIMIT ${options.limit ?? 5000}
+  `.execute(db);
+  return [...result.rows];
 }

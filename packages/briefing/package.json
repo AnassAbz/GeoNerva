@@ -12,9 +12,11 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@geonerva/correlation": "workspace:*",
     "@geonerva/db": "workspace:*",
     "@geonerva/domain": "workspace:*",
-    "@geonerva/geo": "workspace:*"
+    "@geonerva/geo": "workspace:*",
+    "@geonerva/relevance": "workspace:*"
   },
   "devDependencies": {
     "kysely": "0.29.6"

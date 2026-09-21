@@ -20,7 +20,7 @@ import { createDb, derivationsAsOf, type DB } from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import { seedObservation } from '@geonerva/db/testing/factories';
 
-import { correlateEarthquakes } from './correlate.ts';
+import { correlateEarthquakes, seedSingleSourceEvents } from './correlate.ts';
 
 let testDb: TestDatabase;
 let db: Kysely<DB>;
@@ -572,5 +572,74 @@ describe('what the derivation records about itself', () => {
     const result = await correlateEarthquakes(db, { asOf: AS_OF });
     expect(result.considered).toBe(1);
     expect(await grouping()).toEqual([['us1']]);
+  });
+});
+
+describe('hazards with only one source', () => {
+  /*
+   * GDACS is the only source for floods, cyclones and volcanoes, so there is nothing to correlate
+   * them against. They still need a canonical event — the read model points at subjects, not at
+   * source records — but the event must not be dressed up as a match that was made.
+   */
+  async function seedGdacs(
+    primaryKey: string,
+    hazardType: 'FLOOD' | 'TROPICAL_CYCLONE' | 'VOLCANO',
+  ): Promise<void> {
+    await seedObservation(db, {
+      sourceId: 'gdacs',
+      hazardType,
+      primaryKey,
+      aliases: [primaryKey],
+      ingestedAt: INGEST,
+      observedAt: T0,
+      centroid: AT,
+      magnitude: null,
+      severityScheme: 'GDACS_ALERT',
+      severityValue: 'Orange',
+    });
+  }
+
+  it('gives each record its own event, marked SEED rather than matched', async () => {
+    await seedGdacs('FL-1', 'FLOOD');
+    await seedGdacs('TC-1', 'TROPICAL_CYCLONE');
+
+    const result = await seedSingleSourceEvents(db, { asOf: AS_OF });
+    expect(result.created).toBe(2);
+    expect(await grouping()).toEqual([['FL-1'], ['TC-1']]);
+
+    const links = await sql<{ match_kind: string; relation: string; confidence: string | null }>`
+      SELECT match_kind, relation, confidence FROM geonerva.canonical_links
+    `.execute(db);
+    expect(links.rows.map((row) => row.match_kind)).toEqual(['SEED', 'SEED']);
+    expect(links.rows.map((row) => row.relation)).toEqual(['PRIMARY', 'PRIMARY']);
+    // No confidence, because no decision was made. A number here would imply one was.
+    expect(links.rows.map((row) => row.confidence)).toEqual([null, null]);
+  });
+
+  it('reports a lone record as SINGLE_SOURCE, never as agreement', async () => {
+    await seedGdacs('VO-1', 'VOLCANO');
+    await seedSingleSourceEvents(db, { asOf: AS_OF });
+
+    const state = await stateOf('VO-1');
+    expect(state.agreement.level).toBe('SINGLE_SOURCE');
+    expect(state.n_sources).toBe(1);
+    expect(state.n_independent_sources).toBe(1);
+  });
+
+  it('does not seed a second event for a record that already has one', async () => {
+    await seedGdacs('FL-2', 'FLOOD');
+    await seedSingleSourceEvents(db, { asOf: AS_OF });
+    const second = await seedSingleSourceEvents(db, { asOf: LATER_AS_OF });
+
+    expect(second.considered).toBe(0);
+    expect(await grouping()).toEqual([['FL-2']]);
+  });
+
+  it('leaves earthquakes to the matcher', async () => {
+    // Seeding an earthquake would open an event that correlation then has to merge away.
+    await seed({ sourceId: 'usgs', primaryKey: 'us1' });
+    const result = await seedSingleSourceEvents(db, { asOf: AS_OF });
+    expect(result.considered).toBe(0);
+    expect(await grouping()).toEqual([]);
   });
 });
