@@ -1315,6 +1315,110 @@ describe('the P7 review findings, as regressions', () => {
     expect(packet.evidenceManifest.map((entry) => entry.id)).not.toContain('EV:OBS:4242');
   });
 
+  it('gives a cited change its before value, so a revision is sayable', () => {
+    /*
+     * §11.2 lists before/after among the Change Analyst's inputs, and the packet carried neither —
+     * so the honest sentence "the magnitude was revised from 5.1 to 5.4" failed rule 3 on the
+     * *before* number, which existed nowhere in the packet, and the claim was deleted.
+     */
+    const briefing = briefingWith();
+    const signalId = `EV:CHG:${'e'.repeat(64)}`;
+    const withChange: LocationBriefing = {
+      ...briefing,
+      changes: {
+        ...briefing.changes,
+        listed: [
+          {
+            id: signalId,
+            type: 'EVENT_UPDATED',
+            family: 'EARTHQUAKES',
+            subjectRef: 'CE:EQ-26-AAAAAA',
+            metricCode: null,
+            title: 'M5.4 earthquake was revised',
+            detail: null,
+            before: { kind: 'text', value: 'M5.1' },
+            after: { kind: 'text', value: 'M5.4' },
+            fromAsOf: '2026-09-20T00:00:00.000Z',
+            toAsOf: AS_OF,
+            importance: 45,
+            prominence: 'LISTED',
+            suppressionReason: null,
+            lateReport: false,
+            facets: [
+              {
+                type: 'EVENT_UPDATED',
+                label: 'Magnitude',
+                before: { kind: 'text', value: 'M5.1' },
+                after: { kind: 'text', value: 'M5.4' },
+              },
+            ],
+            reasonCodes: ['PROVIDER_REVISION'],
+            evidenceIds: ['EV:OBS:1'],
+            engineVersion: 'eng-1',
+          },
+        ],
+      },
+      evidenceManifest: [
+        ...briefing.evidenceManifest,
+        {
+          id: signalId,
+          kind: 'CHG',
+          summary: 'A change signal.',
+          sourceId: null,
+          productId: null,
+          observedAt: null,
+          ingestedAt: AS_OF,
+          url: null,
+          resolvable: false,
+        },
+      ],
+    };
+
+    const packet = buildPacket(withChange);
+    expect(packet.changes[0]?.facets[0]?.before).toBe('M5.1');
+
+    const result = validateInterpreterOutput(packet, {
+      ...groundedOutput(),
+      changeNarrative: [
+        {
+          signalId,
+          text: 'The magnitude was revised from 5.1 to 5.4.',
+          evidenceIds: ['EV:OBS:1'],
+        },
+      ],
+    });
+    expect(result.status).toBe('PASSED');
+  });
+
+  it('keys the packet by the window as well as the snapshot', () => {
+    /*
+     * §11.3 caches by the snapshot hash, which is not a key for this packet: `changes` and the
+     * copy's change sentence both depend on `fromAsOf`. A narrative describing a week of changes
+     * could otherwise be attached to a six-hour briefing and presented as current.
+     */
+    const sixHours = buildPacket({ ...briefingWith(), window: '6h' });
+    const sevenDays = buildPacket({ ...briefingWith(), window: '7d' });
+    expect(sixHours.contentSha256).toBe(sevenDays.contentSha256);
+    expect(sixHours.cacheKey).not.toBe(sevenDays.cacheKey);
+  });
+
+  it('rejects two narratives about the same change', () => {
+    // §11.2: "one per signal, same order". Nothing enforced it, so a model could contradict itself.
+    const packet = buildPacket(briefingWith());
+    const result = validateInterpreterOutput(packet, {
+      ...groundedOutput(),
+      changeNarrative: [
+        { signalId: `EV:CHG:${'f'.repeat(64)}`, text: 'One account.', evidenceIds: ['EV:OBS:1'] },
+        {
+          signalId: `EV:CHG:${'f'.repeat(64)}`,
+          text: 'Another account.',
+          evidenceIds: ['EV:OBS:1'],
+        },
+      ],
+    });
+    expect(result.status).toBe('REJECTED');
+  });
+
   it('refuses an unrounded coordinate even with a persistable key', () => {
     /*
      * The key check is sufficient only if `LocationRef` coordinates are always the rounded place

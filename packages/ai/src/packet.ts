@@ -93,6 +93,20 @@ export interface PacketChange {
   readonly title: string;
   readonly prominence: string;
   readonly lateReport: boolean;
+  /**
+   * The before/after values, which §11.2 lists as the Change Analyst's inputs.
+   *
+   * Without them a faithful narrative was undeliverable: a model writing the honest sentence "the
+   * magnitude was revised from 5.1 to 5.4" failed rule 3 on the *before* value, because it was
+   * nowhere in the packet, and the claim was deleted. The evidence for the earlier state was in
+   * the manifest all along, so the model could cite a superseded version while being unable to
+   * say what it said.
+   */
+  readonly facets: readonly {
+    readonly label: string;
+    readonly before: string | null;
+    readonly after: string | null;
+  }[];
   readonly evidenceIds: readonly EvidenceId[];
 }
 
@@ -135,7 +149,21 @@ export interface BriefingPacket {
   };
   /** Provider text carried verbatim, which the lexicon scanner may excuse. */
   readonly verbatimQuotes: readonly string[];
+  /** The snapshot's hash. §11.3 keys AI output by it. */
   readonly contentSha256: string;
+  /**
+   * The change window this packet was built for.
+   *
+   * §11.3 caches AI output by `snapshot.content_sha256`, and that alone is **not** a key for this
+   * packet: `changes` and the deterministic copy's change sentence both depend on `fromAsOf`. Two
+   * requests at the same `asOf` with `window: '7d'` and `window: '6h'` have the same snapshot hash
+   * and different packets, so a cached narrative describing a week of changes could be attached to
+   * a six-hour briefing and presented as current. A caller must key on `cacheKey`, not on the
+   * snapshot hash.
+   */
+  readonly window: string;
+  /** `contentSha256` plus the window: the identity a cache may safely use. */
+  readonly cacheKey: string;
 }
 
 /**
@@ -269,6 +297,11 @@ export function buildPacket(briefing: LocationBriefing): BriefingPacket {
       title: signal.title,
       prominence: signal.prominence,
       lateReport: signal.lateReport,
+      facets: signal.facets.map((facet) => ({
+        label: facet.label,
+        before: facet.before?.kind === 'text' ? facet.before.value : null,
+        after: facet.after?.kind === 'text' ? facet.after.value : null,
+      })),
       evidenceIds: signal.evidenceIds,
     }));
 
@@ -344,6 +377,8 @@ export function buildPacket(briefing: LocationBriefing): BriefingPacket {
     },
     verbatimQuotes: verbatimQuotes.slice(0, MAX_PACKET_QUOTES),
     contentSha256: briefing.contentSha256,
+    window: briefing.window,
+    cacheKey: `${briefing.contentSha256}:${briefing.window}`,
   };
 }
 

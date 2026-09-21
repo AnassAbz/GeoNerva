@@ -249,8 +249,19 @@ function toChangeSection(
     metricCode: null,
     title: signal.title,
     detail: signal.detail,
-    before: null,
-    after: null,
+    /*
+     * The contract types these as `FactValue | null` and they were hard-coded `null`, so a UI
+     * could not render or compare a numeric revision — the values survived only inside `facets`,
+     * already stringified. They are taken from the first facet that has them, which for a grouped
+     * signal is the one its `type` is about.
+     *
+     * They are `text` values rather than typed numbers because the change engine stringifies at
+     * the precision the card shows ("M5.1", "12 km"). Recovering unit and decimals means carrying
+     * `FactValue` through the classifier, which is a change to a pure engine's contract and wants
+     * an ADR; it is recorded in the gate report rather than done quietly here.
+     */
+    before: firstFacetValue(signal, 'before'),
+    after: firstFacetValue(signal, 'after'),
     fromAsOf: fromAsOf.toISOString(),
     toAsOf: toAsOf.toISOString(),
     importance: signal.importance,
@@ -288,6 +299,18 @@ function toChangeSection(
   };
 }
 
+/** The first facet value of a grouped signal, as the read model's `FactValue`. */
+function firstFacetValue(
+  signal: ChangeSignal,
+  side: 'before' | 'after',
+): ChangeSignalView['before'] {
+  for (const facet of signal.facets) {
+    const value = side === 'before' ? facet.before : facet.after;
+    if (value !== null) return { kind: 'text', value };
+  }
+  return null;
+}
+
 function windowPhrase(window: ChangeWindow): string {
   switch (window) {
     case '6h':
@@ -307,6 +330,13 @@ function windowPhrase(window: ChangeWindow): string {
  * Hashed over the fields that *identify* the change — the window, the subject, the type and the
  * facet values — and deliberately not over `importance` or `prominence`, which are ranking
  * decisions that a later engine version may make differently about the same underlying difference.
+ *
+ * **The stability this gives, stated precisely.** Two builds of the same `(asOf, window, engine)`
+ * over the same database state produce the same id. Two builds at *different* knowledge times do
+ * not, because `from` and `to` are part of the identity — which is correct, since a different
+ * window is a different comparison, but it is weaker than "an old fact keeps its id forever". A
+ * change cannot yet be referenced across windows; doing that needs an identity that excludes the
+ * boundaries, and deciding whether that is even the right notion is a product question.
  */
 function changeEvidenceId(
   signal: ChangeSignal,

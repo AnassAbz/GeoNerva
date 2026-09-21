@@ -65,6 +65,13 @@ export interface ChangeSignal {
   /** The levels the importance was computed from, for the report and for tests. */
   readonly levelBefore: RelevanceLevel | null;
   readonly levelAfter: RelevanceLevel | null;
+  /**
+   * When the change happened, as epoch milliseconds, or 0 when it has no moment.
+   *
+   * Carried so that §10.4's "ties by level then recency" can actually use recency. It is not part
+   * of the read model; it exists to make the ordering total and the tiebreak real.
+   */
+  readonly recencyMs: number;
 }
 
 export interface ChangeFacetValue {
@@ -646,7 +653,7 @@ function familyLabel(family: HazardFamily): string {
 
 /** Fills in importance and prominence, which is where §10.4's hard rules live. */
 function finish(
-  partial: Omit<ChangeSignal, 'importance' | 'prominence' | 'suppressionReason'>,
+  partial: Omit<ChangeSignal, 'importance' | 'prominence' | 'suppressionReason' | 'recencyMs'>,
   options: DiffOptions,
   at: Date | null,
   forcedSuppression: SuppressionReason | null = null,
@@ -703,7 +710,7 @@ function finish(
     suppressionReason = null;
   }
 
-  return { ...partial, importance, prominence, suppressionReason };
+  return { ...partial, importance, prominence, suppressionReason, recencyMs: at?.getTime() ?? 0 };
 }
 
 function highestOf(
@@ -750,11 +757,20 @@ function recencyWeight(at: Date | null, options: DiffOptions): number {
  * recency" from §10.4 is not by itself total, which is why the reference is the last key.
  */
 function rank(signals: readonly ChangeSignal[]): DiffResult {
+  /*
+   * §10.4: "ties by level then recency". Recency was missing entirely — it reached the ordering
+   * only through the integer-rounded `recency_weight` inside `importance` — and the third key
+   * compared subject references *descending*, which contradicted the comment above it. Both are
+   * corrected, and `family` is added so that two family-level signals (which have no subject
+   * reference) are totally ordered rather than left to object key order.
+   */
   const ordered = [...signals].sort(
     (left, right) =>
       right.importance - left.importance ||
       levelRank(right) - levelRank(left) ||
-      compare(right.subjectRef ?? '', left.subjectRef ?? '') ||
+      right.recencyMs - left.recencyMs ||
+      compare(left.family, right.family) ||
+      compare(left.subjectRef ?? '', right.subjectRef ?? '') ||
       compare(left.type, right.type),
   );
 

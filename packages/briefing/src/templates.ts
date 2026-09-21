@@ -136,7 +136,13 @@ function summarySentences(input: CopyInput): readonly string[] {
     const parts = withItems.map((family) => {
       const card = snapshot.families[family];
       const count = card.itemsTotal;
-      return `${String(count)} ${familyWords(family)} item${count === 1 ? '' : 's'}`;
+      /*
+       * "at least" when the read was capped. `itemsTotal` is the number behind the card, and the
+       * snapshot caps its query — so on a busy location the figure is a floor, and printing a
+       * floor as a total is the same class of overstatement as rendering an unknown as a zero.
+       */
+      const prefix = card.truncated ? 'at least ' : '';
+      return `${prefix}${String(count)} ${familyWords(family)} item${count === 1 ? '' : 's'}`;
     });
     sentences.push(`GeoNerva is currently tracking ${list(parts)} near this location.`);
   } else if (unavailable.length === 0) {
@@ -228,7 +234,9 @@ function familySentences(card: FamilyCard): readonly string[] {
     }
     if (card.itemsTotal > 1) {
       sentences.push(
-        `${String(card.itemsTotal)} ${words} items in total${card.truncated ? `, of which ${String(card.items.length)} are listed` : ''}.`,
+        card.truncated
+          ? `At least ${String(card.itemsTotal)} ${words} items, of which ${String(card.items.length)} are listed.`
+          : `${String(card.itemsTotal)} ${words} items in total.`,
       );
     }
   }

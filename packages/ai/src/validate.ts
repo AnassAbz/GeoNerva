@@ -210,6 +210,7 @@ export function validateInterpreterOutput(
   });
 
   const keptChanges: InterpreterOutput['changeNarrative'] = [];
+  const narratedSignals = new Set<string>();
   output.changeNarrative.forEach((entry, index) => {
     const path = `changeNarrative[${String(index)}]`;
     claimTotal += 1;
@@ -226,6 +227,19 @@ export function validateInterpreterOutput(
         note: 'describes a change signal that is not in the packet',
       });
     }
+    /*
+     * One narrative per signal. §11.2 says "one per signal, same order", and nothing enforced it —
+     * a model could emit two contradictory sentences about the same change and both would be
+     * joined into the section.
+     */
+    if (narratedSignals.has(entry.signalId)) {
+      local.push({
+        claimPath: path,
+        problemCode: 'UNSUPPORTED_CLAIM',
+        note: 'describes a change signal that another claim already narrated',
+      });
+    }
+    narratedSignals.add(entry.signalId);
     if (local.length === 0) keptChanges.push(entry);
     else {
       claimFailed += 1;
@@ -390,6 +404,21 @@ function allowedNumbersFor(
   );
   for (const family of packet.families) {
     if (citedFamilies.has(family.family)) add(family.itemsTotal);
+  }
+
+  /*
+   * A cited change's before/after values. §11.2 gives the Change Analyst those values, so "revised
+   * from 5.1 to 5.4" has to be sayable — and the *before* number exists nowhere else in the
+   * packet.
+   */
+  for (const change of packet.changes) {
+    if (!change.evidenceIds.some((id) => cited.has(id)) && !cited.has(change.id)) continue;
+    for (const facet of change.facets) {
+      for (const value of [facet.before, facet.after]) {
+        if (value === null) continue;
+        for (const found of extractNumbers(value)) numbers.add(found);
+      }
+    }
   }
 
   /*
