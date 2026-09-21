@@ -39,24 +39,40 @@ export interface RequestLogFields {
   readonly error?: string;
 }
 
+/**
+ * One line per request, at the level the outcome deserves.
+ *
+ * A 200 is `info`, a 4xx is `warn` and a 5xx is `error`. The distinction is not cosmetic: a
+ * deployment that alerts on `warn` would page on every successful request if the level were
+ * decided by anything coarser, and a 4xx is the caller's mistake while a 5xx is GeoNerva's.
+ */
 export function logRequest(fields: RequestLogFields): void {
-  write(fields.status >= 500 ? 'error' : 'warn', { event: 'api.request', ...fields });
+  write(levelFor(fields.status), { event: 'api.request', ...fields });
 }
+
+function levelFor(status: number): LogLevel {
+  if (status >= 500) return 'error';
+  if (status >= 400) return 'warn';
+  return 'info';
+}
+
+type LogLevel = 'info' | 'warn' | 'error';
 
 /** A named event that is not a request outcome, e.g. an unresolvable evidence citation. */
 export function logEvent(
-  level: 'warn' | 'error',
+  level: LogLevel,
   event: string,
   fields: Readonly<Record<string, string | number | boolean | null>>,
 ): void {
   write(level, { event, ...fields });
 }
 
-function write(level: 'warn' | 'error', line: Readonly<Record<string, unknown>>): void {
+function write(level: LogLevel, line: Readonly<Record<string, unknown>>): void {
   const serialized = JSON.stringify(line);
   /* eslint-disable no-console -- the one place in apps/web that may print; see the header. */
   if (level === 'error') console.error(serialized);
-  else console.warn(serialized);
+  else if (level === 'warn') console.warn(serialized);
+  else console.info(serialized);
   /* eslint-enable no-console */
 }
 

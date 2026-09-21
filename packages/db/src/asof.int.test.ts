@@ -12,15 +12,23 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createDb } from './client.ts';
 import type { DB } from './generated/database.ts';
 import {
+  clusterEvidenceAsOf,
   clusterVersionsAsOf,
   clusterVersionsNow,
+  correlationEvidenceAsOf,
   healthAsOf,
   linksAsOf,
+  observationEvidenceAsOf,
   observationsAsOf,
   observationsNow,
+  runEvidenceAsOf,
+  runSummariesAsOf,
+  runTally24hAsOf,
+  sourceCatalog,
   sourceCutoffsAsOf,
+  workerHeartbeatAsOf,
 } from './asof.ts';
-import { createCanonicalEvent, linkRecord } from './repositories/canonical.ts';
+import { createCanonicalEvent, linkRecord, unlinkRecord } from './repositories/canonical.ts';
 import {
   bulkInsertDetections,
   createCluster,
@@ -28,6 +36,7 @@ import {
   insertClusterVersionIfChanged,
   listDetectionPartitionDays,
 } from './repositories/fire.ts';
+import { acquireRunLease } from './repositories/ingestion-runs.ts';
 import { findProductByCode } from './repositories/sources.ts';
 import { resolveSourceRecord } from './repositories/source-records.ts';
 import { setupTestDatabase, type TestDatabase } from './testing/test-database.ts';
@@ -594,5 +603,373 @@ describe('retention (ADR-018)', () => {
       SELECT count(*)::text AS n FROM geonerva.fire_detections
     `.execute(db);
     expect(Number(left.rows[0]?.n)).toBe(1);
+  });
+});
+
+/*
+ * ── The reads P8 added ────────────────────────────────────────────────────────
+ *
+ * Each of these is tested here, at the read, rather than only through the endpoint that uses it.
+ * The distinction is not pedantic: `GET /evidence/{id}` filters twice — once in the detail read and
+ * once in the manifest resolver — so an endpoint test cannot tell which filter is doing the work,
+ * and a mutation run proved it: deleting `ingested_at <= asOf` from `observationEvidenceAsOf` left
+ * the whole API integration suite green. A read whose own knowledge-time filter is untested is a
+ * read that will lose it silently.
+ */
+
+describe('runSummariesAsOf', () => {
+  it('returns only runs committed at or before T', async () => {
+    const early = await seedRun(db, { sourceId: 'usgs', startedAt: T0 });
+    const late = await seedRun(db, { sourceId: 'usgs', startedAt: hours(2) });
+
+    const atFive = await runSummariesAsOf(db, { asOf: minutes(5) });
+    expect(atFive.map((run) => run.id)).toEqual([early.runId]);
+
+    const atThree = await runSummariesAsOf(db, { asOf: hours(3) });
+    expect(atThree.map((run) => run.id)).toEqual([late.runId, early.runId]);
+
+    const before = await runSummariesAsOf(db, { asOf: new Date(T0.getTime() - 60_000) });
+    expect(before).toEqual([]);
+  });
+
+  /*
+   * A `RUNNING` run has produced no knowledge, and its `committed_at` is NULL — so it must be
+   * invisible by construction rather than by a status filter. `acquireRunLease` leaves exactly
+   * this state behind.
+   */
+  it('never returns a run that has not committed', async () => {
+    await acquireRunLease(db, {
+      sourceId: 'usgs',
+      productId: null,
+      trigger: 'SCHEDULE',
+      startedAt: T0,
+    });
+    expect(await runSummariesAsOf(db, { asOf: hours(5) })).toEqual([]);
+  });
+
+  it('bounds the rows per source and keeps the newest', async () => {
+    for (let index = 0; index < 6; index += 1) {
+      await seedRun(db, { sourceId: 'usgs', startedAt: minutes(index) });
+    }
+    const rows = await runSummariesAsOf(db, { asOf: hours(1), perSource: 2 });
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.committed_at.getTime()).toBeGreaterThan(rows[1]?.committed_at.getTime() ?? 0);
+    expect(rows[0]?.committed_at).toEqual(minutes(5));
+  });
+
+  it('bounds each source independently rather than the result as a whole', async () => {
+    for (let index = 0; index < 3; index += 1) {
+      await seedRun(db, { sourceId: 'usgs', startedAt: minutes(index) });
+      await seedRun(db, { sourceId: 'emsc', startedAt: minutes(index) });
+    }
+    const rows = await runSummariesAsOf(db, { asOf: hours(1), perSource: 2 });
+    expect(rows.filter((run) => run.source_id === 'usgs')).toHaveLength(2);
+    expect(rows.filter((run) => run.source_id === 'emsc')).toHaveLength(2);
+  });
+
+  /**
+   * The hard cap, exercised with more rows than the cap.
+   *
+   * The first version of this test seeded **one** run and asked for ten thousand, which returns
+   * one row whether the cap exists or not — so removing `Math.min(…, 50)` left it green. A bound
+   * can only be tested from above it.
+   */
+  it('caps perSource at fifty however many are asked for', async () => {
+    for (let index = 0; index < 52; index += 1) {
+      await seedRun(db, { sourceId: 'usgs', startedAt: minutes(index) });
+    }
+    expect(await runSummariesAsOf(db, { asOf: hours(2), perSource: 10_000 })).toHaveLength(50);
+    expect(await runSummariesAsOf(db, { asOf: hours(2) })).toHaveLength(10);
+    /* `Math.max(1, …)`: zero is a caller mistake, not a request for an empty page. */
+    expect(await runSummariesAsOf(db, { asOf: hours(2), perSource: 0 })).toHaveLength(1);
+  });
+});
+
+describe('runTally24hAsOf', () => {
+  it('counts only committed runs inside the 24 h before T', async () => {
+    await seedRun(db, { sourceId: 'usgs', startedAt: T0, status: 'SUCCEEDED' });
+    await seedRun(db, { sourceId: 'usgs', startedAt: hours(30), status: 'SUCCEEDED' });
+
+    const tally = await runTally24hAsOf(db, hours(31));
+    expect(tally).toEqual([{ source_id: 'usgs', total: 1, succeeded: 1 }]);
+  });
+
+  /*
+   * `PARTIAL` committed some records and rejected others; it did not do its job. Counting it as a
+   * success would hide the slow degradation `/data-status` exists to show.
+   */
+  it('does not count PARTIAL or FAILED as successes', async () => {
+    await seedRun(db, { sourceId: 'usgs', startedAt: T0, status: 'SUCCEEDED' });
+    await seedRun(db, { sourceId: 'usgs', startedAt: minutes(1), status: 'PARTIAL' });
+    await seedRun(db, { sourceId: 'usgs', startedAt: minutes(2), status: 'FAILED' });
+    await seedRun(db, { sourceId: 'usgs', startedAt: minutes(3), status: 'SKIPPED' });
+
+    expect(await runTally24hAsOf(db, hours(1))).toEqual([
+      { source_id: 'usgs', total: 4, succeeded: 1 },
+    ]);
+  });
+
+  it('omits a source with no runs in the window rather than reporting a zero rate', async () => {
+    await seedRun(db, { sourceId: 'usgs', startedAt: T0 });
+    const tally = await runTally24hAsOf(db, hours(1));
+    expect(tally.map((row) => row.source_id)).toEqual(['usgs']);
+  });
+});
+
+describe('workerHeartbeatAsOf', () => {
+  it('returns null when the worker has never reported', async () => {
+    expect(await workerHeartbeatAsOf(db, hours(1))).toBeNull();
+  });
+
+  it('returns the heartbeat once it is in the past', async () => {
+    await sql`
+      INSERT INTO geonerva.worker_heartbeat (id, last_seen_at, version)
+      VALUES (true, ${T0}, 'worker-1')
+    `.execute(db);
+    expect(await workerHeartbeatAsOf(db, minutes(1))).toMatchObject({ version: 'worker-1' });
+  });
+
+  /*
+   * The row is updated in place and has no history, so a heartbeat stamped after T is future
+   * knowledge and is withheld. The consequence — a replay cannot state worker liveness — is
+   * documented on the function; what must never happen is the present leaking into the past.
+   */
+  it('withholds a heartbeat stamped after T', async () => {
+    await sql`
+      INSERT INTO geonerva.worker_heartbeat (id, last_seen_at, version)
+      VALUES (true, ${hours(2)}, 'worker-1')
+    `.execute(db);
+    expect(await workerHeartbeatAsOf(db, minutes(1))).toBeNull();
+  });
+});
+
+describe('sourceCatalog', () => {
+  it('lists the seeded sources and products, in a canonical order', async () => {
+    const catalog = await sourceCatalog(db);
+    expect(catalog.sources.map((source) => source.source_id)).toEqual(
+      [...catalog.sources.map((source) => source.source_id)].sort(),
+    );
+    expect(catalog.products.length).toBeGreaterThan(catalog.sources.length);
+    for (const product of catalog.products) {
+      expect(catalog.sources.some((source) => source.source_id === product.source_id)).toBe(true);
+    }
+  });
+
+  it('reports coverage as present-or-absent rather than shipping the polygon', async () => {
+    const catalog = await sourceCatalog(db);
+    const serialized = JSON.stringify(catalog);
+    expect(serialized).not.toContain('MULTIPOLYGON');
+    expect(serialized).not.toContain('coordinates');
+    for (const source of catalog.sources) {
+      expect(typeof source.coverage_geometry_available).toBe('boolean');
+    }
+  });
+
+  it('reports the sensor lifecycle dates as plain date strings', async () => {
+    const catalog = await sourceCatalog(db);
+    for (const product of catalog.products) {
+      if (product.active_from !== null) expect(product.active_from).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
+    }
+  });
+});
+
+describe('the evidence-detail reads', () => {
+  /** One observation version, with a second revision ingested an hour later. */
+  async function seedRevisedQuake(): Promise<{ first: string; second: string }> {
+    const first = await seedObservation(db, {
+      sourceId: 'usgs',
+      primaryKey: 'us7000tikb',
+      aliases: ['us7000tikb'],
+      ingestedAt: T0,
+      observedAt: minutes(-5),
+      sourceUpdatedAt: minutes(-2),
+      centroid: PLACES.marrakech,
+      magnitude: 5.2,
+      depthKm: 10,
+      contributor: 'us',
+    });
+    const second = await seedObservation(db, {
+      sourceId: 'usgs',
+      primaryKey: 'us7000tikb',
+      aliases: ['us7000tikb'],
+      ingestedAt: hours(1),
+      observedAt: minutes(-5),
+      sourceUpdatedAt: minutes(55),
+      centroid: PLACES.marrakech,
+      magnitude: 5.4,
+      depthKm: 10,
+      contributor: 'us',
+    });
+    return { first: first.versionId, second: second.versionId };
+  }
+
+  it('resolves an observation version and keeps its four times apart', async () => {
+    const { first } = await seedRevisedQuake();
+    const row = await observationEvidenceAsOf(db, { asOf: minutes(5), versionId: first });
+
+    expect(row).not.toBeNull();
+    expect(row?.observed_at).toEqual(minutes(-5));
+    expect(row?.source_updated_at).toEqual(minutes(-2));
+    expect(row?.ingested_at).toEqual(T0);
+    expect(row?.primary_key).toBe('us7000tikb');
+    expect(row?.content_sha256).toMatch(/^[0-9a-f]{64}$/u);
+  });
+
+  /** I2 at the read. The row exists; it was not knowledge yet. */
+  it('withholds a version ingested after T', async () => {
+    const { second } = await seedRevisedQuake();
+    expect(await observationEvidenceAsOf(db, { asOf: minutes(5), versionId: second })).toBeNull();
+    expect(await observationEvidenceAsOf(db, { asOf: hours(2), versionId: second })).not.toBeNull();
+  });
+
+  /*
+   * A revision does not retract its predecessor. An evidence id cited in an earlier response must
+   * keep resolving, or the citation rots — which is the one thing an append-only store prevents.
+   */
+  it('still resolves an older version after a revision superseded it', async () => {
+    const { first } = await seedRevisedQuake();
+    expect(await observationEvidenceAsOf(db, { asOf: hours(5), versionId: first })).not.toBeNull();
+  });
+
+  it('reports whether a raw payload row exists without reading it (ADR-038)', async () => {
+    const { first } = await seedRevisedQuake();
+    const row = await observationEvidenceAsOf(db, { asOf: hours(5), versionId: first });
+    expect(typeof row?.raw_record_present).toBe('boolean');
+    expect(Object.keys(row ?? {})).not.toContain('payload');
+  });
+
+  it('resolves an ingestion run only once it has committed at or before T', async () => {
+    const run = await seedRun(db, { sourceId: 'usgs', startedAt: hours(1) });
+
+    expect(await runEvidenceAsOf(db, { asOf: minutes(5), runId: run.runId })).toBeNull();
+    const row = await runEvidenceAsOf(db, { asOf: hours(2), runId: run.runId });
+    expect(row).toMatchObject({ run_id: run.runId, source_id: 'usgs', status: 'SUCCEEDED' });
+  });
+
+  it('resolves a correlation link only once it was made', async () => {
+    const seeded = await seedObservation(db, {
+      sourceId: 'usgs',
+      primaryKey: 'us7000tikc',
+      aliases: ['us7000tikc'],
+      ingestedAt: T0,
+      centroid: PLACES.marrakech,
+      magnitude: 5,
+    });
+    const event = await createCanonicalEvent(db, { hazardType: 'EARTHQUAKE', createdAt: T0 });
+    const link = await db.transaction().execute(async (trx) =>
+      linkRecord(trx, {
+        canonicalEventId: event.id,
+        sourceRecordId: seeded.sourceRecordId,
+        relation: 'PRIMARY',
+        matchKind: 'SPATIOTEMPORAL',
+        algorithmVersion: 'eq-corr-1',
+        linkedAt: hours(1),
+      }),
+    );
+
+    expect(await correlationEvidenceAsOf(db, { asOf: minutes(5), linkId: link.linkId })).toBeNull();
+    const row = await correlationEvidenceAsOf(db, { asOf: hours(2), linkId: link.linkId });
+    expect(row).toMatchObject({
+      link_id: link.linkId,
+      canonical_event_public_id: event.publicId,
+      source_record_primary_key: 'us7000tikc',
+      relation: 'PRIMARY',
+    });
+    expect(row?.unlinked_at).toBeNull();
+  });
+
+  /**
+   * A withdrawn link resolves, and says when it closed — but not before it closed.
+   *
+   * Both halves matter. Filtering closed links out would make an old citation unresolvable;
+   * reporting the closure at a knowledge time before it happened would be future knowledge in the
+   * one endpoint whose job is proving what was known when.
+   */
+  it('reports a link closure only from the moment it happened', async () => {
+    const seeded = await seedObservation(db, {
+      sourceId: 'usgs',
+      primaryKey: 'us7000tikd',
+      aliases: ['us7000tikd'],
+      ingestedAt: T0,
+      centroid: PLACES.marrakech,
+      magnitude: 5,
+    });
+    const event = await createCanonicalEvent(db, { hazardType: 'EARTHQUAKE', createdAt: T0 });
+    const link = await db.transaction().execute(async (trx) =>
+      linkRecord(trx, {
+        canonicalEventId: event.id,
+        sourceRecordId: seeded.sourceRecordId,
+        relation: 'PRIMARY',
+        matchKind: 'SPATIOTEMPORAL',
+        algorithmVersion: 'eq-corr-1',
+        linkedAt: T0,
+      }),
+    );
+    await db
+      .transaction()
+      .execute(async (trx) =>
+        unlinkRecord(trx, seeded.sourceRecordId, hours(2), 'REVISED_SOLUTION_MOVED_OUT_OF_MISFIT'),
+      );
+
+    const stillOpen = await correlationEvidenceAsOf(db, { asOf: hours(1), linkId: link.linkId });
+    expect(stillOpen?.unlinked_at).toBeNull();
+    expect(stillOpen?.unlink_reason).toBeNull();
+
+    const closed = await correlationEvidenceAsOf(db, { asOf: hours(3), linkId: link.linkId });
+    expect(closed?.unlinked_at).toEqual(hours(2));
+    expect(closed?.unlink_reason).toBe('REVISED_SOLUTION_MOVED_OUT_OF_MISFIT');
+  });
+
+  it('resolves a fire-cluster version only from its own as_of', async () => {
+    const clusterId = await createCluster(db, {
+      id: stableUuid('asof-evidence-cluster'),
+      publicId: 'FR-26-TESTAA',
+      createdAt: T0,
+      status: 'ACTIVE',
+    });
+    const version = await insertClusterVersionIfChanged(db, {
+      clusterId,
+      asOf: hours(1),
+      nTotal: 12,
+      n24h: 5,
+      overpasses24h: 2,
+      firstDetectedAt: T0,
+      lastDetectedAt: minutes(30),
+      frpSum24h: 42.5,
+      frpMax: 11.25,
+      maxConfidence: 'HIGH',
+      productIds: [9],
+      hullGeoJson: null,
+      centroid: PLACES.marrakech,
+      contentSha256: contentHash('cluster', 12, 5, 31.6, -8, 'HIGH'),
+      status: 'ACTIVE',
+    });
+
+    const versionId = version.clusterVersionId;
+    expect(
+      await clusterEvidenceAsOf(db, { asOf: minutes(5), clusterVersionId: versionId }),
+    ).toBeNull();
+    const row = await clusterEvidenceAsOf(db, { asOf: hours(2), clusterVersionId: versionId });
+    expect(row).toMatchObject({
+      cluster_public_id: 'FR-26-TESTAA',
+      n_total: 12,
+      n_24h: 5,
+      overpasses_24h: 2,
+      max_confidence: 'HIGH',
+    });
+  });
+
+  it('returns null for an id that does not exist rather than throwing', async () => {
+    expect(await observationEvidenceAsOf(db, { asOf: hours(1), versionId: '999999' })).toBeNull();
+    expect(
+      await runEvidenceAsOf(db, {
+        asOf: hours(1),
+        runId: '00000000-0000-4000-8000-000000000000',
+      }),
+    ).toBeNull();
+    expect(await correlationEvidenceAsOf(db, { asOf: hours(1), linkId: '999999' })).toBeNull();
+    expect(
+      await clusterEvidenceAsOf(db, { asOf: hours(1), clusterVersionId: '999999' }),
+    ).toBeNull();
   });
 });

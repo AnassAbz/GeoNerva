@@ -149,9 +149,16 @@ module.exports = {
         'G3 carry-over 1, enforced before the first endpoint exists. Every read of a provider ' +
         'fact goes through the as-of layer, which is the only place that applies the knowledge- ' +
         'time filter (ADR-003). A repository read would return the newest row instead of the row ' +
-        'as of T, and replay would silently show the present.',
+        'as of T, and replay would silently show the present. The P8 route handlers reach the ' +
+        'as-of layer through `apps/web/lib/server/db.ts`, which imports the `/client` and ' +
+        '`/asof` subpaths rather than the `@geonerva/db` root barrel — the barrel re-exports ' +
+        'the repositories and makes all five of them reachable. Tests are excluded for the same ' +
+        'reason `briefing-reads-facts-only-through-asof` excludes them: an integration test ' +
+        'builds the state the read path then reads, and the only writers are the repositories. ' +
+        'The exclusion was verified not to hide a production violation — reintroducing the ' +
+        'root-barrel import in `db.ts` still fails this rule.',
       severity: 'error',
-      from: { path: '^apps/web/' },
+      from: { path: '^apps/web/', pathNot: TEST_FILES },
       to: { path: '^packages/db/src/repositories/', reachable: true },
     },
     {

@@ -42,8 +42,14 @@ export const GET = apiRoute(
       });
     }
 
-    const { item } = await getEvidence(database().db, { id: raw, asOf, now });
-    return jsonResponse(item, { cacheControl: CACHE_POLICIES.evidence });
+    /*
+     * The whole `EvidenceDetail` — the manifest entry, the typed payload for its kind, and the
+     * attribution its licence requires. Serializing only the entry would return a manifest row
+     * from an endpoint whose contract is the resolved record, which is what this adapter did
+     * before the frozen model was read properly.
+     */
+    const detail = await getEvidence(database().db, { id: raw, asOf, now });
+    return jsonResponse(detail, { cacheControl: CACHE_POLICIES.evidence });
   },
   { name: 'evidence' },
 );
