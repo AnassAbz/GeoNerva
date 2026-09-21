@@ -17,6 +17,7 @@ import { PROBLEM_CODES, PROBLEM_STATUS, problemTypeUri } from './problem.ts';
 import {
   aiBriefingViewSchema,
   asOfContextSchema,
+  citedEvidenceIds,
   evidenceDetailSchema,
   evidenceItemSchema,
   factValueSchema,
@@ -27,6 +28,7 @@ import {
   relevanceAssessmentSchema,
   runSummaryViewSchema,
   sourceStatusEntrySchema,
+  sourceStatusSchema,
 } from './schemas.ts';
 
 const TS = '2026-09-21T12:00:00.000Z';
@@ -441,6 +443,59 @@ describe('evidence', () => {
   });
 });
 
+describe('citedEvidenceIds — the walk invariant I9 is checked with', () => {
+  it('collects an evidenceId and an evidenceIds array', () => {
+    expect([
+      ...citedEvidenceIds({ evidenceId: 'EV:OBS:41', nested: { evidenceIds: ['EV:RUN:x'] } }),
+    ]).toEqual(['EV:OBS:41', 'EV:RUN:x']);
+  });
+
+  /**
+   * The two fields the first version missed, and the reason it missed them.
+   *
+   * `BaselineMetricView.id` is an `EV:BAS:` reference and `ChangeSignalView.id` is an `EV:CHG:`
+   * one — both `EvidenceId`-typed and both named plainly `id`. The walk looked only for
+   * `evidenceId` and `evidenceIds`, so a briefing could cite a change signal absent from its own
+   * manifest and the refinement could not fail. Its comment claimed walking for the key name
+   * "cannot" miss a field.
+   */
+  it('collects an id field that holds an evidence reference', () => {
+    const changes = { headline: [{ id: 'EV:CHG:'.concat('a'.repeat(64)), title: 'x' }] };
+    const metrics = { metrics: [{ id: 'EV:BAS:'.concat('b'.repeat(64)), metricCode: 'M' }] };
+    expect([...citedEvidenceIds(changes)]).toEqual([`EV:CHG:${'a'.repeat(64)}`]);
+    expect([...citedEvidenceIds(metrics)]).toEqual([`EV:BAS:${'b'.repeat(64)}`]);
+  });
+
+  /**
+   * And the reason the check is on the *value* rather than on the key name alone.
+   *
+   * `RunSummaryView.id` is a bare uuid and `SourceProductView.id` is a number. Treating those as
+   * citations would demand manifest entries that should not exist, which would turn a correct
+   * response into a contract failure.
+   */
+  it('ignores an id that is not an evidence reference', () => {
+    expect([...citedEvidenceIds({ id: '0b6c5f1e-9a2d-4c37-8f11-6e2a9c0d4b77' })]).toEqual([]);
+    expect([...citedEvidenceIds({ id: 7 })]).toEqual([]);
+    expect([...citedEvidenceIds({ id: 'EQ-26-7K3F9Q' })]).toEqual([]);
+  });
+
+  /* The manifest is the answer, not a question: its own ids are not citations. */
+  it('does not treat the manifest as a citation of itself', () => {
+    expect([
+      ...citedEvidenceIds({
+        evidenceManifest: [{ id: 'EV:OBS:41' }],
+        cited: { evidenceId: 'EV:RUN:x' },
+      }),
+    ]).toEqual(['EV:RUN:x']);
+  });
+
+  it('walks arrays and nested objects to any depth', () => {
+    expect([...citedEvidenceIds({ a: [{ b: [{ c: { evidenceIds: ['EV:COR:9'] } }] }] })]).toEqual([
+      'EV:COR:9',
+    ]);
+  });
+});
+
 describe('the data-status entry', () => {
   function entry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
@@ -517,6 +572,117 @@ describe('the data-status entry', () => {
   it('rejects a rate outside [0, 1]', () => {
     expect(sourceStatusEntrySchema.safeParse(entry({ successRate24h: 1.5 })).success).toBe(false);
     expect(sourceStatusEntrySchema.safeParse(entry({ successRate24h: -0.1 })).success).toBe(false);
+  });
+});
+
+describe('invariant I9 on the data-status response', () => {
+  function status(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      schemaVersion: 1,
+      asOfContext: {
+        asOf: TS,
+        isReplay: false,
+        replayHorizon: {
+          profile: 'lean',
+          byFamily: Object.fromEntries(
+            ['EARTHQUAKES', 'FIRE_ACTIVITY', 'FLOODS', 'CYCLONES', 'WEATHER_ALERTS', 'OTHER'].map(
+              (family) => [family, { earliestAsOf: TS, note: 'n' }],
+            ),
+          ),
+        },
+        sourceCutoffs: {},
+      },
+      generatedAt: TS,
+      sources: [],
+      worker: null,
+      dataQuality: [],
+      evidenceManifest: [],
+      attribution: [],
+      ...overrides,
+    };
+  }
+
+  const RUN_ID = 'EV:RUN:0b6c5f1e-9a2d-4c37-8f11-6e2a9c0d4b77';
+
+  function entryCiting(evidenceId: string | null): Record<string, unknown> {
+    return {
+      sourceId: 'usgs',
+      name: 'USGS',
+      homepage: null,
+      enabled: true,
+      licence: 'Public domain',
+      attributionText: 'Courtesy of the USGS.',
+      termsUrl: null,
+      disclaimer: null,
+      coverageNote: null,
+      coverageGeometryAvailable: false,
+      hazardTypes: ['EARTHQUAKE'],
+      capabilities: [],
+      health: {
+        sourceId: 'usgs',
+        productId: null,
+        status: 'FRESH',
+        lastAttemptAt: TS,
+        lastSuccessAt: TS,
+        newestObservedAt: TS,
+        consecutiveFailures: 0,
+        lastErrorClass: null,
+        reasons: ['OK'],
+        expected: {
+          pollIntervalS: 300,
+          fetchFreshWithinS: 900,
+          fetchStaleAfterS: 3600,
+          unavailableAfterS: 86_400,
+          dataCurrentWithinS: 3600,
+          dataStaleAfterS: 86_400,
+          quietIsNormal: true,
+        },
+        evidenceId,
+      },
+      products: [],
+      recentRuns: [],
+      successRate24h: null,
+      runCount24h: 0,
+    };
+  }
+
+  function manifestEntryFor(id: string): Record<string, unknown> {
+    return {
+      id,
+      kind: 'RUN',
+      summary: 'usgs ingestion run, SUCCEEDED',
+      sourceId: 'usgs',
+      productId: null,
+      observedAt: null,
+      ingestedAt: TS,
+      url: null,
+      resolvable: true,
+    };
+  }
+
+  it('accepts a response whose citations are all in its manifest', () => {
+    expect(
+      sourceStatusSchema.safeParse(
+        status({ sources: [entryCiting(RUN_ID)], evidenceManifest: [manifestEntryFor(RUN_ID)] }),
+      ).success,
+    ).toBe(true);
+  });
+
+  it('accepts a response that cites nothing', () => {
+    expect(sourceStatusSchema.safeParse(status({ sources: [entryCiting(null)] })).success).toBe(
+      true,
+    );
+  });
+
+  /**
+   * The contract was missing this refinement while the briefing's had it, and the gap was not
+   * theoretical: the assembly omitted a manifest entry it could not resolve while still citing the
+   * id, and a test asserted that as the desired behaviour.
+   */
+  it('rejects a response that cites an id its manifest does not contain', () => {
+    const result = sourceStatusSchema.safeParse(status({ sources: [entryCiting(RUN_ID)] }));
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('I9');
   });
 });
 

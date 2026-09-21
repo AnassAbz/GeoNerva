@@ -55,6 +55,7 @@ import {
   READ_MODEL_SCHEMA_VERSION,
   formatCoordinateKey,
   parseEvidenceId,
+  roundUserCoordinate,
   tryParseEvidenceId,
   type ChangeWindow,
   type EvidenceDetail,
@@ -133,12 +134,24 @@ export async function getBriefing(db: Kysely, request: BriefingRequest): Promise
 
   if (build.unresolvedEvidenceIds.length > 0) {
     /*
-     * Logged, not returned. An unresolvable citation is a defect in GeoNerva, and the id is
-     * internal — putting it in the response would invite enumeration of the evidence space for no
-     * benefit to the caller.
+     * At **error** level, and naming the kinds.
+     *
+     * This is an invariant I9 violation shipping to a caller: the response carries a citation its
+     * own manifest does not contain. `strictManifest: false` is still the right trade — a user
+     * should not get a 500 because one footnote is unreadable, and the `EV:FDS` hole at G7 showed
+     * that failing loudly in development is what finds these — but logging it at `warn` with only
+     * a count made a contract violation indistinguishable from a slow request.
+     *
+     * The *kinds* are logged, not the ids: a kind says which resolver is broken, which is the
+     * actionable part, while the ids are internal and would invite enumeration of the evidence
+     * space. The response is unchanged, because dropping a citation would silently remove the
+     * provenance of a claim the user can see.
      */
-    logEvent('warn', 'api.briefing.unresolved_evidence', {
+    logEvent('error', 'api.briefing.unresolved_evidence', {
       count: build.unresolvedEvidenceIds.length,
+      kinds: [...new Set(build.unresolvedEvidenceIds.map((id) => id.split(':')[1] ?? 'UNKNOWN'))]
+        .sort()
+        .join(','),
       /* The rounded location key, which is a 1.1 km cell (ADR-015) — never the raw coordinates. */
       locationKey: location.key,
     });
@@ -161,10 +174,12 @@ export interface EvidenceRequest {
  * asking for one is a `NOT_FOUND` rather than an error: there is nothing to serve, and saying so
  * is more useful than pretending the id was malformed.
  *
- * `EV:FDS` is the case G7 found the hard way. It is a real kind that nothing resolved, which broke
- * every briefing for a location with fire activity; it resolves here through its cluster version,
- * because the count travels in the id and what makes the citation trustworthy is that the version
- * it summarizes exists at this knowledge time.
+ * `EV:FDS` is the case G7 found the hard way — a real kind that nothing resolved, which broke every
+ * briefing for a location with fire activity. It is resolved *in a manifest*, by
+ * `resolveManifest` in `packages/briefing`, through the cluster version it summarizes. **This
+ * endpoint refuses it**, with an explanation pointing at that cluster version: the detection set
+ * has no row of its own, so there is nothing to serve. An earlier version of this comment claimed
+ * the opposite of the code fifteen lines below it.
  */
 export async function getEvidence(db: Kysely, request: EvidenceRequest): Promise<EvidenceDetail> {
   const parsed = tryParseEvidenceId(request.id);
@@ -378,6 +393,18 @@ export function getReplayHorizon(now: Date): ReplayHorizonResponse {
  * briefing would be correct about a location the user did not name.
  */
 async function resolveLocation(db: Kysely, location: LocationParam): Promise<LocationRef> {
+  /*
+   * A `c:` key is a coordinate pair, not a place: it is the exact form `formatCoordinateKey` mints
+   * for the coordinate path, so `?place=c:31.63,-8.00` asks the same question as
+   * `?lat=31.63&lon=-8.00`. It used to fall through to the place lookup and come back
+   * `LOCATION_NOT_FOUND` blaming a missing GeoNames import, which was the wrong reason for a
+   * request that needs no `places` table at all.
+   */
+  const asCoordinates = location.kind === 'key' ? parseCoordinateKey(location.key) : null;
+  if (asCoordinates !== null) {
+    return resolveLocation(db, asCoordinates);
+  }
+
   if (location.kind === 'coordinates') {
     return {
       key: formatCoordinateKey({ lat: location.lat, lon: location.lon }),
@@ -406,6 +433,24 @@ async function resolveLocation(db: Kysely, location: LocationParam): Promise<Loc
   return place;
 }
 
+/**
+ * A `c:<lat>,<lon>` key as a coordinate parameter, or `null` when it is not one.
+ *
+ * The pattern is the canonical form and nothing looser: exactly two decimals, which is what
+ * `formatCoordinateKey` produces and what invariant I15 requires. A key with more precision is not
+ * a key GeoNerva mints, so it is not accepted here either.
+ */
+function parseCoordinateKey(key: string): LocationParam | null {
+  const parsed = /^c:(-?\d{1,3}\.\d{2}),(-?\d{1,3}\.\d{2})$/u.exec(key);
+  if (parsed?.[1] === undefined || parsed[2] === undefined) return null;
+
+  const lat = Number(parsed[1]);
+  const lon = Number(parsed[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return { kind: 'coordinates', lat, lon };
+}
+
 /** Reads one place. Returns `null` when the table is empty or the id is unknown. */
 async function lookupPlace(db: Kysely, key: string): Promise<LocationRef | null> {
   const parsed = /^p:(\d+)$/u.exec(key);
@@ -427,9 +472,12 @@ async function lookupPlace(db: Kysely, key: string): Promise<LocationRef | null>
      * A named place is a public place, not personal data (ADR-015) — but its coordinates are still
      * rounded to the API's two decimals so that every `LocationRef` in a response satisfies I15
      * uniformly, and so that `buildPacket`'s rounding assertion holds for every location kind.
+     *
+     * Through `roundUserCoordinate`, not `Math.round(x * 100) / 100`. The inline form was a third
+     * spelling of the privacy rule, and a rule with three implementations has none.
      */
-    lat: Math.round(row.lat * 100) / 100,
-    lon: Math.round(row.lon * 100) / 100,
+    lat: roundUserCoordinate(row.lat),
+    lon: roundUserCoordinate(row.lon),
     timezone: row.timezone,
     countryCode: row.country_code,
     admin1: row.admin1,

@@ -29,7 +29,15 @@ export interface SourceStatus {
   readonly asOfContext: AsOfContext;
   readonly generatedAt: IsoTimestamp;
   readonly sources: readonly SourceStatusEntry[];
-  /** Heartbeat of the ingestion worker. `null` means it has never reported in. */
+  /**
+   * Heartbeat of the ingestion worker.
+   *
+   * `null` means **GeoNerva cannot state the worker's liveness at this knowledge time** — either
+   * it has never reported in, or the request is a replay. The row is a single record updated in
+   * place with no history, so a past `as_of` has nothing to read; that is the one operational
+   * signal in these contracts that is not replayable, and the two cases are deliberately not
+   * distinguished because the honest answer to both is the same.
+   */
   readonly worker: WorkerStatusView | null;
   /** Data-quality checks run after each ingestion batch (docs/TESTING.md §7). */
   readonly dataQuality: readonly DataQualityCheckView[];

@@ -59,7 +59,8 @@ export function toEvidenceItem(row: EvidenceRow): EvidenceItem {
     productId: row.product_id,
     observedAt: row.observed_at?.toISOString() ?? null,
     ingestedAt: row.ingested_at.toISOString(),
-    url: row.url,
+    /* Same scheme guard as `sourceUrl`: a manifest entry's `url` is provider-controlled too. */
+    url: webUrlOrNull(row.url),
     resolvable: isResolvableKind(kind),
   };
 }
@@ -123,8 +124,27 @@ export function observationPayload(row: ObservationEvidenceRow): EvidenceDetailP
     rawExcerpt: null,
     rawPayloadSha256: null,
     rawPayloadPruned: !row.raw_record_present,
-    sourceUrl: row.source_url,
+    sourceUrl: webUrlOrNull(row.source_url),
   };
+}
+
+/**
+ * A provider URL, or `null` when its scheme is not one a reader may safely follow.
+ *
+ * `source_url` is a provider-controlled string stored verbatim, and nothing on the write path
+ * checks its scheme — so a feed containing `javascript:…` or `data:text/html,…` would be served
+ * from a public endpoint and land in an `href`. SECURITY.md H1 puts the link-rendering control in
+ * the frontend, which is the right place for GeoNerva's own UI and no help at all to any other
+ * consumer of this API.
+ *
+ * Dropping the value rather than passing it through loses nothing a reader could use: a URL they
+ * must not open is not a citation. The deeper fix belongs at normalize time, where the value could
+ * be refused on arrival instead of on the way out.
+ */
+function webUrlOrNull(value: string | null): string | null {
+  if (value === null) return null;
+  const scheme = /^([a-z][a-z0-9+.-]*):/iu.exec(value.trim())?.[1]?.toLowerCase();
+  return scheme === 'https' || scheme === 'http' ? value : null;
 }
 
 /** `EV:FCV` — the cluster summary payload, plus the detection-set ID it summarizes. */
@@ -176,7 +196,14 @@ export function runPayload(row: RunEvidenceRow): EvidenceDetailPayload {
     },
     newestObservedAt: row.newest_observed_at?.toISOString() ?? null,
     errorClass: row.error_class,
-    errorMessage: row.error_message,
+    /*
+     * `null`, not the column. The contract promises "never a raw provider body and never a
+     * connection string", and the write path does not deliver that: `sanitizeDetail` is a length
+     * cap, and `SourceFetchError.describe()` puts the provider's host and path in the column. The
+     * class is the part a reader can act on and is a closed enumeration; the message is free text
+     * from a provider. See `runEvidenceAsOf` for the full reasoning.
+     */
+    errorMessage: null,
     payloadSha256: row.payload_sha256,
     workerVersion: row.worker_version,
   };

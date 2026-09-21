@@ -22,7 +22,7 @@
  */
 
 import { sql, type Kysely } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCanonicalEvent, createDb, linkRecord, type DB } from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
@@ -273,6 +273,14 @@ async function seedQuake(primaryKey = 'us7000tikb'): Promise<{
   return { versionId: seeded.versionId, publicId: event.publicId };
 }
 
+/** How many rows the counter table holds, which is the only thing the web role may write. */
+async function bucketCount(): Promise<number> {
+  const result = await sql<{ n: number }>`
+    SELECT count(*)::int AS n FROM geonerva.rate_limit_buckets
+  `.execute(db);
+  return result.rows[0]?.n ?? 0;
+}
+
 /** Walks a response for every `lat`/`lon` value, wherever it is nested (invariant I15). */
 function coordinatesIn(value: unknown, found: number[] = []): number[] {
   if (Array.isArray(value)) {
@@ -355,7 +363,10 @@ describe('GET /api/v1/replay/horizon', () => {
     try {
       const response = await replayHorizon(request('/api/v1/replay/horizon'));
       expect(response.status).toBe(200);
-      expect(response.headers.get('ratelimit-limit')).toBe(String(RATE_LIMITS.default.limit));
+      /* Still the endpoint's own cache policy: a limiter outage must not change the answer. */
+      expect(response.headers.get('cache-control')).toBe(
+        's-maxage=3600, stale-while-revalidate=3600',
+      );
     } finally {
       if (previous !== undefined) process.env['DATABASE_URL'] = previous;
       setDatabaseForTesting(testHandle());
@@ -390,6 +401,28 @@ describe('the API is read-only', () => {
    * The method check runs before validation, so a malformed write attempt is refused as a write
    * rather than as a bad request. A 400 here would tell a prober that the verb was acceptable.
    */
+  /**
+   * A rejected verb produces a log line like any other outcome.
+   *
+   * The 405 returned before `logRequest`, which made "one structured line per request" false for
+   * exactly the requests an operator most wants to see: an attempt to write to a read-only API.
+   */
+  it('logs a rejected method', async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    try {
+      await sourcesStatus(request('/api/v1/sources/status', { method: 'POST' }));
+    } finally {
+      spy.mockRestore();
+    }
+
+    const logged = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    const entry = logged.find((line) => line['event'] === 'api.request');
+    expect(entry).toMatchObject({ status: 405, path: '/api/v1/sources/status' });
+  });
+
   it('refuses a write before validating its parameters', async () => {
     const response = await briefing(request('/api/v1/briefing?nonsense=1', { method: 'DELETE' }));
     expect((await bodyOf(response))['code']).toBe('METHOD_NOT_ALLOWED');
@@ -740,16 +773,40 @@ describe('GET /api/v1/briefing', () => {
     for (const value of coordinates) expect(decimals(value)).toBeLessThanOrEqual(2);
   });
 
-  it('rounds a precise request coordinate before it reaches the response', async () => {
+  /**
+   * A precise coordinate is **refused**, not rounded.
+   *
+   * Rounding it on arrival made the response body clean — invariant I15 held there — and left the
+   * caller's ~10 cm position as the CDN cache key and in the platform's own access log, which
+   * `log.ts` cannot reach. ADR-015 says "before logging, caching or querying", and no server can
+   * round before the URL reaches the edge, so the boundary requires a canonical coordinate instead.
+   */
+  it('refuses a precise request coordinate rather than rounding it', async () => {
     await healthyRun('usgs', USGS_PRODUCT);
-    const raw = await (
-      await briefing(
-        request(`/api/v1/briefing?lat=31.629512&lon=-7.981084&as_of=${NOW.toISOString()}`),
-      )
-    ).text();
-    expect(raw).not.toContain('31.6295');
-    expect(raw).not.toContain('7.981084');
-    expect((JSON.parse(raw) as { location: { lat: number } }).location.lat).toBe(31.63);
+    const response = await briefing(
+      request(`/api/v1/briefing?lat=31.629512&lon=-7.981084&as_of=${NOW.toISOString()}`),
+    );
+    const raw = await response.text();
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    const body = JSON.parse(raw) as { code: string; invalidParams: { name: string }[] };
+    expect(body.code).toBe('VALIDATION_FAILED');
+    expect(body.invalidParams.map((entry) => entry.name)).toEqual(['lat', 'lon']);
+    /* And the refusal must not echo the position it refused. */
+    expect(raw).not.toContain('629512');
+    expect(raw).not.toContain('981084');
+  });
+
+  it('serves a briefing for the rounded form of the same request', async () => {
+    await healthyRun('usgs', USGS_PRODUCT);
+    const body = await bodyOf(
+      await briefing(request(`/api/v1/briefing?lat=31.63&lon=-7.98&as_of=${NOW.toISOString()}`)),
+    );
+    expect(body['location'] as { lat: number; lon: number }).toMatchObject({
+      lat: 31.63,
+      lon: -7.98,
+    });
   });
 
   /** Invariant I9: every id anywhere in the briefing is in the briefing's own manifest. */
@@ -814,6 +871,32 @@ describe('GET /api/v1/briefing', () => {
     const response = await briefing(request('/api/v1/briefing?place=p:2542997'));
     expect(response.status).toBe(404);
     expect((await bodyOf(response))['code']).toBe('LOCATION_NOT_FOUND');
+  });
+
+  /**
+   * A `c:` key is a coordinate pair, not a place.
+   *
+   * It is the exact form `formatCoordinateKey` mints, so `?place=c:31.63,-8.00` asks the same
+   * question as `?lat=31.63&lon=-8.00`. It used to fall through to the place lookup and come back
+   * `LOCATION_NOT_FOUND` blaming a missing GeoNames import — the wrong reason for a request that
+   * needs no `places` table at all.
+   */
+  it('resolves a c: key as the coordinate pair it is', async () => {
+    await healthyRun('usgs', USGS_PRODUCT);
+    const viaKey = await briefing(
+      request(
+        `/api/v1/briefing?place=c:${String(LAT)},${LON.toFixed(2)}&as_of=${NOW.toISOString()}`,
+      ),
+    );
+    expect(viaKey.status).toBe(200);
+
+    const body = (await viaKey.json()) as { location: { lat: number; lon: number } };
+    expect(body.location).toMatchObject({ lat: LAT, lon: LON });
+  });
+
+  it('refuses a c: key carrying more precision than GeoNerva mints', async () => {
+    const response = await briefing(request('/api/v1/briefing?place=c:31.629512,-7.981084'));
+    expect(response.status).toBeGreaterThanOrEqual(400);
   });
 
   it('rejects a since parameter it does not implement yet', async () => {
@@ -951,6 +1034,23 @@ describe('GET /api/v1/evidence/{id}', () => {
     expect((await bodyOf(response))['code']).toBe('VALIDATION_FAILED');
   });
 
+  /**
+   * A malformed percent-escape is a 400, not a 500.
+   *
+   * `decodeURIComponent('%ZZ')` throws `URIError`, and an unhandled throw made
+   * `GET /api/v1/evidence/%ZZ` a one-byte caller-triggerable 5xx with an error-level log line —
+   * alert noise and log amplification for what is plainly a bad request.
+   */
+  it.each([
+    ['an invalid escape', '%ZZ'],
+    ['a truncated escape', '%E0%A4%A'],
+    ['a bare percent', '%'],
+  ])('refuses %s with a 400 rather than failing', async (_label, segment) => {
+    const response = await evidence(request(`/api/v1/evidence/${segment}`));
+    expect(response.status).toBe(400);
+    expect((await bodyOf(response))['code']).toBe('VALIDATION_FAILED');
+  });
+
   it('refuses an oversized path segment before parsing it', async () => {
     const response = await evidence(request(`/api/v1/evidence/EV:OBS:${'9'.repeat(500)}`));
     expect(response.status).toBe(400);
@@ -975,12 +1075,85 @@ describe('GET /api/v1/evidence/{id}', () => {
     expect(response.status).toBe(404);
   });
 
-  it('caches a resolved item as immutable, because the row cannot change', async () => {
+  /**
+   * `immutable` requires a **pinned past** knowledge time, and the two halves are separate tests
+   * because the route supplies one of them and the policy the other.
+   *
+   * §13.1 says this endpoint is immutable, on the premise that every primary evidence kind is an
+   * append-only row. Two of the four are not: `canonical_links` is updated in place when a link is
+   * withdrawn, and `ingestion_runs` when a run finishes or its lease expires. A live lookup cached
+   * for a year would keep reporting a withdrawn correlation as open, through a hard reload.
+   */
+  it('caches a pinned past lookup as immutable', async () => {
     const runId = await healthyRun('usgs', USGS_PRODUCT);
-    const response = await evidence(
-      request(`/api/v1/evidence/EV:RUN:${runId}?as_of=${NOW.toISOString()}`),
-    );
+    const pinned = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const response = await evidence(request(`/api/v1/evidence/EV:RUN:${runId}?as_of=${pinned}`));
+    expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('s-maxage=31536000, immutable');
+  });
+
+  it('does not cache a live lookup as immutable, because the row can still change', async () => {
+    const runId = await healthyRun('usgs', USGS_PRODUCT);
+    const response = await evidence(request(`/api/v1/evidence/EV:RUN:${runId}`));
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('s-maxage=120, stale-while-revalidate=600');
+  });
+
+  /*
+   * A knowledge time that is pinned but recent is not a fixed past either, so it is not immutable.
+   * This is the case that distinguishes "the caller named a time" from "the answer cannot change".
+   */
+  it('does not cache a pinned but recent lookup as immutable', async () => {
+    const runId = await healthyRun('usgs', USGS_PRODUCT);
+    const recent = new Date(Date.now() - 60_000).toISOString();
+    const response = await evidence(request(`/api/v1/evidence/EV:RUN:${runId}?as_of=${recent}`));
+    expect(response.headers.get('cache-control')).not.toContain('immutable');
+  });
+
+  /**
+   * The failure the whole change is about, demonstrated on a real withdrawal.
+   *
+   * The link is open at one knowledge time and closed at a later one, from the same URL shape —
+   * so a response that reported it open must not have been cached as immutable.
+   */
+  it('reports a withdrawn correlation as withdrawn, and never caches the open answer forever', async () => {
+    await healthyRun('usgs', USGS_PRODUCT);
+    await seedQuake();
+    const links = await sql<{ id: string; record: string }>`
+      SELECT id::text AS id, source_record_id::text AS record FROM geonerva.canonical_links LIMIT 1
+    `.execute(db);
+    const link = links.rows[0];
+    expect(link).toBeDefined();
+
+    const whileOpen = await evidence(
+      request(`/api/v1/evidence/EV:COR:${link?.id ?? '0'}?as_of=${NOW.toISOString()}`),
+    );
+    expect(
+      ((await whileOpen.json()) as { detail: { unlinkedAt: null } }).detail.unlinkedAt,
+    ).toBeNull();
+    /*
+     * No cache assertion here: `NOW` is hours behind the real clock, so this *is* a pinned past
+     * lookup and `immutable` is correct for it. The three tests above cover the policy; this one
+     * covers the fact that the same link reads differently on either side of its withdrawal,
+     * which is what makes caching a live answer forever unsound.
+     */
+
+    await sql`
+      UPDATE geonerva.canonical_links
+      SET unlinked_at = ${new Date(NOW.getTime() + 60_000)}, unlink_reason = 'REVISED_SOLUTION'
+      WHERE id = ${link?.id ?? '0'}::bigint
+    `.execute(db);
+
+    const afterClosure = await evidence(
+      request(
+        `/api/v1/evidence/EV:COR:${link?.id ?? '0'}?as_of=${new Date(NOW.getTime() + 120_000).toISOString()}`,
+      ),
+    );
+    const closed = (await afterClosure.json()) as {
+      detail: { unlinkedAt: string | null; unlinkReason: string | null };
+    };
+    expect(closed.detail.unlinkedAt).not.toBeNull();
+    expect(closed.detail.unlinkReason).toBe('REVISED_SOLUTION');
   });
 
   it('carries the security headers on a successful response', async () => {
@@ -1029,42 +1202,62 @@ describe('errors never leak the system', () => {
 });
 
 describe('rate limiting (ARCHITECTURE §13.4)', () => {
-  /** How many rows the counter table holds, which is the only thing the web role may write. */
-  async function bucketCount(): Promise<number> {
-    const result = await sql<{ n: number }>`
-      SELECT count(*)::int AS n FROM geonerva.rate_limit_buckets
-    `.execute(db);
-    return result.rows[0]?.n ?? 0;
-  }
-
-  it('publishes the remaining budget on an allowed response', async () => {
+  /**
+   * An allowed response carries **no** budget header.
+   *
+   * It used to. Those responses are publicly cacheable with `Vary: Accept-Encoding` alone, so the
+   * CDN would serve one caller's `RateLimit-Remaining` to everyone behind that edge node for up to
+   * a year — a number wrong for almost every reader, and bucket state that `rate-limit.ts` is
+   * otherwise careful not to publish. The counter is still incremented; only the header is gone.
+   */
+  it('publishes no budget header on an allowed response', async () => {
     const caller = new Headers({ 'x-forwarded-for': '198.51.100.7' });
-    const first = await replayHorizon(requestAs('/api/v1/replay/horizon', caller));
-    expect(first.headers.get('ratelimit-limit')).toBe('120');
-    expect(first.headers.get('ratelimit-remaining')).toBe('119');
+    const response = await replayHorizon(requestAs('/api/v1/replay/horizon', caller));
 
-    const second = await replayHorizon(requestAs('/api/v1/replay/horizon', caller));
-    expect(second.headers.get('ratelimit-remaining')).toBe('118');
+    expect(response.status).toBe(200);
+    for (const header of ['ratelimit-limit', 'ratelimit-remaining', 'ratelimit-reset']) {
+      expect(response.headers.get(header), header).toBeNull();
+    }
+    expect(await bucketCount()).toBe(1);
   });
 
-  it('refuses the request after the window is spent, with Retry-After', async () => {
-    const caller = new Headers({ 'x-forwarded-for': '198.51.101.7' });
-    const limit = RATE_LIMITS.briefing.limit;
+  /* On a refusal the response is `no-store`, so the budget is accurate for its one reader. */
+  it('publishes the budget on a refusal, where it cannot be shared', async () => {
+    const refused = await refuseBriefing(new Headers({ 'x-forwarded-for': '198.51.109.7' }));
 
-    let last = await briefing(
-      requestAs(`/api/v1/briefing?lat=${String(LAT)}&lon=${String(LON)}`, caller),
-    );
-    for (let index = 1; index <= limit; index += 1) {
-      last = await briefing(
+    expect(refused.headers.get('cache-control')).toBe('no-store');
+    expect(refused.headers.get('ratelimit-limit')).toBe(String(RATE_LIMITS.briefing.limit));
+    expect(refused.headers.get('ratelimit-remaining')).toBe('0');
+    expect(Number(refused.headers.get('ratelimit-reset'))).toBeGreaterThan(0);
+  });
+
+  /**
+   * Drives the caller until it is refused, rather than assuming a request count.
+   *
+   * The first version sent exactly `limit + 1` requests and asserted the last was a 429. Each
+   * briefing is ~20 database round trips, so 61 of them take long enough that the fixed one-minute
+   * window can roll over inside the loop, reset the counter, and let the final request through —
+   * which is exactly what happened. The limit is 60 per minute, so 130 attempts must hit a refusal
+   * however many windows they span.
+   */
+  async function refuseBriefing(caller: Headers): Promise<Response> {
+    const attempts = RATE_LIMITS.briefing.limit * 2 + 10;
+    for (let index = 0; index < attempts; index += 1) {
+      const response = await briefing(
         requestAs(`/api/v1/briefing?lat=${String(LAT)}&lon=${String(LON)}`, caller),
       );
+      if (response.status === 429) return response;
     }
+    throw new Error(`the limiter allowed ${String(attempts)} requests from one caller`);
+  }
 
-    expect(last.status).toBe(429);
-    expect(last.headers.get('content-type')).toBe(PROBLEM_MEDIA_TYPE);
-    expect(last.headers.get('cache-control')).toBe('no-store');
-    expect(Number(last.headers.get('retry-after'))).toBeGreaterThan(0);
-    const body = await bodyOf(last);
+  it('refuses the request once the window is spent, with Retry-After', async () => {
+    const refused = await refuseBriefing(new Headers({ 'x-forwarded-for': '198.51.101.7' }));
+
+    expect(refused.headers.get('content-type')).toBe(PROBLEM_MEDIA_TYPE);
+    expect(refused.headers.get('cache-control')).toBe('no-store');
+    expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0);
+    const body = await bodyOf(refused);
     expect(body['code']).toBe('RATE_LIMITED');
     expect(body['retryAfterS']).toBeGreaterThan(0);
   });
@@ -1079,18 +1272,40 @@ describe('rate limiting (ARCHITECTURE §13.4)', () => {
    */
   it('does not give a forged X-Forwarded-For prefix its own bucket', async () => {
     const real = '198.51.102.7';
-    const first = await replayHorizon(
+    await replayHorizon(
       requestAs('/api/v1/replay/horizon', new Headers({ 'x-forwarded-for': real })),
     );
-    const forged = await replayHorizon(
+    await replayHorizon(
       requestAs(
         '/api/v1/replay/horizon',
         new Headers({ 'x-forwarded-for': `10.1.2.3, 10.4.5.6, ${real}` }),
       ),
     );
 
-    expect(first.headers.get('ratelimit-remaining')).toBe('119');
-    expect(forged.headers.get('ratelimit-remaining')).toBe('118');
+    /* One bucket, two requests. A leftmost read would have created two. */
+    expect(await bucketCount()).toBe(1);
+  });
+
+  /**
+   * An oversized header must not be a way into the shared `unknown` bucket.
+   *
+   * Refusing to parse it returned `null`, which lands in that bucket — so a caller could collect a
+   * second full budget by prefixing 2 KB of junk, or saturate the shared bucket and refuse every
+   * caller whose address the parser cannot read.
+   */
+  it('reads the real address out of an oversized header rather than sharing a bucket', async () => {
+    const real = '198.51.108.7';
+    await replayHorizon(
+      requestAs('/api/v1/replay/horizon', new Headers({ 'x-forwarded-for': real })),
+    );
+    await replayHorizon(
+      requestAs(
+        '/api/v1/replay/horizon',
+        new Headers({ 'x-forwarded-for': `${'203.0.113.9, '.repeat(200)}${real}` }),
+      ),
+    );
+
+    expect(await bucketCount()).toBe(1);
   });
 
   it('puts two addresses in one /24 in the same bucket', async () => {
@@ -1106,22 +1321,25 @@ describe('rate limiting (ARCHITECTURE §13.4)', () => {
 
   /* Fail closed by omission: a caller with no usable address is counted, not exempted. */
   it('counts a request with no address against a shared bucket', async () => {
-    const response = await replayHorizon(
+    await replayHorizon(
       requestAs('/api/v1/replay/horizon', new Headers({ 'x-forwarded-for': 'not-an-address' })),
     );
-    expect(response.headers.get('ratelimit-remaining')).toBe('119');
+    await replayHorizon(requestAs('/api/v1/replay/horizon', new Headers()));
 
-    const second = await replayHorizon(requestAs('/api/v1/replay/horizon', new Headers()));
-    expect(second.headers.get('ratelimit-remaining')).toBe('118');
+    /* Both land in the one `unknown` bucket: counted collectively, never exempted. */
+    expect(await bucketCount()).toBe(1);
   });
 
   it('gives each endpoint its own window for one caller', async () => {
     const caller = new Headers({ 'x-forwarded-for': '198.51.104.7' });
     await briefing(requestAs(`/api/v1/briefing?lat=${String(LAT)}&lon=${String(LON)}`, caller));
-    const horizon = await replayHorizon(requestAs('/api/v1/replay/horizon', caller));
+    await replayHorizon(requestAs('/api/v1/replay/horizon', caller));
 
-    expect(horizon.headers.get('ratelimit-limit')).toBe('120');
-    expect(horizon.headers.get('ratelimit-remaining')).toBe('119');
+    /*
+     * Two buckets for one caller. Without the scope in the key they would share a counter and the
+     * smaller limit (60/min) would consume the larger (120/min).
+     */
+    expect(await bucketCount()).toBe(2);
   });
 
   /* A refused verb must not spend the budget for the verb the caller is allowed to use. */
@@ -1133,18 +1351,26 @@ describe('rate limiting (ARCHITECTURE §13.4)', () => {
     expect(refused.status).toBe(405);
     expect(await bucketCount()).toBe(0);
 
-    const allowed = await replayHorizon(requestAs('/api/v1/replay/horizon', caller));
-    expect(allowed.headers.get('ratelimit-remaining')).toBe('119');
+    await replayHorizon(requestAs('/api/v1/replay/horizon', caller));
+    expect(await bucketCount()).toBe(1);
   });
 
   /* A refused *request* does consume its window: a fixed window gives no free retries. */
+  /**
+   * A refused *request* consumes its window, which is what a fixed window is for.
+   *
+   * Asserted through `checkRateLimit` rather than a header, because an allowed response no longer
+   * publishes one. Two requests, one of them a 400, leave the counter at two.
+   */
   it('counts a request refused by validation', async () => {
     const caller = new Headers({ 'x-forwarded-for': '198.51.106.7' });
     await briefing(requestAs('/api/v1/briefing?lat=91&lon=0', caller));
-    const second = await briefing(
-      requestAs(`/api/v1/briefing?lat=${String(LAT)}&lon=${String(LON)}`, caller),
-    );
-    expect(second.headers.get('ratelimit-remaining')).toBe('58');
+    await briefing(requestAs(`/api/v1/briefing?lat=${String(LAT)}&lon=${String(LON)}`, caller));
+
+    const counts = await sql<{ n: number }>`
+      SELECT max(n)::int AS n FROM geonerva.rate_limit_buckets
+    `.execute(db);
+    expect(counts.rows[0]?.n).toBe(2);
   });
 
   /**

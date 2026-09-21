@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  MAX_FORWARDED_LENGTH,
   RATE_LIMITS,
   TRUSTED_PROXY_HOPS,
   UNKNOWN_ADDRESS_PREFIX,
@@ -122,6 +123,22 @@ describe('ipPrefix', () => {
     expect(ipPrefix('[2001:db8:1234::1]')).toBe('v6:2001:0db8:1234::/48');
   });
 
+  /**
+   * A zone id and the mixed notation are real spellings a proxy can forward.
+   *
+   * Rejecting them put their senders in the shared `unknown` bucket, which — combined with the
+   * saturation route above — let an attacker deny service to those callers specifically.
+   */
+  it('strips a zone id', () => {
+    expect(ipPrefix('fe80::1%eth0')).toBe(ipPrefix('fe80::1'));
+    expect(ipPrefix('fe80::1%25eth0')).toBe(ipPrefix('fe80::1'));
+  });
+
+  it('keys the mixed notation by its embedded IPv4 address', () => {
+    expect(ipPrefix('::ffff:0:203.0.113.5')).toBe('v4:203.0.113.0/24');
+    expect(ipPrefix('64:ff9b::192.0.2.33')).toBe('v4:192.0.2.0/24');
+  });
+
   it.each([
     ['empty', ''],
     ['whitespace', '   '],
@@ -135,6 +152,7 @@ describe('ipPrefix', () => {
     ['a non-hex group', '2001:db8:zzzz::1'],
     ['a five-digit group', '2001:db8:12345::1'],
     ['an oversized string', '2001:db8:'.repeat(20)],
+    ['a bare zone id', '%eth0'],
     ['a SQL fragment', "203.0.113.1'; DROP TABLE x;--"],
     ['a newline', '203.0.113.1\n203.0.113.2'],
   ])('rejects %s rather than making it a key', (_label, value) => {
@@ -185,9 +203,32 @@ describe('clientAddress', () => {
     expect(clientAddress(headers(value))).toBeNull();
   });
 
-  /* An unbounded header would be parsed into an unbounded array on every request. */
-  it('refuses an oversized header rather than parsing it', () => {
-    expect(clientAddress(headers('10.0.0.1, '.repeat(200)))).toBeNull();
+  /**
+   * An oversized header is read from its **end**, not refused.
+   *
+   * Refusing it returned `null`, which `checkRateLimit` maps to the shared `unknown` bucket — so
+   * the caller could *choose* to land there: send 2 KB of junk followed by your real address and
+   * collect a second full budget, or saturate the shared bucket and deny service to every caller
+   * whose address the parser cannot read. Bounding the work is still necessary; bounding it by
+   * giving up was the hole.
+   */
+  it('reads the real address out of an oversized header', () => {
+    const forged = `${'203.0.113.9, '.repeat(200)}198.51.100.7`;
+    expect(forged.length).toBeGreaterThan(MAX_FORWARDED_LENGTH);
+    expect(clientAddress(headers(forged))).toBe('198.51.100.7');
+  });
+
+  it('bounds how much of the header it reads', () => {
+    /* A megabyte of commas must not become a million-element array on every request. */
+    const huge = `${'10.0.0.1, '.repeat(100_000)}198.51.100.7`;
+    expect(clientAddress(headers(huge))).toBe('198.51.100.7');
+    expect(MAX_FORWARDED_LENGTH).toBeLessThanOrEqual(1024);
+  });
+
+  it('gives an oversized-header caller the same bucket as an honest one', () => {
+    const honest = clientAddress(headers('198.51.100.7'));
+    const forged = clientAddress(headers(`${'203.0.113.9, '.repeat(200)}198.51.100.7`));
+    expect(forged).toBe(honest);
   });
 
   it('defaults to one trusted hop', () => {

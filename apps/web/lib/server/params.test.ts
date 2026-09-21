@@ -7,7 +7,9 @@
  *
  *  - **Nothing numeric gets in by coercion.** `NaN`, `Infinity`, `1e999`, `0x1f`, `''` and `' 1'`
  *    must be rejected, not become `0` or `Infinity` and then satisfy a range check.
- *  - **Coordinates are rounded before anything else sees them** (ADR-015, invariant I15).
+ *  - **A coordinate must arrive already rounded.** Rounding it here satisfied I15 for the
+ *    response body and left the caller's full-precision position in the CDN cache key and the
+ *    platform's access log, which is what ADR-015's "before logging, caching" forbids.
  *  - **Unknown parameters are refused**, because a tolerated one is a cache-busting primitive.
  *  - **No failure message echoes a submitted value**, because the message reaches logs and CDNs.
  */
@@ -134,6 +136,43 @@ describe('rejectUnknownParams', () => {
     expect(name.length).toBeLessThanOrEqual(41);
   });
 
+  /**
+   * A repeated parameter is the same attack as an unknown one, and only the first was caught.
+   *
+   * `?window=24h&window=24h&window=24h` is one response under three CDN keys, and
+   * `URLSearchParams.get` silently takes the first — so nothing downstream could notice.
+   */
+  it('refuses a repeated parameter', () => {
+    const problem = problemOf(() => {
+      rejectUnknownParams(params('lat=1&lon=2&window=24h&window=24h'), ['lat', 'lon', 'window']);
+    });
+    expect(problem.problem.code).toBe('VALIDATION_FAILED');
+    expect(problem.problem.invalidParams).toEqual([
+      { name: 'window', reason: 'must appear at most once' },
+    ]);
+  });
+
+  it('reports every repeated parameter once, sorted', () => {
+    const problem = problemOf(() => {
+      rejectUnknownParams(params('b=1&b=2&a=1&a=2&c=1'), ['a', 'b', 'c']);
+    });
+    expect(problem.problem.invalidParams?.map((entry) => entry.name)).toEqual(['a', 'b']);
+  });
+
+  /* §13.1 writes it `families[]`, so it is the one parameter that may repeat. */
+  it('allows families to repeat', () => {
+    expect(() => {
+      rejectUnknownParams(params('families=FLOODS&families=EARTHQUAKES'), ['families']);
+    }).not.toThrow();
+  });
+
+  it('reports an unknown parameter before a repeated one, as the more basic mistake', () => {
+    const problem = problemOf(() => {
+      rejectUnknownParams(params('nope=1&lat=1&lat=2'), ['lat']);
+    });
+    expect(problem.problem.code).toBe('UNKNOWN_PARAMETER');
+  });
+
   it('never echoes the value of an undeclared parameter', () => {
     const secret = 'S3CRET-31.629512,-7.981084';
     const problem = problemOf(() => {
@@ -145,8 +184,8 @@ describe('rejectUnknownParams', () => {
 });
 
 describe('parseLocation', () => {
-  it('rounds a coordinate pair to two decimals', () => {
-    expect(parseLocation(params('lat=31.629512&lon=-7.981084'))).toEqual({
+  it('accepts an already-rounded pair', () => {
+    expect(parseLocation(params('lat=31.63&lon=-7.98'))).toEqual({
       kind: 'coordinates',
       lat: 31.63,
       lon: -7.98,
@@ -154,22 +193,51 @@ describe('parseLocation', () => {
   });
 
   /**
-   * Invariant I15 from the input side: the precise value must not survive the parser.
+   * Invariant I15 from the input side, and the reason it is a *refusal* rather than a rounding.
    *
-   * A parser that returned the raw number and left rounding to the serializer would pass a test
-   * that only checked the response, because the precise value would still have reached the cache
-   * key and the query. This asserts the rounding happens *here*.
+   * A server cannot round before the URL reaches the CDN: by the time this code runs,
+   * `?lat=31.629512` is already the cache key and already in the platform's access log. Rounding
+   * on arrival made the response body clean and left the caller's ~10 cm position at the edge for
+   * two minutes. So a finer coordinate is refused, and the reason names the rule.
    */
-  it('discards precision beyond two decimals rather than carrying it forward', () => {
-    const location = parseLocation(params('lat=45.501899&lon=-73.567256'));
-    expect(location).toEqual({ kind: 'coordinates', lat: 45.5, lon: -73.57 });
-    expect(JSON.stringify(location)).not.toContain('5018');
+  it.each([
+    ['six decimals', 'lat=31.629512&lon=-7.981084'],
+    ['three decimals', 'lat=45.501&lon=-73.57'],
+    ['a precise longitude only', 'lat=45.50&lon=-73.567256'],
+  ])('refuses %s rather than rounding it', (_label, query) => {
+    const problem = problemOf(() => parseLocation(params(query)));
+    expect(problem.problem.code).toBe('VALIDATION_FAILED');
+    expect(problem.problem.invalidParams?.[0]?.reason).toContain('decimals');
   });
 
-  it('never returns a negative zero, which JSON renders as 0 but !== 0 under Object.is', () => {
-    const location = parseLocation(params('lat=-0.001&lon=-0.004'));
+  it('never echoes the precise coordinate it refused', () => {
+    const problem = problemOf(() => parseLocation(params('lat=31.629512&lon=-7.981084')));
+    expect(JSON.stringify(problem.problem)).not.toContain('629512');
+    expect(JSON.stringify(problem.problem)).not.toContain('981084');
+  });
+
+  it('accepts a whole number and a single decimal, which are already canonical', () => {
+    expect(parseLocation(params('lat=45&lon=-73'))).toEqual({
+      kind: 'coordinates',
+      lat: 45,
+      lon: -73,
+    });
+    expect(parseLocation(params('lat=45.5&lon=-73.5'))).toEqual({
+      kind: 'coordinates',
+      lat: 45.5,
+      lon: -73.5,
+    });
+  });
+
+  /*
+   * `-0.00` is canonical by the decimal rule and must not survive as `-0`: it serializes as `-0`
+   * in JSON, which is a second spelling of one location and therefore a second cache key.
+   */
+  it('never returns a negative zero, which JSON renders as -0 and is a second cache key', () => {
+    const location = parseLocation(params('lat=-0.00&lon=-0.00'));
     expect(location).toEqual({ kind: 'coordinates', lat: 0, lon: 0 });
     expect(Object.is((location as { lat: number }).lat, -0)).toBe(false);
+    expect(JSON.stringify(location)).not.toContain('-0');
   });
 
   it('folds +180 onto -180 so one meridian is one cache key', () => {
@@ -243,6 +311,12 @@ describe('parseLocation', () => {
     expect(parseLocation(params('place=p:2542997'))).toEqual({ kind: 'key', key: 'p:2542997' });
   });
 
+  /* The message must advertise only what `resolveLocation` can resolve. */
+  it('names the place-key form in its failure reason', () => {
+    const problem = problemOf(() => parseLocation(params('place=z:1')));
+    expect(problem.problem.invalidParams?.[0]?.reason).toContain('p:2542997');
+  });
+
   it.each([
     ['an unknown prefix', 'place=z:1'],
     ['a bare number', 'place=2542997'],
@@ -305,21 +379,28 @@ describe('parseAsOf', () => {
     expect(problem.problem.code).toBe('AS_OF_IN_FUTURE');
   });
 
-  it('absorbs clock skew up to the documented tolerance', () => {
-    const skewed = new Date(NOW.getTime() + AS_OF_FUTURE_TOLERANCE_MS - 1).toISOString();
-    expect(parseAsOf(params(`as_of=${skewed}`), NOW).getTime()).toBeGreaterThan(NOW.getTime());
+  it('mentions the percent-encoded plus, because a bare + decodes to a space', () => {
+    const problem = problemOf(() => parseAsOf(params('as_of=2026-09-21T09:00:00 02:00'), NOW));
+    expect(problem.problem.detail).toContain('%2B');
   });
 
   /**
-   * A mutation control for the tolerance.
+   * The tolerance, pinned as a literal.
    *
-   * If the tolerance were widened to a minute, the test above would still pass. This one pins the
-   * boundary from the other side: one millisecond past the tolerance must be refused, so an edit
-   * that turns a 5-second allowance into a 5-minute one fails here.
+   * The previous version of this control computed its expectation from
+   * `AS_OF_FUTURE_TOLERANCE_MS + 1`, so the expectation moved with the constant and the control
+   * could not detect the mutation it was named for: widening 5 s to 59 s left the whole suite
+   * passing. Five seconds is the documented allowance for clock skew, so five seconds is what the
+   * test says.
    */
-  it('refuses a value one millisecond past the tolerance', () => {
-    const past = new Date(NOW.getTime() + AS_OF_FUTURE_TOLERANCE_MS + 1).toISOString();
-    expect(problemOf(() => parseAsOf(params(`as_of=${past}`), NOW)).problem.code).toBe(
+  it('allows exactly five seconds of clock skew, and not six', () => {
+    expect(AS_OF_FUTURE_TOLERANCE_MS).toBe(5_000);
+
+    const withinSkew = new Date(NOW.getTime() + 4_000).toISOString();
+    expect(parseAsOf(params(`as_of=${withinSkew}`), NOW).getTime()).toBeGreaterThan(NOW.getTime());
+
+    const pastSkew = new Date(NOW.getTime() + 6_000).toISOString();
+    expect(problemOf(() => parseAsOf(params(`as_of=${pastSkew}`), NOW)).problem.code).toBe(
       'AS_OF_IN_FUTURE',
     );
   });
@@ -359,6 +440,15 @@ describe('parseFamilies', () => {
 
   it('deduplicates', () => {
     expect(parseFamilies(params('families=FLOODS,FLOODS,FLOODS'))).toEqual(['FLOODS']);
+  });
+
+  /*
+   * `?families=` used to yield `[]` — a request for no families at all, which would render as a
+   * briefing with nothing in it for a reason the caller never asked for. A false zero from a typo.
+   */
+  it('treats an empty families parameter as every family, not as none', () => {
+    expect(parseFamilies(params('families='))).toEqual(parseFamilies(params('')));
+    expect(parseFamilies(params('families=,,'))).toEqual(parseFamilies(params('')));
   });
 
   it('rejects a family outside the enum', () => {

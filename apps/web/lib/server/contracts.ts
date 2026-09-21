@@ -24,7 +24,13 @@ import {
 } from '@geonerva/domain';
 import { z } from 'zod';
 
-import { CACHE_POLICIES } from './cache.ts';
+import {
+  CACHE_POLICIES,
+  LIVE_BRIEFING_MAX_AGE_S,
+  LIVE_BRIEFING_STALE_WHILE_REVALIDATE_S,
+  LIVE_EVIDENCE_MAX_AGE_S,
+  REPLAY_MAX_AGE_S,
+} from './cache.ts';
 import type { RateLimitName } from './rate-limit.ts';
 
 export interface EndpointContract {
@@ -35,8 +41,11 @@ export interface EndpointContract {
   readonly response: z.ZodType | null;
   /** Which of §13.4's limits the handler declares. */
   readonly rateLimit: RateLimitName;
-  /** The `Cache-Control` value, or `varies` where it depends on the knowledge time. */
-  readonly cache: string;
+  /**
+   * The `Cache-Control` values this endpoint can emit — more than one where the policy depends on
+   * the knowledge time. Emitted as an `enum`, never as a sentence: see `buildOpenApiDocument`.
+   */
+  readonly cache: readonly string[];
   readonly implemented: boolean;
   /** Why not, for the ones that are not. Kept honest rather than left blank. */
   readonly blockedBy?: string;
@@ -48,7 +57,10 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     summary: 'Full location briefing: snapshot, changes, deterministic copy and evidence manifest.',
     response: locationBriefingSchema,
     rateLimit: 'briefing',
-    cache: 'varies: live s-maxage=120, swr=600; as_of older than 1 h s-maxage=86400, immutable',
+    cache: [
+      `s-maxage=${String(LIVE_BRIEFING_MAX_AGE_S)}, stale-while-revalidate=${String(LIVE_BRIEFING_STALE_WHILE_REVALIDATE_S)}`,
+      `s-maxage=${String(REPLAY_MAX_AGE_S)}, immutable`,
+    ],
     implemented: true,
   },
   {
@@ -56,7 +68,7 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     summary: 'Map features for a viewport, quantized to a tile-aligned bbox.',
     response: mapFeaturesResponseSchema,
     rateLimit: 'default',
-    cache: CACHE_POLICIES.events,
+    cache: [CACHE_POLICIES.events],
     implemented: false,
     blockedBy:
       'needs a bbox as-of read; `observationsAsOf` and `clusterVersionsAsOf` take a point and a radius.',
@@ -66,7 +78,7 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     summary: 'Canonical event detail: observations, version timeline, agreement, correlation.',
     response: null,
     rateLimit: 'default',
-    cache: CACHE_POLICIES.eventDetail,
+    cache: [CACHE_POLICIES.eventDetail],
     implemented: false,
     blockedBy: 'the `EventDetail` contract has no runtime schema yet.',
   },
@@ -75,7 +87,7 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     summary: 'Fire-cluster detail, version history and detection summary.',
     response: null,
     rateLimit: 'default',
-    cache: CACHE_POLICIES.fireCluster,
+    cache: [CACHE_POLICIES.fireCluster],
     implemented: false,
     blockedBy: 'the `FireClusterDetail` contract has no runtime schema yet.',
   },
@@ -84,7 +96,7 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     summary: 'Baseline metrics and the time series behind the charts.',
     response: null,
     rateLimit: 'default',
-    cache: CACHE_POLICIES.history,
+    cache: [CACHE_POLICIES.history],
     implemented: false,
     blockedBy: '`packages/baselines` is an empty stub: there are no baseline metrics to serve.',
   },
@@ -93,7 +105,7 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     summary: 'Type-ahead from the local GeoNames table, so keystrokes never leave the server.',
     response: null,
     rateLimit: 'default',
-    cache: CACHE_POLICIES.places,
+    cache: [CACHE_POLICIES.places],
     implemented: false,
     blockedBy: '`packages/geocoding` is an empty stub and the GeoNames import has not been built.',
   },
@@ -102,7 +114,7 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     summary: 'Submit-time geocoding through Nominatim, server-side and cached.',
     response: null,
     rateLimit: 'placesSearch',
-    cache: CACHE_POLICIES.places,
+    cache: [CACHE_POLICIES.places],
     implemented: false,
     blockedBy: '`packages/geocoding` is an empty stub.',
   },
@@ -111,7 +123,7 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     summary: 'A label for a rounded coordinate pair.',
     response: null,
     rateLimit: 'placesSearch',
-    cache: CACHE_POLICIES.places,
+    cache: [CACHE_POLICIES.places],
     implemented: false,
     blockedBy: '`packages/geocoding` is an empty stub.',
   },
@@ -120,7 +132,11 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     summary: 'Resolve one primary evidence reference (OBS, FCV, RUN, COR).',
     response: evidenceDetailSchema,
     rateLimit: 'default',
-    cache: CACHE_POLICIES.evidence,
+    /* Two values: `immutable` only when the caller pinned a past knowledge time. */
+    cache: [
+      `s-maxage=${String(LIVE_EVIDENCE_MAX_AGE_S)}, stale-while-revalidate=${String(LIVE_BRIEFING_STALE_WHILE_REVALIDATE_S)}`,
+      CACHE_POLICIES.evidence,
+    ],
     implemented: true,
   },
   {
@@ -128,7 +144,7 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     summary: 'Per-source health, recent runs, policies and attribution.',
     response: sourceStatusSchema,
     rateLimit: 'default',
-    cache: CACHE_POLICIES.sourcesStatus,
+    cache: [CACHE_POLICIES.sourcesStatus],
     implemented: true,
   },
   {
@@ -136,7 +152,7 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     summary: 'The earliest replayable knowledge time, per hazard family.',
     response: replayHorizonResponseSchema,
     rateLimit: 'default',
-    cache: CACHE_POLICIES.replayHorizon,
+    cache: [CACHE_POLICIES.replayHorizon],
     implemented: true,
   },
 ];
@@ -186,15 +202,27 @@ export function buildOpenApiDocument(options: { readonly version: string }): {
      * 501 would make the document a description of intent rather than of the API, which is the one
      * thing a generated document is supposed to prevent.
      */
+    /*
+     * An unserved path documents **no success and no 501**.
+     *
+     * A 501 was documented, and nothing serves one: there is no route file, so the framework
+     * answers with its own 404 HTML. A document whose stated purpose is that it cannot describe a
+     * shape the API does not produce must not promise a status the API never returns. The `404`
+     * already present is the truthful one, and the description says the path is not served.
+     */
     if (!contract.implemented || contract.response === null) {
-      responses['501'] = problemResponseObject(
-        contract.blockedBy ?? 'This endpoint is specified but not yet served.',
-      );
+      /* No 200. The `404` below is what a caller actually receives. */
     } else {
       responses['200'] = {
         description: 'The response contract, as frozen in `packages/domain`.',
         headers: {
-          'Cache-Control': { schema: { type: 'string', const: contract.cache } },
+          /*
+           * An `enum`, because two endpoints have a policy that depends on the knowledge time. The
+           * first version emitted a `const` whose value was the *sentence* "varies: live
+           * s-maxage=120, swr=600; …" — a header value no response has ever carried, which a
+           * generated client or a contract validator would assert against.
+           */
+          'Cache-Control': { schema: { type: 'string', enum: [...contract.cache] } },
           'RateLimit-Limit': { schema: { type: 'string' } },
           'RateLimit-Remaining': { schema: { type: 'string' } },
           'RateLimit-Reset': { schema: { type: 'string' } },

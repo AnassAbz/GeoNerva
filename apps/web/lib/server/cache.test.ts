@@ -15,9 +15,11 @@ import { describe, expect, it } from 'vitest';
 import {
   CACHE_POLICIES,
   LIVE_BRIEFING_MAX_AGE_S,
+  LIVE_EVIDENCE_MAX_AGE_S,
   REPLAY_MAX_AGE_S,
   REPLAY_THRESHOLD_MS,
   briefingCacheControl,
+  evidenceCacheControl,
   isImmutableReplay,
   jsonResponse,
 } from './cache.ts';
@@ -103,11 +105,49 @@ describe('CACHE_POLICIES', () => {
     });
   });
 
-  it('marks only evidence immutable, because only an evidence row cannot change', () => {
+  it('marks only the evidence policy immutable', () => {
     const immutable = Object.entries(CACHE_POLICIES)
       .filter(([, value]) => value.includes('immutable'))
       .map(([key]) => key);
     expect(immutable).toEqual(['evidence']);
+  });
+});
+
+describe('evidenceCacheControl', () => {
+  /**
+   * `immutable` is conditional, and the condition is what the first version got wrong.
+   *
+   * §13.1 says the evidence endpoint is immutable, on the premise that every primary evidence kind
+   * is an append-only row. Two of the four are not: `canonical_links` is updated in place when a
+   * link is withdrawn, and `ingestion_runs` when a run finishes or its lease expires. So a live
+   * lookup of `EV:COR:7` can report the link open, be cached `immutable` for a year, and keep
+   * reporting it open after the worker withdraws it — including through a browser hard reload.
+   */
+  it('is immutable for a knowledge time materially in the past', () => {
+    expect(evidenceCacheControl(ago(2 * REPLAY_THRESHOLD_MS), NOW)).toBe(CACHE_POLICIES.evidence);
+  });
+
+  it('is short-lived for a live lookup', () => {
+    /* No `as_of`: `parseAsOf` returns the request clock, so `asOf` and `now` are the same. */
+    expect(evidenceCacheControl(NOW, NOW)).toContain('stale-while-revalidate');
+    expect(evidenceCacheControl(NOW, NOW)).not.toContain('immutable');
+  });
+
+  /*
+   * A pinned but recent knowledge time is not a fixed past either: a correlation withdrawn in the
+   * next minute changes what that request answers.
+   */
+  it('is short-lived for a pinned but recent knowledge time', () => {
+    expect(evidenceCacheControl(ago(60_000), NOW)).not.toContain('immutable');
+  });
+
+  it('is exclusive at the threshold, like the briefing policy', () => {
+    expect(evidenceCacheControl(ago(REPLAY_THRESHOLD_MS), NOW)).not.toContain('immutable');
+    expect(evidenceCacheControl(ago(REPLAY_THRESHOLD_MS + 1), NOW)).toBe(CACHE_POLICIES.evidence);
+  });
+
+  it('never caches a live evidence lookup longer than a live briefing', () => {
+    expect(LIVE_EVIDENCE_MAX_AGE_S).toBeLessThanOrEqual(LIVE_BRIEFING_MAX_AGE_S);
   });
 });
 
@@ -129,6 +169,15 @@ describe('jsonResponse', () => {
     expect(jsonResponse({}, { cacheControl: 's-maxage=60' }).headers.get('vary')).toBe(
       'Accept-Encoding',
     );
+  });
+
+  it('merges extra headers without letting them override the four it owns', () => {
+    const response = jsonResponse(
+      {},
+      { cacheControl: 's-maxage=60', headers: { 'cache-control': 'no-store', 'x-extra': '1' } },
+    );
+    expect(response.headers.get('cache-control')).toBe('s-maxage=60');
+    expect(response.headers.get('x-extra')).toBe('1');
   });
 
   it('sets the three headers that stop a JSON body being interpreted as something else', () => {

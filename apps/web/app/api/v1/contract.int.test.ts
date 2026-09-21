@@ -14,9 +14,15 @@
  *    I15 (no coordinate past two decimals);
  *  - an error body that is not a well-formed problem document.
  *
- * `strict()` is applied before parsing, so an extra key is a failure rather than something Zod
- * quietly strips. Without it this file would test that the response is a *superset* of its
- * contract, which is the weaker and less useful claim.
+ * `strict()` is applied to the **top level** of each response, so an undeclared key there is a
+ * failure rather than something Zod quietly strips. It does not recurse: a stray key nested inside
+ * `sources[].recentRuns[]` or a family card is still stripped, and the tests below say "top-level"
+ * because that is what they check. The header used to claim more.
+ *
+ * The gap is covered from the other direction by a naming check on every JSON body: a row shape
+ * leaks through its `snake_case` before it leaks through its fields, which is exactly how
+ * `/evidence/{id}` was wrong. That check used to be applied to that one endpoint — the one where
+ * the bug had already happened — and is now applied to all three.
  */
 
 import { sql, type Kysely } from 'kysely';
@@ -204,22 +210,32 @@ describe('every served endpoint satisfies its frozen contract', () => {
   });
 
   /**
-   * Invariant I15 through the contract, with a request that actually carries precision.
+   * Invariant I15 through the contract, from the input side.
    *
-   * The other briefing cases send `lat=31.63`, which is already rounded — so removing the
-   * rounding from `params.ts` changed nothing and the schema's I15 refinement never fired. A
-   * mutation run proved it. This asks for six decimals, which is the only input that exercises
-   * both the parser and the contract.
+   * A precise coordinate is refused rather than rounded, because the URL is the CDN cache key and
+   * reaches the platform's access log before any of this code runs. So the contract test is that
+   * the refusal is a well-formed problem document which does not echo the position — and that the
+   * canonical form of the same request is served and satisfies the schema, including its I15
+   * refinement on the served value.
    */
-  it('GET /briefing with a precise coordinate rounds it before serving it', async () => {
+  it('GET /briefing refuses a precise coordinate in a well-formed problem document', async () => {
     const response = await briefing(request('/api/v1/briefing?lat=31.629512&lon=-7.981084'));
+    const raw = await response.text();
+    expect(response.status).toBe(400);
+
+    const problem = problemDetailsSchema.strict().parse(JSON.parse(raw));
+    expect(problem.code).toBe('VALIDATION_FAILED');
+    expect(raw).not.toContain('629512');
+  });
+
+  it('GET /briefing serves the canonical form and satisfies I15 on the way out', async () => {
+    const response = await briefing(request('/api/v1/briefing?lat=31.63&lon=-7.98'));
     const raw = await response.text();
     expect(response.status, raw.slice(0, 300)).toBe(200);
 
     const parsed = locationBriefingSchema.parse(JSON.parse(raw));
     expect(parsed.location.lat).toBe(31.63);
     expect(parsed.location.lon).toBe(-7.98);
-    expect(raw).not.toContain('629512');
   });
 
   it('GET /briefing, with nothing ingested', async () => {
@@ -331,15 +347,54 @@ describe('a response carries nothing its contract does not declare', () => {
     expect(() => replayHorizonResponseSchema.strict().parse(body)).not.toThrow();
   });
 
-  it('GET /evidence/{id} has no undeclared top-level key, and no snake_case one', async () => {
+  it('GET /evidence/{id} has no undeclared top-level key', async () => {
     const runId = await healthyRun();
     const response = await evidence(
       request(`/api/v1/evidence/EV:RUN:${runId}?as_of=${NOW.toISOString()}`),
     );
     const raw = await response.text();
     expect(() => evidenceDetailSchema.strict().parse(JSON.parse(raw))).not.toThrow();
-    /* A row shape leaks through its naming before it leaks through its fields. */
-    expect(raw).not.toMatch(/"[a-z]+_[a-z]/u);
+  });
+
+  /**
+   * No `snake_case` key anywhere in any response body, at any depth.
+   *
+   * This is the check that catches a database row escaping into a read model, and it is the one
+   * that would have caught `/evidence/{id}` returning a row. It was applied only to that endpoint;
+   * a nested leak in a briefing or on the data-status page would have passed, because `strict()`
+   * does not recurse.
+   */
+  it('no response body carries a snake_case key at any depth', async () => {
+    await healthyRun();
+    await derivationRan();
+    await seedQuake();
+    const runId = await healthyRun();
+
+    const bodies = await Promise.all([
+      (await sourcesStatus(request(`/api/v1/sources/status?as_of=${NOW.toISOString()}`))).text(),
+      (
+        await briefing(
+          request(
+            `/api/v1/briefing?lat=${String(LAT)}&lon=${String(LON)}&as_of=${NOW.toISOString()}`,
+          ),
+        )
+      ).text(),
+      (
+        await evidence(request(`/api/v1/evidence/EV:RUN:${runId}?as_of=${NOW.toISOString()}`))
+      ).text(),
+      (await replayHorizon(request('/api/v1/replay/horizon'))).text(),
+    ]);
+
+    for (const raw of bodies) {
+      const keys = [...raw.matchAll(/"([A-Za-z0-9_]+)":/gu)].map((match) => match[1] ?? '');
+      expect(keys.length).toBeGreaterThan(0);
+      /*
+       * Lowercase `snake_case` only. A `Record<HazardFamily, …>` has keys like `FIRE_ACTIVITY`,
+       * which carry underscores by design — the enum *is* the key. What a database row leaks is
+       * lowercase: `source_id`, `n_new_versions`, `last_seen_at`.
+       */
+      expect(keys.filter((key) => /^[a-z0-9]+(?:_[a-z0-9]+)+$/u.test(key))).toEqual([]);
+    }
   });
 });
 

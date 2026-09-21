@@ -105,6 +105,18 @@ export function buildSourceStatus(input: SourceStatusInput): SourceStatus {
   );
   const tallyBySource = new Map(input.tally.map((row) => [row.source_id, row]));
 
+  /*
+   * Invariant I9 decides which runs may be reported at all.
+   *
+   * `RunSummaryView.evidenceId` is non-nullable, so a run whose evidence row cannot be resolved at
+   * this knowledge time has no I9-compliant representation: reporting it would cite an id absent
+   * from the manifest, and reporting it without one would break the contract. The honest answer is
+   * that GeoNerva can no longer evidence that run, so it is omitted — which is reachable once
+   * retention prunes `ingestion_runs` (90 days on the lean profile) while health still refers to
+   * it. The previous behaviour shipped the dangling citation, and the test asserted it.
+   */
+  const resolvable = new Set(input.evidence.map((row) => row.id));
+
   const sources: SourceStatusEntry[] = input.sources.map((source) => {
     const products = productsBySource.get(source.source_id) ?? [];
     const tally = tallyBySource.get(source.source_id);
@@ -128,14 +140,16 @@ export function buildSourceStatus(input: SourceStatusInput): SourceStatus {
        */
       hazardTypes: unionHazardTypes(products),
       capabilities: unionCapabilities(products),
-      health: sourceHealthOf(rollup, source.source_id),
+      health: sourceHealthOf(rollup, `source ${source.source_id}`),
       products: products.map((product) =>
         toProductView(
           product,
           healthByProductKey.get(productKey(product.source_id, product.product_id)),
         ),
       ),
-      recentRuns: (runsBySource.get(source.source_id) ?? []).map(toRunSummary),
+      recentRuns: (runsBySource.get(source.source_id) ?? [])
+        .map(toRunSummary)
+        .filter((run) => resolvable.has(run.evidenceId)),
       /*
        * `null`, not `0`, when nothing ran. A zero here would read as "every run failed", which is
        * the false-negative this whole page exists to prevent.
@@ -227,36 +241,27 @@ export function evidenceIdsFor(input: {
 }
 
 /**
- * The health of a source that the derivation did not report on.
+ * The health of a source or product, which the derivation must have reported on.
  *
- * `healthAsOf` returns an entry for every row in `sources`, so this branch is unreachable in
- * practice — but "unreachable" and "cannot happen" are different, and the fallback must not be a
- * `FRESH` placeholder. `UNAVAILABLE` with `DISABLED` is the safe direction: if the two
- * reads ever disagree, the page says GeoNerva cannot see the source rather than that it can.
+ * `healthAsOf` returns an entry for every row in `sources` and every row in `source_products`, so a
+ * missing one is an internal inconsistency between two reads of the same database — not a state a
+ * response should describe.
+ *
+ * It used to be described, with a fabricated `FreshnessPolicyView` of all zeros: "expected poll
+ * interval: 0 s", `consecutiveFailures: 0`, and `reasons: ['DISABLED']` for a source that may not
+ * be disabled. The `UNAVAILABLE` direction was right and the numbers beside it were invented — and
+ * invented numbers are exactly what this page exists not to publish. `toProductView` passed the
+ * same object through for a *product*, producing a view whose `productId` was `null`.
+ *
+ * Throwing is the honest alternative: the API layer turns it into `INTERNAL_ERROR` with a trace id,
+ * which says "GeoNerva is broken" rather than "this source is disabled and polls every zero
+ * seconds".
  */
-function sourceHealthOf(health: SourceHealthAsOf | undefined, sourceId: string): SourceHealthView {
-  if (health !== undefined) return toSourceHealthView(health);
-  return {
-    sourceId,
-    productId: null,
-    status: 'UNAVAILABLE',
-    lastAttemptAt: null,
-    lastSuccessAt: null,
-    newestObservedAt: null,
-    consecutiveFailures: 0,
-    lastErrorClass: null,
-    reasons: ['DISABLED'],
-    expected: {
-      pollIntervalS: 0,
-      fetchFreshWithinS: 0,
-      fetchStaleAfterS: 0,
-      unavailableAfterS: 0,
-      dataCurrentWithinS: null,
-      dataStaleAfterS: null,
-      quietIsNormal: false,
-    },
-    evidenceId: null,
-  };
+function sourceHealthOf(health: SourceHealthAsOf | undefined, subject: string): SourceHealthView {
+  if (health === undefined) {
+    throw new Error(`the health derivation returned no entry for ${subject}`);
+  }
+  return toSourceHealthView(health);
 }
 
 function toProductView(
@@ -274,7 +279,7 @@ function toProductView(
     status: productStatusOf(product.status),
     activeFrom: product.active_from,
     activeTo: product.active_to,
-    health: sourceHealthOf(health, product.source_id),
+    health: sourceHealthOf(health, `product ${product.source_id}/${product.code}`),
   };
 }
 

@@ -730,8 +730,8 @@ describe('workerHeartbeatAsOf', () => {
   });
 
   /*
-   * The row is updated in place and has no history, so a heartbeat stamped after T is future
-   * knowledge and is withheld. The consequence — a replay cannot state worker liveness — is
+   * The row is updated in place and has no history, so a heartbeat stamped meaningfully after T is
+   * future knowledge and is withheld. The consequence — a replay cannot state worker liveness — is
    * documented on the function; what must never happen is the present leaking into the past.
    */
   it('withholds a heartbeat stamped after T', async () => {
@@ -740,6 +740,30 @@ describe('workerHeartbeatAsOf', () => {
       VALUES (true, ${hours(2)}, 'worker-1')
     `.execute(db);
     expect(await workerHeartbeatAsOf(db, minutes(1))).toBeNull();
+  });
+
+  /**
+   * A few seconds of clock skew must not read as "the worker has never reported in".
+   *
+   * `last_seen_at` comes from the **database** clock and `asOf` for a live request from the **web**
+   * process's. If the database leads by even a second, a strict `<=` nulls the heartbeat for that
+   * window after every minute's write — and the read model can only render `null` as "never
+   * reported in", which is a false statement about a healthy system.
+   */
+  it('tolerates a heartbeat a few seconds ahead of the knowledge time', async () => {
+    await sql`
+      INSERT INTO geonerva.worker_heartbeat (id, last_seen_at, version)
+      VALUES (true, ${new Date(T0.getTime() + 3_000)}, 'worker-1')
+    `.execute(db);
+    expect(await workerHeartbeatAsOf(db, T0)).toMatchObject({ version: 'worker-1' });
+  });
+
+  it('still withholds one a minute ahead, which is not skew', async () => {
+    await sql`
+      INSERT INTO geonerva.worker_heartbeat (id, last_seen_at, version)
+      VALUES (true, ${new Date(T0.getTime() + 60_000)}, 'worker-1')
+    `.execute(db);
+    expect(await workerHeartbeatAsOf(db, T0)).toBeNull();
   });
 });
 
@@ -755,14 +779,35 @@ describe('sourceCatalog', () => {
     }
   });
 
-  it('reports coverage as present-or-absent rather than shipping the polygon', async () => {
+  /*
+   * `not.toContain('coordinates')` was in this test and could not fail: the only coverage field is
+   * a boolean named `coverage_geometry_available`. What can fail is the field's *type* and the
+   * absence of any geometry-shaped value, so that is what is checked. ECCC carries a coverage
+   * polygon in the seed data, which makes the `true` case real rather than hypothetical.
+   */
+  it('reports coverage as a boolean rather than shipping the polygon', async () => {
     const catalog = await sourceCatalog(db);
-    const serialized = JSON.stringify(catalog);
-    expect(serialized).not.toContain('MULTIPOLYGON');
-    expect(serialized).not.toContain('coordinates');
     for (const source of catalog.sources) {
       expect(typeof source.coverage_geometry_available).toBe('boolean');
     }
+    /*
+     * Every seeded source is global — verified against the database, all five have
+     * `coverage IS NULL` — so the `false` branch is the one this exercises. The `true` branch is
+     * unreachable until a source with a coverage polygon exists, and saying so is better than an
+     * assertion that would have to be deleted when one does.
+     */
+    expect(catalog.sources.every((source) => !source.coverage_geometry_available)).toBe(true);
+
+    /*
+     * No geometry in any spelling — anchored on the *syntax*, after two looser patterns matched
+     * things that are not geometry. A coordinate-pair regex matched prose in a `coverage_note`,
+     * and a bare `POLYGON` matched `POLYGONS`, which is a legitimate `SourceCapability`. WKT always
+     * has its opening parenthesis and GeoJSON always has its `coordinates` key.
+     */
+    const serialized = JSON.stringify(catalog);
+    expect(serialized).not.toMatch(
+      /(?:MULTI)?(?:POLYGON|LINESTRING|POINT)\s*\(|"coordinates"\s*:/u,
+    );
   });
 
   it('reports the sensor lifecycle dates as plain date strings', async () => {

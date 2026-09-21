@@ -617,6 +617,40 @@ export type ChangeSectionMatches = Expect<
   Exact<z.infer<typeof changeSectionSchema>, ChangeSection>
 >;
 
+/**
+ * Every evidence id the response references, wherever it sits.
+ *
+ * A structural walk rather than a list of known fields: the fields that carry ids are spread across
+ * a dozen nested types, and enumerating them is how I9 gets checked against one version of the
+ * document's shape while a new field quietly escapes it.
+ *
+ * The first version walked for the key names `evidenceId` and `evidenceIds` **only**, and its
+ * comment claimed that walking for the key name "cannot" miss a field. It missed two:
+ * `BaselineMetricView.id` is an `EV:BAS:` reference and `ChangeSignalView.id` is an `EV:CHG:` one,
+ * so a briefing could cite a change signal absent from its own manifest and this refinement could
+ * not fail. A plain `id` is therefore collected too — but only when it *looks* like an evidence
+ * reference, because `RunSummaryView.id` is a bare uuid and `SourceProductView.id` is a number,
+ * and treating those as citations would demand manifest entries that should not exist.
+ */
+export function citedEvidenceIds(value: unknown, found = new Set<string>()): Set<string> {
+  if (Array.isArray(value)) {
+    for (const entry of value) citedEvidenceIds(entry, found);
+    return found;
+  }
+  if (value === null || typeof value !== 'object') return found;
+
+  for (const [key, entry] of Object.entries(value)) {
+    /* The manifest is the answer, not a question: its own ids must not be treated as citations. */
+    if (key === 'evidenceManifest') continue;
+    if (key === 'evidenceId' && typeof entry === 'string') found.add(entry);
+    else if (key === 'id' && typeof entry === 'string' && entry.startsWith('EV:')) found.add(entry);
+    else if (key === 'evidenceIds' && Array.isArray(entry)) {
+      for (const id of entry) if (typeof id === 'string') found.add(id);
+    } else citedEvidenceIds(entry, found);
+  }
+  return found;
+}
+
 /*
  * ── Top-level responses ───────────────────────────────────────────────────────
  */
@@ -728,16 +762,37 @@ export type SourceStatusEntryMatches = Expect<
   Exact<z.infer<typeof sourceStatusEntrySchema>, SourceStatusEntry>
 >;
 
-export const sourceStatusSchema = z.object({
-  schemaVersion,
-  asOfContext: asOfContextSchema,
-  generatedAt: isoTimestamp,
-  sources: z.array(sourceStatusEntrySchema),
-  worker: workerStatusViewSchema.nullable(),
-  dataQuality: z.array(dataQualityCheckViewSchema),
-  evidenceManifest: z.array(evidenceItemSchema),
-  attribution: z.array(attributionSchema),
-});
+/**
+ * `GET /api/v1/sources/status`.
+ *
+ * The refinement is invariant **I9**, which this contract was missing while `locationBriefingSchema`
+ * had it. Its absence was not theoretical: the assembly omitted a manifest entry it could not
+ * resolve while still citing the id in `recentRuns[].evidenceId`, and a test asserted that as the
+ * desired behaviour. A response cannot cite what it does not carry.
+ */
+export const sourceStatusSchema = z
+  .object({
+    schemaVersion,
+    asOfContext: asOfContextSchema,
+    generatedAt: isoTimestamp,
+    sources: z.array(sourceStatusEntrySchema),
+    worker: workerStatusViewSchema.nullable(),
+    dataQuality: z.array(dataQualityCheckViewSchema),
+    evidenceManifest: z.array(evidenceItemSchema),
+    attribution: z.array(attributionSchema),
+  })
+  .superRefine((status, ctx) => {
+    const manifest = new Set(status.evidenceManifest.map((item) => item.id));
+    for (const id of citedEvidenceIds(status)) {
+      if (!manifest.has(id)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['evidenceManifest'],
+          message: `the response cites ${id}, which its manifest does not contain (I9)`,
+        });
+      }
+    }
+  });
 export type SourceStatusMatches = Expect<Exact<z.infer<typeof sourceStatusSchema>, SourceStatus>>;
 
 /*
@@ -868,31 +923,6 @@ export const locationBriefingSchema = z
 export type LocationBriefingMatches = Expect<
   Exact<z.infer<typeof locationBriefingSchema>, LocationBriefing>
 >;
-
-/**
- * Every evidence id the response references, wherever it sits.
- *
- * A structural walk rather than a list of known fields: the fields that carry ids are spread
- * across a dozen nested types, and enumerating them is how I9 gets checked against the 2024 shape
- * of the document while a new field quietly escapes it. Walking for the key name cannot.
- */
-function citedEvidenceIds(value: unknown, found = new Set<string>()): Set<string> {
-  if (Array.isArray(value)) {
-    for (const entry of value) citedEvidenceIds(entry, found);
-    return found;
-  }
-  if (value === null || typeof value !== 'object') return found;
-
-  for (const [key, entry] of Object.entries(value)) {
-    /* The manifest is the answer, not a question: its own ids must not be treated as citations. */
-    if (key === 'evidenceManifest') continue;
-    if (key === 'evidenceId' && typeof entry === 'string') found.add(entry);
-    else if (key === 'evidenceIds' && Array.isArray(entry)) {
-      for (const id of entry) if (typeof id === 'string') found.add(id);
-    } else citedEvidenceIds(entry, found);
-  }
-  return found;
-}
 
 /*
  * ── Evidence detail ───────────────────────────────────────────────────────────

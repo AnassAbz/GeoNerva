@@ -29,9 +29,14 @@
  *
  * With no usable address — no header, a malformed one, direct access in development — the request
  * is counted against a single shared key. That is the fail-closed direction: a caller who strips
- * the header is limited *collectively* instead of being exempted. It does mean such callers can
- * exhaust each other's budget, which is acceptable because every real deployment sits behind a
- * proxy that sets the header.
+ * the header is limited *collectively* instead of being exempted.
+ *
+ * That bucket is a liability, so **reaching it must not be something a caller can choose.** An
+ * earlier version gave up on any header longer than 1 KB, which made the shared bucket
+ * caller-selectable: send 2 KB of junk followed by your real address and collect a second full
+ * budget, or saturate the shared bucket and refuse every caller whose address the parser cannot
+ * read. The header is now read from its **end**, where the trusted hop appended, so an arbitrarily
+ * long prefix costs the attacker nothing and buys them nothing.
  *
  * ### 3. A limiter outage fails open — except where a third party is involved
  *
@@ -101,11 +106,24 @@ export function windowStartFor(now: Date, windowS: number): Date {
  * Returns `null` for anything that is not an address, so a hostile value cannot become a key.
  */
 export function ipPrefix(address: string): string | null {
-  const trimmed = address.trim().replace(/^\[|\]$/gu, '');
+  /*
+   * Brackets and a zone id are stripped first. `fe80::1%eth0` is a real address a proxy can
+   * forward, and rejecting it put its sender in the shared `unknown` bucket — which, with the
+   * saturation attack above, meant an attacker could deny service to link-local callers
+   * specifically.
+   */
+  const trimmed = address
+    .trim()
+    .replace(/^\[|\]$/gu, '')
+    .replace(/%[0-9a-z._-]{1,32}$/iu, '');
   if (trimmed === '' || trimmed.length > 45) return null;
 
-  /* IPv4-mapped IPv6 (`::ffff:203.0.113.5`) is an IPv4 address and must key like one. */
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/iu.exec(trimmed);
+  /*
+   * An embedded IPv4 tail is an IPv4 address and must key like one. `::ffff:203.0.113.5` is the
+   * common form, but the mixed notation is general — `64:ff9b::192.0.2.33` is a valid NAT64
+   * address — so the whole prefix is checked rather than just the `::ffff:` case.
+   */
+  const mapped = /^(?:[0-9a-f:]*:)?(\d{1,3}(?:\.\d{1,3}){3})$/iu.exec(trimmed);
   const candidate = mapped?.[1] ?? trimmed;
 
   if (/^\d{1,3}(?:\.\d{1,3}){3}$/u.test(candidate)) {
@@ -146,9 +164,20 @@ function expandIpv6(value: string): string[] | null {
  */
 export function clientAddress(headers: Headers, hops: number = TRUSTED_PROXY_HOPS): string | null {
   const forwarded = headers.get('x-forwarded-for');
-  if (forwarded === null || forwarded.length > 1024) return null;
+  if (forwarded === null) return null;
 
-  const entries = forwarded
+  /*
+   * The tail, not the whole header, and not a rejection.
+   *
+   * Bounding the work is still necessary — splitting a megabyte of commas on every request is a
+   * gift to an attacker — but bounding it by *refusing* handed the caller the shared bucket. The
+   * slice is taken from the right, so the entries that matter are whole: a cut can only damage the
+   * leftmost entry in the window, which is the one furthest from the trusted hop.
+   */
+  const tail =
+    forwarded.length > MAX_FORWARDED_LENGTH ? forwarded.slice(-MAX_FORWARDED_LENGTH) : forwarded;
+
+  const entries = tail
     .split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry !== '');
@@ -157,6 +186,14 @@ export function clientAddress(headers: Headers, hops: number = TRUSTED_PROXY_HOP
   const index = entries.length - Math.max(1, hops);
   return entries[Math.max(0, index)] ?? null;
 }
+
+/**
+ * How much of `X-Forwarded-For` is read, counting from the right.
+ *
+ * 512 characters holds well over a dozen addresses, so it accommodates any real proxy chain while
+ * bounding the parsing work per request.
+ */
+export const MAX_FORWARDED_LENGTH = 512;
 
 /**
  * The bucket key: `HMAC(HMAC(secret, day), scope + prefix)`.
@@ -274,6 +311,12 @@ export async function enforceRateLimit(request: RateLimitRequest): Promise<RateL
     code: 'RATE_LIMITED',
     detail: 'Too many requests. This limit protects GeoNerva and the providers it depends on.',
     retryAfterS: verdict.retryAfterS,
+    /*
+     * The budget, on the one response where it is true for its reader. A problem document is
+     * `no-store`, so unlike an allowed response it cannot be served from a shared cache to a
+     * caller it does not describe.
+     */
+    headers: rateLimitHeaders(verdict),
   });
 }
 

@@ -301,17 +301,25 @@ describe('buildSourceStatus — health', () => {
     },
   );
 
-  /*
-   * Unreachable in practice — `healthAsOf` returns a row per source — but the fallback must fail
-   * in the safe direction. If the two reads ever disagree, the page must say GeoNerva cannot see
-   * the source, never that it can.
+  /**
+   * A missing health entry is refused, not described.
+   *
+   * It used to be described with a fabricated policy of zeros — "expected poll interval: 0 s",
+   * `reasons: ['DISABLED']` for a source that may not be disabled — which is precisely the kind of
+   * invented number this page exists not to publish. `healthAsOf` returns an entry per source and
+   * per product, so a gap is an internal inconsistency between two reads of one database, and
+   * `INTERNAL_ERROR` with a trace id is the honest rendering of that.
    */
-  it('falls back to UNAVAILABLE, not FRESH, when the derivation reported nothing', () => {
-    const status = buildSourceStatus(input({ healthBySource: [], healthByProduct: [] }));
-    expect(status.sources[0]?.health.status).toBe('UNAVAILABLE');
-    expect(status.sources[0]?.health.reasons).toEqual(['DISABLED']);
-    expect(status.sources[0]?.health.evidenceId).toBeNull();
-    expect(status.sources[0]?.products[0]?.health.status).toBe('UNAVAILABLE');
+  it('refuses to describe a source the derivation did not report on', () => {
+    expect(() => buildSourceStatus(input({ healthBySource: [], healthByProduct: [] }))).toThrow(
+      /health derivation returned no entry for source usgs/u,
+    );
+  });
+
+  it('names the product when it is the product that is missing', () => {
+    expect(() => buildSourceStatus(input({ healthByProduct: [] }))).toThrow(
+      /product usgs\/comcat_all_day/u,
+    );
   });
 
   it('reports a missing timestamp as null rather than as an epoch', () => {
@@ -634,9 +642,19 @@ describe('buildSourceStatus — data quality', () => {
     expect(buildSourceStatus(input()).dataQuality).toEqual([]);
   });
 
-  it('never emits a check with a status of OK and nothing behind it', () => {
-    const serialized = JSON.stringify(buildSourceStatus(input()));
-    expect(serialized).not.toContain('"status":"OK"');
+  /**
+   * The previous version searched the serialized response for `"status":"OK"`, which no enum in
+   * the response can produce — health is FRESH/DEGRADED/STALE/UNAVAILABLE and a run is
+   * SUCCEEDED/PARTIAL/… — so it passed against any implementation, including one that fabricated
+   * `status: 'WARN'` rows from nothing. The check that means something is that the array is empty
+   * and therefore carries no check object at all.
+   */
+  it('emits no data-quality check object of any status', () => {
+    const status = buildSourceStatus(input());
+    expect(status.dataQuality).toHaveLength(0);
+    for (const check of status.dataQuality) {
+      expect(['OK', 'WARN', 'ALARM']).not.toContain(check.status);
+    }
   });
 });
 
@@ -660,15 +678,32 @@ describe('buildSourceStatus — the evidence manifest (invariant I9)', () => {
     expect(buildSourceStatus(input()).evidenceManifest[0]?.resolvable).toBe(true);
   });
 
-  /*
-   * An id whose row could not be read at this knowledge time is omitted, which surfaces as a
-   * manifest gap. The alternative — an entry invented from the id — would make an unresolvable
-   * citation look resolvable.
+  /**
+   * A run whose evidence cannot be resolved is **not reported at all**.
+   *
+   * The earlier version of this test asserted the opposite — an empty manifest beside a
+   * `recentRuns[0].evidenceId` — and that is an invariant I9 violation shipped to a caller: the
+   * response cites an id its own manifest does not contain. `RunSummaryView.evidenceId` is
+   * non-nullable, so there is no I9-compliant way to report the run; the honest answer is that
+   * GeoNerva can no longer evidence it. Reachable once retention prunes `ingestion_runs` while
+   * health still refers to the run.
    */
-  it('omits an entry it could not resolve rather than inventing one', () => {
+  it('omits a run whose evidence it cannot resolve, rather than citing it', () => {
     const status = buildSourceStatus(input({ evidence: [] }));
     expect(status.evidenceManifest).toEqual([]);
-    expect(status.sources[0]?.recentRuns[0]?.evidenceId).toBe(`EV:RUN:${RUN_UUID}`);
+    expect(status.sources[0]?.recentRuns).toEqual([]);
+  });
+
+  it('keeps the runs it can evidence and drops only the others', () => {
+    const status = buildSourceStatus(
+      input({
+        runs: [run(), run({ id: OTHER_RUN_UUID })],
+        /* Only the first run's evidence resolves. */
+        evidence: [evidence()],
+      }),
+    );
+    expect(status.sources[0]?.recentRuns.map((entry) => entry.id)).toEqual([RUN_UUID]);
+    expect(status.evidenceManifest.map((item) => item.id)).toEqual([`EV:RUN:${RUN_UUID}`]);
   });
 
   /**

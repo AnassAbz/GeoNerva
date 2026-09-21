@@ -98,6 +98,25 @@ describe('pathOnly', () => {
   it('handles a relative path without throwing', () => {
     expect(() => pathOnly('/api/v1/evidence/EV:OBS:41')).not.toThrow();
   });
+
+  /**
+   * A dynamic route's path segment is attacker-controlled, so `instance` is capped.
+   *
+   * `/api/v1/evidence/` plus a URL's worth of junk was reflected into the body and the log line in
+   * full, which contradicts this module's own rule that no request value is echoed.
+   */
+  it('caps a hostile path segment', () => {
+    const long = `/api/v1/evidence/${'A'.repeat(5000)}`;
+    const reflected = pathOnly(long);
+    expect(reflected.length).toBeLessThanOrEqual(121);
+    expect(problemDocument({ code: 'VALIDATION_FAILED', instance: long }).instance).toBe(reflected);
+  });
+
+  it('leaves a real route untouched', () => {
+    expect(pathOnly('/api/v1/fire-clusters/FR-26-3K7P2A')).toBe(
+      '/api/v1/fire-clusters/FR-26-3K7P2A',
+    );
+  });
 });
 
 describe('problemResponse', () => {
@@ -119,6 +138,30 @@ describe('problemResponse', () => {
    */
   it.each(PROBLEM_CODES)('never caches a %s', (code) => {
     expect(problemResponse({ code }).headers.get('cache-control')).toBe('no-store');
+  });
+
+  /**
+   * The same three headers `jsonResponse` sets, and more necessary here.
+   *
+   * An error body is the one response class that reflects part of the request back, in `instance`,
+   * so it is the last place that should be missing `nosniff`.
+   */
+  it('carries the content-type and framing headers', () => {
+    const headers = problemResponse({ code: 'VALIDATION_FAILED' }).headers;
+    expect(headers.get('x-content-type-options')).toBe('nosniff');
+    expect(headers.get('x-frame-options')).toBe('DENY');
+    expect(headers.get('referrer-policy')).toBe('no-referrer');
+  });
+
+  it('merges the headers a problem carries, for the budget on a 429', () => {
+    const response = problemResponse({
+      code: 'RATE_LIMITED',
+      retryAfterS: 30,
+      headers: { 'ratelimit-remaining': '0' },
+    });
+    expect(response.headers.get('ratelimit-remaining')).toBe('0');
+    expect(response.headers.get('retry-after')).toBe('30');
+    expect(response.headers.get('cache-control')).toBe('no-store');
   });
 
   it('sets retry-after only when the problem carries one', () => {

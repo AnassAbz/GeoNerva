@@ -61,6 +61,14 @@ export interface ProblemOptions {
   readonly affectedFamilies?: readonly HazardFamily[];
   /** Supplied when the caller already logged under this id; generated otherwise. */
   readonly traceId?: string;
+  /**
+   * Extra response headers. Used for the `RateLimit-*` family on a 429.
+   *
+   * Safe here and nowhere else: a problem response is `no-store`, so a per-caller value cannot be
+   * served from a shared cache to anyone else. That is exactly why the same headers were removed
+   * from the cacheable 200s.
+   */
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 /** A typed error a handler or service may throw, and the API layer turns into a response. */
@@ -107,10 +115,19 @@ export function problemResponse(options: ProblemOptions): Response {
   const headers = new Headers({
     'content-type': PROBLEM_MEDIA_TYPE,
     'cache-control': 'no-store',
+    /*
+     * The same three headers `jsonResponse` sets, and more necessary here than there: an error
+     * body is the one response class that reflects part of the request back (`instance`), so it is
+     * the last place that should be missing `nosniff`.
+     */
+    'x-content-type-options': 'nosniff',
+    'x-frame-options': 'DENY',
+    'referrer-policy': 'no-referrer',
   });
   if (document.retryAfterS !== null) {
     headers.set('retry-after', String(Math.max(0, Math.ceil(document.retryAfterS))));
   }
+  for (const [name, value] of Object.entries(options.headers ?? {})) headers.set(name, value);
   return new Response(JSON.stringify(document), { status: document.status, headers });
 }
 
@@ -124,8 +141,18 @@ export function problemResponse(options: ProblemOptions): Response {
  */
 export function pathOnly(instance: string): string {
   const cut = instance.search(/[?#]/u);
-  return cut === -1 ? instance : instance.slice(0, cut);
+  const path = cut === -1 ? instance : instance.slice(0, cut);
+  /*
+   * Capped, because a dynamic route's path segment is attacker-controlled: `/api/v1/evidence/` plus
+   * a URL's worth of junk was echoed into the body and the log line in full, which contradicts this
+   * module's own rule that no request value is reflected. The cap keeps `instance` useful for the
+   * common case and bounded in the hostile one.
+   */
+  return path.length > MAX_INSTANCE_LENGTH ? `${path.slice(0, MAX_INSTANCE_LENGTH)}…` : path;
 }
+
+/** Longer than any real route in §13.1, shorter than anything worth reflecting. */
+const MAX_INSTANCE_LENGTH = 120;
 
 /**
  * Turns any thrown value into a response.

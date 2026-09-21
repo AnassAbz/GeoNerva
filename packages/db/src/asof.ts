@@ -1074,9 +1074,14 @@ export interface RunSummaryRow {
  * `RUNNING` run has produced no knowledge yet, and showing it would let the data-status page
  * report activity whose results no reader can see.
  *
- * Bounded by `perSource` through a window function rather than a query per source, so the endpoint
- * costs one round trip whatever the source count — which is also what keeps it from becoming a
- * request-amplification lever.
+ * Bounded by `perSource` **per source, in the index**, through a lateral join. The first version
+ * used `row_number() OVER (PARTITION BY source_id …)` with the rank filtered above the window,
+ * which reads and sorts the *entire* committed run history on every call: `EXPLAIN` showed
+ * `WindowAgg (Run Condition: row_number() <= 10)` sitting on a full `Sort` over a `Seq Scan`,
+ * because a run condition prunes output rows rather than input. At eight products polled every
+ * 5–15 minutes that is ~100k rows a year, on the cheapest request in the API. The lateral form
+ * keeps the one round trip and makes the work proportional to `sources × perSource` instead of to
+ * how long the deployment has been running.
  *
  * `error_message` is deliberately **not** selected. It is sanitized and capped at write time, but
  * `RunSummaryView` has no field for it and a public endpoint is the wrong place to serve provider
@@ -1088,34 +1093,34 @@ export async function runSummariesAsOf(
 ): Promise<RunSummaryRow[]> {
   const perSource = Math.max(1, Math.min(options.perSource ?? 10, 50));
   const result = await sql<RunSummaryRow>`
-    SELECT id, source_id, product_id, trigger, status, started_at, finished_at, committed_at,
-           n_received, n_new_records, n_new_versions, n_unchanged, n_rejected,
-           newest_observed_at, error_class
-    FROM (
-      SELECT r.id::text        AS id,
-             r.source_id,
-             r.product_id,
-             r.trigger,
-             r.status,
-             r.started_at,
-             r.finished_at,
-             r.committed_at,
-             r.n_received,
-             r.n_new_records,
-             r.n_new_versions,
-             r.n_unchanged,
-             r.n_rejected,
-             r.newest_observed_at,
-             r.error_class,
-             row_number() OVER (
-               PARTITION BY r.source_id ORDER BY r.committed_at DESC, r.id DESC
-             ) AS seq
+    SELECT recent.id,
+           s.id              AS source_id,
+           recent.product_id,
+           recent.trigger,
+           recent.status,
+           recent.started_at,
+           recent.finished_at,
+           recent.committed_at,
+           recent.n_received,
+           recent.n_new_records,
+           recent.n_new_versions,
+           recent.n_unchanged,
+           recent.n_rejected,
+           recent.newest_observed_at,
+           recent.error_class
+    FROM geonerva.sources s
+    CROSS JOIN LATERAL (
+      SELECT r.id::text AS id, r.product_id, r.trigger, r.status, r.started_at, r.finished_at,
+             r.committed_at, r.n_received, r.n_new_records, r.n_new_versions, r.n_unchanged,
+             r.n_rejected, r.newest_observed_at, r.error_class
       FROM geonerva.ingestion_runs r
-      WHERE r.committed_at IS NOT NULL
+      WHERE r.source_id = s.id
+        AND r.committed_at IS NOT NULL
         AND r.committed_at <= ${options.asOf}
-    ) ranked
-    WHERE seq <= ${perSource}
-    ORDER BY source_id, committed_at DESC, id DESC
+      ORDER BY r.committed_at DESC, r.id DESC
+      LIMIT ${perSource}
+    ) recent
+    ORDER BY s.id, recent.committed_at DESC, recent.id DESC
   `.execute(db);
   return [...result.rows];
 }
@@ -1180,15 +1185,33 @@ export async function workerHeartbeatAsOf(
   db: Kysely<DB>,
   asOf: Date,
 ): Promise<WorkerHeartbeatRow | null> {
+  /*
+   * A skew allowance, because the two timestamps come from different clocks.
+   *
+   * `last_seen_at` is stamped by the **database** and `asOf` for a live request is the **web**
+   * process's `new Date()`. If the database clock leads the web clock at all — routine between a
+   * serverless function and a managed Postgres — then for a window equal to the skew after each
+   * minute's heartbeat write, a strict `<=` reports `worker: null` on a perfectly healthy system,
+   * and the read model can only render that as "the worker has never reported in". The same
+   * happens when the heartbeat is written *during* a slow request.
+   *
+   * The allowance is the same five seconds `parseAsOf` uses for the same reason, and it cannot
+   * leak meaningful future knowledge: the heartbeat is one row saying the worker was alive, and
+   * five seconds of it is not a fact about a hazard.
+   */
+  const bound = new Date(asOf.getTime() + HEARTBEAT_CLOCK_SKEW_MS);
   const result = await sql<WorkerHeartbeatRow>`
     SELECT last_seen_at, version
     FROM geonerva.worker_heartbeat
-    WHERE last_seen_at <= ${asOf}
+    WHERE last_seen_at <= ${bound}
     ORDER BY last_seen_at DESC
     LIMIT 1
   `.execute(db);
   return result.rows[0] ?? null;
 }
+
+/** Matches `AS_OF_FUTURE_TOLERANCE_MS` in the API layer, for the same clock-skew reason. */
+const HEARTBEAT_CLOCK_SKEW_MS = 5_000;
 
 /** One provider, as the data-status page describes it. */
 export interface SourceRow {
@@ -1414,7 +1437,7 @@ export interface RunEvidenceRow {
   readonly n_rejected: number;
   readonly newest_observed_at: Date | null;
   readonly error_class: string | null;
-  /** Sanitized and bounded to 1 KB at write time (`sanitizeDetail`, SECURITY.md M7). */
+  /** Bounded to 1 KB at write time. **Not redacted** — see `runEvidenceAsOf`. */
   readonly error_message: string | null;
   readonly payload_sha256: string | null;
   readonly worker_version: string | null;
@@ -1423,12 +1446,21 @@ export interface RunEvidenceRow {
 /**
  * One ingestion run, if it had committed by `asOf`.
  *
- * `error_message` **is** served here, unlike in `runSummariesAsOf`, because `EvidenceDetail`
- * declares the field and the write path earns it: every path that closes a failed run passes the
- * detail through `sanitizeDetail`, and the one path that could see a driver error substitutes
- * `describeDatabaseFailure` — the SQLSTATE and constraint name — rather than the message, precisely
- * because a `node-postgres` error carries host and port. That is what makes the field safe to
- * expose; it is a property of the writer, not of this query, and it is asserted there.
+ * `error_message` is selected and the API serves `null` for it. The reason is worth recording,
+ * because the first version of this comment justified publishing it and the justification was
+ * wrong.
+ *
+ * `sanitizeDetail` collapses whitespace and caps the value at 1,000 bytes. **It redacts nothing.**
+ * What reaches the column includes `SourceFetchError.describe()`, which carries the provider's
+ * host and path, and Zod issue text from a normalization failure, which quotes provider payload
+ * values. Two real controls exist — `describeDatabaseFailure` keeps driver messages out, and the
+ * FIRMS adapter scrubs `MAP_KEY` — but neither makes the column safe for an anonymous reader, and
+ * "every path passes through `sanitizeDetail`" describes a length cap, not a redaction.
+ *
+ * `EvidenceDetail.errorMessage` is `string | null`, so serving `null` satisfies the contract while
+ * the contract's own promise — "never a raw provider body and never a connection string" — remains
+ * a property of the *writer* that nothing currently enforces. The column stays in this row so an
+ * operator reading the database sees what it holds.
  */
 export async function runEvidenceAsOf(
   db: Kysely<DB>,

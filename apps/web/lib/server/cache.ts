@@ -34,7 +34,10 @@ export const CACHE_POLICIES = {
   eventDetail: 's-maxage=120, stale-while-revalidate=600',
   fireCluster: 's-maxage=300, stale-while-revalidate=600',
   history: 's-maxage=3600, stale-while-revalidate=3600',
-  /** §13.1: "immutable". An evidence row cannot change once written. */
+  /**
+   * §13.1 writes "immutable" for this endpoint, and it is only *conditionally* true — see
+   * `evidenceCacheControl`, which is what handlers use.
+   */
   evidence: 's-maxage=31536000, immutable',
   sourcesStatus: 's-maxage=60, stale-while-revalidate=120',
   replayHorizon: 's-maxage=3600, stale-while-revalidate=3600',
@@ -63,6 +66,43 @@ export function briefingCacheControl(asOf: Date, now: Date): string {
     ? `s-maxage=${String(REPLAY_MAX_AGE_S)}, immutable`
     : `s-maxage=${String(LIVE_BRIEFING_MAX_AGE_S)}, stale-while-revalidate=${String(LIVE_BRIEFING_STALE_WHILE_REVALIDATE_S)}`;
 }
+
+/**
+ * The `Cache-Control` for one evidence lookup.
+ *
+ * §13.1 says "immutable", on the premise — written into the route's own doc comment — that "every
+ * primary evidence kind points at an append-only row that cannot change once written". **Two of
+ * the four kinds do change.** `canonical_links` rows are updated in place by `unlinkRecord`,
+ * `linkRecord`'s relink path and `mergeCanonicalEvents`, all setting `unlinked_at` and
+ * `unlink_reason`; and `ingestion_runs` rows are updated by `finishRun` and by the lease-expiry
+ * path. `correlationEvidenceAsOf` deliberately *reveals* a closure from the moment it happened,
+ * which is correct — and fatal in combination with `immutable`:
+ *
+ *  1. 12:00 — a client resolves `EV:COR:7` with no `as_of`. Body: `unlinkedAt: null`.
+ *  2. 14:00 — the worker withdraws the link.
+ *  3. For up to a year, every client behind that CDN key still reads the correlation as open, and
+ *     `immutable` means a browser will not revalidate even on a hard reload.
+ *
+ * So `immutable` is claimed only when the caller **pinned a past knowledge time**, which is the
+ * condition that actually makes the answer fixed forever. A live lookup gets a short TTL, on the
+ * same reasoning as a live briefing.
+ */
+export function evidenceCacheControl(asOf: Date, now: Date): string {
+  /*
+   * "Materially in the past" is the whole condition, and it subsumes "the caller pinned a time".
+   *
+   * A `wasPinned` argument was written here first, on the reasoning that only a pinned knowledge
+   * time can be immutable. It could never change the answer: `parseAsOf` returns the request's own
+   * clock when `as_of` is absent, so an unpinned `asOf` *is* `now` and is never an hour behind it.
+   * A mutation run made the point — flipping the flag to a constant `true` changed no behaviour —
+   * and a parameter that cannot affect the result is a distinction a reader has to disprove.
+   */
+  if (isImmutableReplay(asOf, now)) return CACHE_POLICIES.evidence;
+  return `s-maxage=${String(LIVE_EVIDENCE_MAX_AGE_S)}, stale-while-revalidate=${String(LIVE_BRIEFING_STALE_WHILE_REVALIDATE_S)}`;
+}
+
+/** As short as a live briefing: a correlation can be withdrawn at any time. */
+export const LIVE_EVIDENCE_MAX_AGE_S = 120;
 
 /**
  * A JSON response with the read-model media type and an explicit cache policy.

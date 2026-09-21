@@ -31,6 +31,7 @@ export { toFreshnessPolicyView, toSourceHealthView } from './health-view.ts';
  */
 export {
   agreementSchema,
+  citedEvidenceIds,
   aiBriefingViewSchema,
   aiSectionSchema,
   asOfContextSchema,

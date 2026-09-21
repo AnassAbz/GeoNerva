@@ -326,6 +326,30 @@ describe('runPayload', () => {
     };
   }
 
+  /* L-5: a provider-controlled URL with a scheme a reader must not follow is dropped. */
+  it('drops a source URL whose scheme is not http or https', () => {
+    expect(
+      observationPayload({
+        version_id: '41',
+        version_seq: 1,
+        source_id: 'usgs',
+        product_id: 1,
+        primary_key: 'us7000tikb',
+        hazard_type: 'EARTHQUAKE',
+        lifecycle_status: 'ACTIVE',
+        observed_at: new Date('2026-09-21T11:58:00.000Z'),
+        valid_from: null,
+        valid_to: null,
+        source_updated_at: null,
+        ingested_at: new Date('2026-09-21T12:04:00.000Z'),
+        contributor: null,
+        content_sha256: 'b'.repeat(64),
+        source_url: 'javascript:alert(document.domain)',
+        raw_record_present: false,
+      }),
+    ).toMatchObject({ sourceUrl: null });
+  });
+
   it('maps the run with its three timestamps and its counts', () => {
     expect(runPayload(run())).toEqual({
       kind: 'RUN',
@@ -348,27 +372,36 @@ describe('runPayload', () => {
     });
   });
 
-  /*
-   * `error_message` is served here, unlike in `runSummariesAsOf`, because the frozen contract
-   * declares it and the write path earns it: every path that closes a failed run passes the detail
-   * through `sanitizeDetail`, and the one path that could see a driver error substitutes the
-   * SQLSTATE and constraint name instead of the message.
+  /**
+   * The error **class** is served and the **message** is not.
+   *
+   * The message was served, justified by `sanitizeDetail` — which collapses whitespace and caps
+   * the value at 1 KB and **redacts nothing**. What reaches the column includes
+   * `SourceFetchError.describe()`, carrying the provider's host and path, and Zod issue text that
+   * quotes provider payload values. The frozen contract promises "never a raw provider body and
+   * never a connection string"; that is a property of the writer, and the writer does not deliver
+   * it. `errorMessage` is `string | null`, so `null` satisfies the contract while the promise is
+   * unmet.
+   *
+   * The class is a closed enumeration and is the part a reader can act on.
    */
-  it('serves the sanitized error message and class for a failed run', () => {
-    expect(
-      runPayload(
-        run({
-          status: 'FAILED',
-          error_class: 'HTTP_5XX',
-          error_message: 'USGS returned 503 for comcat_all_day',
-          committed_at: new Date('2026-09-21T11:55:05.000Z'),
-        }),
-      ),
-    ).toMatchObject({
+  it('serves the error class for a failed run, and never the message', () => {
+    const payload = runPayload(
+      run({
+        status: 'FAILED',
+        error_class: 'HTTP_5XX',
+        error_message: 'GET https://earthquake.usgs.gov/fdsnws/event/1/query?… returned 503',
+        committed_at: new Date('2026-09-21T11:55:05.000Z'),
+      }),
+    );
+
+    expect(payload).toMatchObject({
       status: 'FAILED',
       errorClass: 'HTTP_5XX',
-      errorMessage: 'USGS returned 503 for comcat_all_day',
+      errorMessage: null,
     });
+    /* The provider host is what the column can carry and what must not cross the boundary. */
+    expect(JSON.stringify(payload)).not.toContain('earthquake.usgs.gov');
   });
 
   it('reports a null duration input honestly: a run with no finish has none', () => {

@@ -21,12 +21,30 @@
  * bounded query in this layer: a spatial query that escapes its radius cap still cannot hold a
  * connection open indefinitely.
  *
- * The connection string is expected to be the `geonerva_web` role, which has `SELECT` on facts
- * plus `INSERT`/`UPDATE` on exactly two operational tables — `rate_limit_buckets` and
- * `geocode_cache` — and no `SELECT` at all on `raw_source_records` or `agent_outputs`
- * (migration 0007). The web process is therefore read-only *with respect to facts*, which is the
- * property the architecture actually claims, and it is enforced by the database rather than by
- * this code.
+ * ### The role, and a claim this comment used to make and should not have
+ *
+ * Migration 0007 grants `geonerva_web` `SELECT` on facts, `INSERT`/`UPDATE` on exactly
+ * `rate_limit_buckets` and `geocode_cache`, and no `SELECT` at all on `raw_source_records` or
+ * `agent_outputs`. Those grants are correct. What was written here — that the read-only property
+ * "is enforced by the database rather than by this code" — is **not true of either deployment
+ * shape available today**, and saying so was worse than saying nothing:
+ *
+ *  - **As the `geonerva_web` role.** Every table has RLS `ENABLE` with **zero policies** and the
+ *    role has no `BYPASSRLS`, so deny-all applies to it: verified, `pg_policies` for the
+ *    `geonerva` schema is empty. `packages/pipeline/src/blindness.int.test.ts` measures the
+ *    consequence — under `SET LOCAL ROLE geonerva_web`, `observationsAsOf` returns 0 rows where
+ *    the owner sees 230. Every endpoint would serve an empty world.
+ *  - **As 0007's documented default**, granting the NOLOGIN group role to the owning login role.
+ *    Role membership is additive and the login role still *owns* the tables, so it keeps
+ *    `INSERT`/`UPDATE`/`DELETE` on everything and bypasses policy-less RLS as owner. The grants
+ *    describe a restriction that does not bind.
+ *
+ * So the read-only property is currently enforced by **this layer's structure** — no write
+ * statement exists outside `consumeRateLimit`, and the dependency rules stop a repository being
+ * reachable — and the database's part of it is waiting on RLS policies that no phase has written.
+ * `docs/reviews/gate-g8.md` §9 carries this as an open finding rather than a fixed one, because
+ * writing those policies touches every table and is not a change to make quietly inside an API
+ * phase.
  */
 
 import { createDatabase, webPoolOptions, type DatabaseHandle } from '@geonerva/db/client';

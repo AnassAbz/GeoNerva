@@ -25,21 +25,20 @@
  * rather than a spatial query. An endpoint declares which of §13.4's limits applies; omitting the
  * option is a deliberate exemption and every current one is justified at its call site.
  *
- * The budget headers are attached to allowed responses too, because a client that can see its
- * remaining budget can back off before it is refused — which is the point of publishing a limit
- * rather than merely enforcing one.
+ * The budget headers are attached **only to a refusal**. Putting `RateLimit-Remaining` on an
+ * allowed response looked friendlier — a client could back off before being refused — but those
+ * responses are publicly cacheable, `Vary` is `Accept-Encoding` alone, and the CDN would therefore
+ * serve one caller's remaining budget to everyone behind that edge node for up to a year. A number
+ * that is wrong for almost every reader is worse than no number, and it also leaked bucket state
+ * that `rate-limit.ts` is otherwise careful not to publish. On a 429 the response is `no-store`,
+ * so the headers are accurate for exactly the caller they describe.
  */
 
 import { webConfig } from './config.ts';
 import { database } from './db.ts';
 import { describeError, logRequest } from './log.ts';
 import { toProblemResponse, problemResponse } from './problem.ts';
-import {
-  enforceRateLimit,
-  rateLimitHeaders,
-  type RateLimitName,
-  type RateLimitVerdict,
-} from './rate-limit.ts';
+import { enforceRateLimit, type RateLimitName } from './rate-limit.ts';
 
 export interface HandlerContext {
   readonly request: Request;
@@ -79,31 +78,46 @@ export function apiRoute(
        * Before the rate limit, not after. A refused verb must not consume the caller's budget for
        * the verb they are allowed to use, and a 405 costs nothing to produce.
        */
-      return problemResponse({
+      const refused = problemResponse({
         code: 'METHOD_NOT_ALLOWED',
         detail: 'The GeoNerva API is read-only. Only GET and HEAD are supported.',
         instance: url.pathname,
       });
+      /*
+       * Logged like any other outcome. Returning before `logRequest` made "one structured line per
+       * request" false for exactly the requests an operator most wants to see: an attempt to write
+       * to a read-only API.
+       */
+      logRequest({
+        endpoint: options.name,
+        path: url.pathname,
+        status: refused.status,
+        durationMs: Date.now() - started,
+      });
+      return refused;
     }
 
     const now = new Date();
     try {
-      const verdict =
-        options.rateLimit === undefined
-          ? null
-          : await enforceRateLimit({
-              db: () => database().db,
-              headers: request.headers,
-              now,
-              name: options.rateLimit,
-              secret: webConfig().RATE_LIMIT_SECRET,
-              ...(options.failClosed === undefined ? {} : { failClosed: options.failClosed }),
-            });
+      /*
+       * Called for its refusal, and its verdict deliberately discarded.
+       *
+       * `enforceRateLimit` throws when the window is spent, and the 429 it throws carries the
+       * budget headers itself. An allowed response gets none — see the header for why publishing
+       * one on a shared-cached response was wrong — so there is nothing here to keep.
+       */
+      if (options.rateLimit !== undefined) {
+        await enforceRateLimit({
+          db: () => database().db,
+          headers: request.headers,
+          now,
+          name: options.rateLimit,
+          secret: webConfig().RATE_LIMIT_SECRET,
+          ...(options.failClosed === undefined ? {} : { failClosed: options.failClosed }),
+        });
+      }
 
-      const response = withBudget(
-        await handler({ request, url, search: url.searchParams, now }),
-        verdict,
-      );
+      const response = await handler({ request, url, search: url.searchParams, now });
       logRequest({
         endpoint: options.name,
         path: url.pathname,
@@ -129,24 +143,4 @@ export function apiRoute(
       return response;
     }
   };
-}
-
-/**
- * Copies the budget headers onto an allowed response.
- *
- * A new `Response` rather than a mutation. A `Response`'s headers are mutable in principle, but
- * rebuilding leaves the handler's own object untouched — which matters because a handler may have
- * returned a response it also holds a reference to.
- */
-function withBudget(response: Response, verdict: RateLimitVerdict | null): Response {
-  if (verdict === null) return response;
-  const headers = new Headers(response.headers);
-  for (const [name, value] of Object.entries(rateLimitHeaders(verdict))) {
-    headers.set(name, value);
-  }
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
 }

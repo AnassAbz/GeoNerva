@@ -139,17 +139,25 @@ describe('buildOpenApiDocument', () => {
     }
   });
 
-  it('documents a 200 only for the endpoints that are served', () => {
+  /**
+   * An unserved path documents no 200 — and no 501 either.
+   *
+   * The 501 was documented and nothing serves one: with no route file, the framework answers with
+   * its own 404 HTML. A document whose stated purpose is that it cannot describe a shape the API
+   * does not produce must not promise a status the API never returns; the `404` it already
+   * documents is the truthful one.
+   */
+  it('documents a 200 only for the endpoints that are served, and never a 501', () => {
     for (const contract of ENDPOINT_CONTRACTS) {
       const responses = (
         document.paths[contract.path] as { get: { responses: Record<string, unknown> } }
       ).get.responses;
+      expect(responses['501'], contract.path).toBeUndefined();
       if (contract.implemented) {
         expect(responses['200'], contract.path).toBeDefined();
-        expect(responses['501'], contract.path).toBeUndefined();
       } else {
         expect(responses['200'], contract.path).toBeUndefined();
-        expect(responses['501'], contract.path).toBeDefined();
+        expect(responses['404'], contract.path).toBeDefined();
       }
     }
   });
@@ -235,19 +243,49 @@ describe('buildOpenApiDocument', () => {
     expect(properties).toContain('asOfContext');
   });
 
-  it('publishes the cache policy each endpoint promises', () => {
-    const headers = (
-      document.paths['/api/v1/replay/horizon'] as {
-        get: {
-          responses: {
-            '200': { headers: Record<string, { schema: { const: string } }> };
+  /**
+   * An `enum`, not a `const`.
+   *
+   * Two endpoints have a policy that depends on the knowledge time, and the first version emitted a
+   * `const` whose value was the *sentence* "varies: live s-maxage=120, swr=600; …" — a header value
+   * no response has ever carried, which a generated client or a contract validator would assert
+   * against.
+   */
+  it('publishes the cache policies each endpoint can emit', () => {
+    /* Returns `[]` for an unserved path, which documents no 200 and therefore no policy. */
+    const policiesFor = (path: string): string[] =>
+      (
+        document.paths[path] as {
+          get: {
+            responses: Record<
+              string,
+              { headers?: Record<string, { schema: { enum: string[] } }> } | undefined
+            >;
           };
-        };
-      }
-    ).get.responses['200'].headers;
-    expect(headers['Cache-Control']?.schema.const).toBe(
+        }
+      ).get.responses['200']?.headers?.['Cache-Control']?.schema.enum ?? [];
+
+    expect(policiesFor('/api/v1/replay/horizon')).toEqual([
       's-maxage=3600, stale-while-revalidate=3600',
-    );
+    ]);
+
+    /* The briefing's two real values, neither of which is a description. */
+    expect(policiesFor('/api/v1/briefing')).toEqual([
+      's-maxage=120, stale-while-revalidate=600',
+      's-maxage=86400, immutable',
+    ]);
+
+    /* The evidence endpoint is immutable only for a pinned past knowledge time. */
+    expect(policiesFor('/api/v1/evidence/{id}')).toEqual([
+      's-maxage=120, stale-while-revalidate=600',
+      's-maxage=31536000, immutable',
+    ]);
+
+    for (const path of Object.keys(document.paths)) {
+      for (const value of policiesFor(path)) {
+        expect(value, path).toMatch(/^s-maxage=\d+(, (stale-while-revalidate=\d+|immutable))?$/u);
+      }
+    }
   });
 
   it('is serializable, which is the only form a document is useful in', () => {

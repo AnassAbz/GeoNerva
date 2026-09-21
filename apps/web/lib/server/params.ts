@@ -17,10 +17,26 @@
  * `?briefing&x=1`, `?x=2`, … are distinct CDN keys for one response, so an attacker can force
  * unlimited origin traffic through a cached endpoint. Rejecting them keeps the key canonical.
  *
- * **Coordinates are rounded here, at the boundary, before anything else sees them.** ADR-015 and
- * invariant I15: two decimals is the contract, and the rounding has to happen before the value
- * reaches a log line, a cache key or a query — not after. `parseLocation` returns the rounded
- * value and the original is dropped on the floor.
+ * **A coordinate must arrive already rounded; it is not rounded here.** ADR-015 and §13.2 both
+ * say two decimals "before logging, caching or querying", and a server cannot round before the
+ * URL reaches the CDN: by the time this code runs, `?lat=48.856614&lon=2.352222` is already the
+ * cache key and already in the platform's own access log, which `log.ts`'s redaction cannot
+ * touch. Rounding on arrival satisfied invariant I15 for the response *body* and left the
+ * caller's ~10 cm position at the edge — so a finer coordinate is now a `VALIDATION_FAILED`
+ * naming the rule, and a client that wants a briefing rounds before it asks.
+ *
+ * The residue is honest and stated: the first such request's URL still reaches the platform log
+ * once. What it no longer does is return `200` and get stored under that key for two minutes.
+ *
+ * **Each parameter may appear once.** A repeated one is another cache-busting primitive:
+ * `?window=24h&window=24h&window=24h` is one response under three CDN keys, and
+ * `URLSearchParams.get` silently takes the first. Only `families` may repeat, because §13.1
+ * writes it `families[]`.
+ *
+ * Two things the server cannot canonicalize, named so that nothing claims otherwise: parameter
+ * **order**, which is fixed by the caller before the request exists, and the cardinality of
+ * `as_of`, where every distinct past instant is a legitimately different question. Neither is
+ * defended by validation; both are defended by §13.4's rate limit.
  *
  * **`Number()` is not used for numeric parsing.** `Number('')` is 0, `Number(' ')` is 0 and
  * `Number('1e999')` is `Infinity`; each would pass a naive range check. Parsing goes through an
@@ -71,28 +87,58 @@ class ParamCollector {
   }
 }
 
+/** Parameters §13.1 writes with `[]`, which may therefore appear more than once. */
+const REPEATABLE_PARAMS = new Set(['families']);
+
 /**
- * Rejects any parameter the endpoint does not declare.
+ * Rejects any parameter the endpoint does not declare, and any it declares that appears twice.
  *
  * Called **first** by every handler. The allowed set is the endpoint's own, so adding a parameter
  * is a deliberate act and a typo is a 400 rather than a silent no-op.
+ *
+ * The repeat check is the half that was missing. An unknown name and a duplicated known name are
+ * the same attack — one response served under unbounded distinct CDN keys — and only the first was
+ * being caught, which made this function's claim to "keep the key canonical" false for the easier
+ * of the two.
  */
 export function rejectUnknownParams(search: URLSearchParams, allowed: readonly string[]): void {
   const permitted = new Set(allowed);
   const unknown = [...new Set([...search.keys()].filter((key) => !permitted.has(key)))].sort();
-  if (unknown.length === 0) return;
+  if (unknown.length > 0) {
+    throw new ApiProblemError({
+      code: 'UNKNOWN_PARAMETER',
+      detail: `This endpoint accepts only: ${allowed.join(', ')}.`,
+      /*
+       * The parameter *name* is echoed and its value is not. A name is capped here and is what the
+       * caller needs in order to fix the request; the value is arbitrary input.
+       */
+      invalidParams: unknown.map((name) => ({
+        name: cappedName(name),
+        reason: 'is not a parameter of this endpoint',
+      })),
+    });
+  }
+
+  const counts = new Map<string, number>();
+  for (const key of search.keys()) counts.set(key, (counts.get(key) ?? 0) + 1);
+  const repeated = [...counts]
+    .filter(([key, count]) => count > 1 && !REPEATABLE_PARAMS.has(key))
+    .map(([key]) => key)
+    .sort();
+  if (repeated.length === 0) return;
+
   throw new ApiProblemError({
-    code: 'UNKNOWN_PARAMETER',
-    detail: `This endpoint accepts only: ${allowed.join(', ')}.`,
-    /*
-     * The parameter *name* is echoed and its value is not. A name is bounded by the check below
-     * and is what the caller needs in order to fix the request; the value is arbitrary input.
-     */
-    invalidParams: unknown.map((name) => ({
-      name: name.length > 40 ? `${name.slice(0, 40)}…` : name,
-      reason: 'is not a parameter of this endpoint',
+    code: 'VALIDATION_FAILED',
+    detail: 'Each parameter may appear only once, so that one response has one cache key.',
+    invalidParams: repeated.map((name) => ({
+      name: cappedName(name),
+      reason: 'must appear at most once',
     })),
   });
+}
+
+function cappedName(name: string): string {
+  return name.length > 40 ? `${name.slice(0, 40)}…` : name;
 }
 
 /**
@@ -114,7 +160,8 @@ export function parseFiniteNumber(raw: string): number | null {
  *
  * Both is a 400 rather than a precedence rule: two locations in one request is ambiguous, and
  * picking one silently would mean a caller could be shown a briefing for a place they did not ask
- * about. The coordinate branch returns the **rounded** value.
+ * about. The coordinate branch **requires** an already-rounded value; see the header for why
+ * rounding it here was not enough.
  */
 export function parseLocation(search: URLSearchParams): LocationParam {
   const collector = new ParamCollector();
@@ -132,7 +179,15 @@ export function parseLocation(search: URLSearchParams): LocationParam {
     if (place.length > MAX_LOCATION_KEY_LENGTH) {
       collector.fail('place', `must be at most ${String(MAX_LOCATION_KEY_LENGTH)} characters`);
     } else if (!isLocationKey(place)) {
-      collector.fail('place', 'must be a location key such as p:2542997 or c:31.63,-8.00');
+      /*
+       * `p:` and `c:` are the two `resolveLocation` handles — a `c:` key is a coordinate pair and
+       * needs no `places` table. `n:` is accepted by `isLocationKey` and resolved by nothing, so
+       * advertising it here promised an input that always answers 404.
+       */
+      collector.fail(
+        'place',
+        'must be a place key (p:2542997) or a coordinate key (c:31.63,-8.00)',
+      );
     }
     collector.assertValid();
     return { kind: 'key', key: place };
@@ -165,12 +220,40 @@ export function parseLocation(search: URLSearchParams): LocationParam {
   }
   collector.assertValid();
 
+  /*
+   * The precision check runs after the range check, so a request that is wrong in both ways is
+   * told about the range first — the more fundamental mistake, and the one a caller is more likely
+   * to have made deliberately.
+   */
+  if (lat !== null && roundUserCoordinate(lat) !== lat) {
+    collector.fail('lat', COORDINATE_PRECISION_REASON);
+  }
+  if (lon !== null && roundUserCoordinate(lon) !== lon) {
+    collector.fail('lon', COORDINATE_PRECISION_REASON);
+  }
+  collector.assertValid();
+
   return {
     kind: 'coordinates',
+    /*
+     * Still through `roundUserCoordinate`, although the value is already canonical: it maps `-0`
+     * to `0`. `-0` survives `!==` against `0` unnoticed and serializes as `-0` in JSON, which is a
+     * second spelling of one location and therefore a second cache key.
+     */
     lat: roundUserCoordinate(lat ?? 0),
     lon: roundUserCoordinate(normalizeLongitude(lon ?? 0)),
   };
 }
+
+/**
+ * The reason a coordinate is refused, phrased as the rule and never echoing the value.
+ *
+ * It names the decimal count rather than saying "too precise", because the caller's fix is
+ * mechanical: round before asking.
+ */
+const COORDINATE_PRECISION_REASON =
+  `must carry at most ${String(USER_COORDINATE_DECIMALS)} decimals (e.g. 31.63); ` +
+  'round before sending, so that a precise position never becomes a cache key';
 
 /** +180 and −180 name one meridian; folding gives a single canonical cache key. */
 function normalizeLongitude(lon: number): number {
@@ -212,7 +295,14 @@ export function parseAsOf(search: URLSearchParams, now: Date, name = 'as_of'): D
   ) {
     throw new ApiProblemError({
       code: 'VALIDATION_FAILED',
-      detail: 'The knowledge time must be an ISO-8601 instant with an explicit offset or Z.',
+      detail:
+        'The knowledge time must be an ISO-8601 instant ending in Z, or with an offset whose ' +
+        'plus sign is percent-encoded as %2B.',
+      /*
+       * The `%2B` note is not pedantry: a bare `+` in a query string decodes to a space, so
+       * `?as_of=2026-09-21T00:00:00+02:00` arrives as `…00:00 02:00` and is rejected as malformed
+       * while looking exactly like the form the old message advertised.
+       */
       invalidParams: [{ name, reason: 'must be an ISO-8601 instant, e.g. 2026-09-21T00:00:00Z' }],
     });
   }
@@ -239,7 +329,13 @@ export function parseAsOf(search: URLSearchParams, now: Date, name = 'as_of'): D
 /** `families[]` from the enum. Repeated or comma-separated, deduplicated and sorted. */
 export function parseFamilies(search: URLSearchParams, name = 'families'): readonly HazardFamily[] {
   const raw = search.getAll(name).flatMap((value) => value.split(','));
-  if (raw.length === 0) return HAZARD_FAMILIES;
+  /*
+   * An absent parameter means every family. So does a present-but-empty one — `?families=` — which
+   * previously fell through the loop and returned `[]`: an empty family list is a request for
+   * nothing, and a response built from it would show no hazards for a reason the caller never
+   * asked for. That is a false zero manufactured by a typo.
+   */
+  if (raw.every((value) => value.trim() === '')) return HAZARD_FAMILIES;
 
   const collector = new ParamCollector();
   const known = new Set<string>(HAZARD_FAMILIES);
