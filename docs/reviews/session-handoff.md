@@ -1,158 +1,115 @@
-# Session handoff — 2026-09-20
+# Session handoff — 2026-09-21
 
-Written to hand off mid-phase, deliberately and at a clean boundary, rather than to push on and
-leave something half-built. The tree is clean, `pnpm check` exits 0, and both suites are green.
+Written at a clean boundary: G6 has passed, the tree is clean, `pnpm check` exits 0, and both
+suites are green. This supersedes the 2026-09-20 handoff, which described P6 part-built.
 
 ## 1. Where this is
 
 | | |
 |---|---|
-| **Last gate passed** | **G5** — multi-source hazard ingestion (`docs/reviews/gate-g5.md`) |
-| **Current phase** | **P6 — spatial hazard intelligence**, part-built |
-| **Next gate** | G6 (`docs/reviews/gate-g6.md`, not yet written) |
-| **Commits this session** | `ed39648` → `c985432`, 15 commits on `main` |
-| **Tests** | **755 unit, 268 integration**, PostgreSQL 17 / PostGIS 3.4.3 |
+| **Last gate passed** | **G6** — deterministic hazard context (`docs/reviews/gate-g6.md`) |
+| **Current phase** | **P7 — explainable briefing domain**, not started |
+| **Next gate** | G7 (`docs/reviews/gate-g7.md`, not written) |
+| **Commits this session** | `97ee8ed` → `0a31af4`, 7 on `main` |
+| **Tests** | **837 unit, 338 integration** (19 files), PostgreSQL 17 / PostGIS 3.4.3 |
 | **Working tree** | clean |
 
-Two gates were completed in this session, each with two independent adversarial reviews:
-**G4** (`docs/reviews/gate-g4.md`, historical earthquake ingestion) and **G5**
-(`docs/reviews/gate-g5.md`, multi-source ingestion). Read both gate reports before continuing —
-in particular G5 §9, §10 and §11, which record findings, one unexplained failing test run, and
-five tests that turned out to be vacuous.
+Read before continuing, in this order:
 
-## 2. What P6 has, and what it does not
+1. `docs/reviews/gate-g6.md` — especially §4 (what the two adversarial reviews found), §6 (open
+   items accepted for G6) and §7 (the observation that is still unresolved).
+2. `docs/DECISIONS.md` ADR-036 and ADR-037, both new, and ADR-036's **correction** block: the ADR
+   originally asserted two things about its own commit that were false.
+3. `docs/reviews/gate-g5.md` §9–§11 for the earlier findings and vacuous tests.
 
-The session plan's P6 assumes more than the repository had. `packages/geo`, `packages/correlation`,
-`packages/relevance`, `packages/baselines`, `packages/changes` and `packages/briefing` were all
-six-line stubs, and the repo's own `IMPLEMENTATION_PLAN.md` splits this work across *its* P5 and
-P6. Session P6 therefore = repo P5 (geo, correlation, clustering) + repo P6 (relevance). That
-mapping is a re-sequencing, not a conflict with an ADR, which is why it was walked rather than
-stopped at — the same call made for P4 and P5 (see `docs/reviews/p4-plan.md`).
+## 2. What P6 delivered
 
-### Done
-
-| Plan item | State |
+| Area | What exists now |
 |---|---|
-| **P6.1** location model | Already existed: `LocationRef`, `parseLocationKey`, `FamilyCoverage` in `packages/domain/src/value-objects/location.ts`. Nothing added |
-| **P6.2** spatial query layer | `packages/db/src/spatial/` already had indexed queries, `ST_Covers` containment, viewport/antimeridian splitting and geodesic tests against Marrakech, Montréal, Suva and Longyearbyen. **New:** `packages/geo` — in-process Vincenty, bearings, and `boundingBoxesForRadius` with the containment property, plus a PostGIS agreement test in `packages/briefing` |
-| **P6.3** temporal relevance | **All five documented models built**: earthquake (§9.1), fire (§9.2), flood (§9.3), cyclone (§9.4), volcano (§9.5). Every threshold transcribed from `ARCHITECTURE.md`, every boundary probed from both sides, 115 tests |
-| **P6.7** availability semantics | `packages/relevance/src/availability.ts`. Resolved from coverage + health + counts; `mayRenderZero` carries invariant I11 |
+| `packages/correlation` | Misfit, decision (stages 0–2), hysteresis, calibration, **agreement and the headline value**. `candidateScore` maps a misfit onto the 0–1 column the schema actually has |
+| `packages/pipeline` | `correlateEarthquakes` — the runner against the database — and `seedSingleSourceEvents` for GDACS families |
+| `packages/db` | `analysis_runs` repository, `derivationsAsOf`, `productCoverageFor`, `newestDetectionIngestAt`, the correlation reads, migration `0014` adding the `SEED` run kind |
+| `packages/relevance` | Three new availability axes: **derivation**, **replay horizon**, **unassessed subjects** |
+| `packages/briefing` | `buildSnapshot`, canonical serialization + `contentSha256`, family coverage, the replay horizon |
 
-### Not done — this is the next work
+**The calibration stands**: precision 1.0000, recall 0.9891 against the 250-pair labelled set
+(`docs/reviews/correlation-calibration.md`). Read §2 and §6 of that report — the uniqueness gap
+never binds on this set, and the report says what the calibration does *not* establish.
 
-| Plan item | What it needs |
-|---|---|
-| **P6.4** hazard synthesis | `buildSnapshot(location, asOf, engineVersion)` → `LocationSnapshotView`. **The shape is already frozen** in `packages/domain/src/read-models/location-briefing.ts` and is far richer than the plan's sketch; the plan says "do not freeze this exact shape without checking existing contracts", and the existing contract wins |
-| **P6.5** provenance | `EvidenceItem` / `EvidenceId` already exist (`packages/domain/src/evidence/`). Synthesis must attach them, and invariant I9 requires every id referenced anywhere in a briefing to appear in `evidenceManifest` |
-| **P6.6** determinism | Invariant I14: same database state + same `asOf` + same `engineVersion` → same `contentSha256`. Needs a test that builds the same snapshot twice and compares hashes, and one that proves a *changed fact* changes the hash |
-| **G6** | Criteria are in the session plan. Two independent reviews, then `docs/reviews/gate-g6.md` |
+## 3. What P7 needs, and what it must not do
 
-### Blocked, with the reason
+P7 is the **explainable briefing domain**: deterministic copy and the bounded evidence object the
+AI layer is later given. The session plan's own framing is the important part:
 
-- **Fire relevance has never run against real data.** It takes cluster facts — `state`, `n24h`,
-  `overpasses24h`, `frpSum24h` — from `fire_clusters` and `fire_cluster_versions`. Those tables
-  exist (migration 0005) and **nothing populates them**: clustering is `packages/correlation`,
-  still a stub. The model is tested as the pure function it is, against hand-built facts. The
-  module header says so.
-- **Cross-source corroboration is not computed.** `resolveDataConfidence` takes `corroborated` as
-  an input and `assessEarthquake` takes `agreementLevel`; both come from correlation, which does
-  not exist. Until it does, every earthquake will report `SINGLE_SOURCE` even where USGS and EMSC
-  both hold it — which is *safe* (it understates confidence) but is not the truth, and the
-  independence machinery built in P5 (`derivedFrom`, `contributor`) exists precisely to feed it.
-- **GDACS cyclone tracks, wind buffers and volcano cones are not ingested.** `assessCyclone`
-  takes `insideWind120` and friends; only flood geometry is fetched today. Deferred in G5 §12
-  because forecast geometry needs `valid_at` semantics tied to advisory times.
+> The LLM is **NOT** the source of truth. The database and deterministic hazard-context layer are
+> the source of truth.
 
-## 3. Unresolved findings
+Contracts that already exist and must be filled rather than redesigned:
 
-Nothing CRITICAL or HIGH is open. What is open, and where it is recorded:
+- `BriefingCopy` — `headline`, `summary[]`, `byFamily`, `caveats[]`, `templateVersion`
+  (`packages/domain/src/read-models/common.ts`).
+- `LocationBriefing` — the union of `snapshot`, `changes`, `copy`, optional `ai`, and
+  `evidenceManifest` (`packages/domain/src/read-models/location-briefing.ts`).
+- `ChangeSection` / `ChangeSignalView` — P7's neighbour; `packages/changes` is still a stub, and
+  `diff(buildSnapshot(L, now−Δ), buildSnapshot(L, now))` is the documented shape (ARCHITECTURE §10).
+- `EvidenceItem` and its four payload types (`packages/domain/src/read-models/evidence-item.ts`).
 
-- **G5 §10 — one integration run failed 7 of 257 tests and has not reproduced** in five subsequent
-  full runs. It started seconds after a 116,503-row live FIRMS ingest against the same PostgreSQL
-  instance, so contention is the hypothesis; it is not a diagnosis. **The output was not captured
-  before it scrolled.** If it recurs, capture first.
-- **G5 §9 "Recorded, not fixed"** — seven MEDIUM/LOW findings with stated reasons, the two most
-  substantial being that `runFireIngestion` names FIRMS directly (waiting for a second detection
-  source, exactly as `HistoricalInterface` waited for EMSC) and that unbounded memory on the FIRMS
-  path is *bounded* rather than closed (a 64 MB cap and `MAX_CSV_ROWS`, not streaming).
-- **G4 §5 "Recorded, not fixed"** — four items, still accurate.
-- **EMSC `evtype` is stored verbatim** because the vocabulary is undocumented by the service.
-  Observed values are `ke`, `se`, `ue`. Needs confirming with EMSC before a UI renders it.
+Three traps, each of which this phase has already walked into once in a different form:
 
-## 4. Process notes worth carrying forward
+1. **Do not let copy invent a number.** `Reason.params` exists "so the AI validator can check that
+   no number was invented". Every number in a sentence must come from a `params` entry, and the P6
+   review found two places where `params` was `{}` while the sentence quoted figures.
+2. **Do not let copy render a zero the card refused to claim.** A card that is not `AVAILABLE` has
+   no items *and* no count (invariant I11). The copy layer is the last place that can leak one.
+3. **Do not build a second relevance or agreement rule.** `packages/relevance` and
+   `packages/correlation` decide; the copy layer renders.
 
-Three habits caught real defects this session, and one process failure recurred three times.
+## 4. Unresolved, carried forward
 
-**Mutation testing every rule.** Not optional — it found five vacuous tests in P5 and three more
-in P6, including one that could not have caught the defect *both* G5 reviewers found from the
-outside. The pattern each time: an assertion that could not move the term it claimed to test. The
-cheap version is a python script that applies one textual mutation, runs the suite, and reverts;
-`scratchpad/eqctl.py`-style files were used throughout.
+**The intermittent 7-test integration failure is still unexplained.** Gate G6 §5 records a
+contention probe — three full passes under sustained concurrent load, suite duration 297 s against
+~100 s idle, 329/329 each time — which establishes that the suite tolerates real contention and
+**does not diagnose the original observation**. No cause is claimed. Do not close it.
 
-**Running the code against the real provider.** Four defects in P5 came from live runs and no test
-would have found them: EMSC's bulletin inverts the depth sign, EMSC omits the `mag` key, the
-`severity_scheme` value was wrong against a CHECK, and one negative FRP in 121,293 rows killed a
-batch. The reviews then found ten more that running it had not reached. The two kinds of check are
-not substitutes.
+A separate intermittent failure *was* diagnosed (G6 §7): `scripts/lint-rules.test.ts` timed out on
+its first ESLint call, 2 runs in 15, now 20/20 after warming in a `beforeAll`. Whether the original
+shares that mechanism is a hypothesis. **If a test fails intermittently, capture the output on the
+first occurrence** — both times it has happened in this project, the first run captured nothing.
 
-**Writing down the measurement, not the recollection.** One test in `packages/geo` asserted a
-"published WGS84 geodesic" of 6,152.6 km that had never been computed from anything; the correct
-value is ~5,753 km and the implementation was right. The fix was to write the spherical law of
-cosines into the test so it can be checked by hand.
+## 5. Open items accepted at G6
 
-**The process failure: committing on a red gate.** Three times — twice in P4, once in P6 — a
-commit went in while `pnpm check` was failing, every time because of the same shape:
+1. **No lease on `analysis_runs`.** Two overlapping `CORRELATION` runs can each open a canonical
+   event for one earthquake. Single-instance worker today; belongs with scheduling in **P10**.
+2. **`canonical_event_state` is a non-bitemporal projection of a bitemporal store.** ADR-036
+   records the versioned-projection alternative and why P6 did not take it. Revisit before the
+   event-detail read model.
+3. **`FamilyCard.metrics` is empty.** `packages/baselines` is unbuilt.
+4. **Source configuration is not versioned**, so coverage for a past `asOf` uses today's source
+   set. `active_from`/`active_to` are honoured, which covers the misleading case.
+5. **Fire clusters are read but nothing writes them.** `buildSnapshot` now reads
+   `clusterVersionsAsOf` and the derivation axis reports `DERIVATION_NOT_RUN` honestly — which is
+   correct behaviour and also means the fire card is `UNAVAILABLE` in practice until clustering is
+   built. That is the truthful state, not a regression.
 
-```sh
-pnpm check 2>&1 | tail -3 && git commit …   # exit code is tail's, which is 0
-```
+## 6. Architectural context that is easy to get wrong
 
-Run the gate so its own exit code is the one being read:
+- **`asOf` is the only fact reader.** `packages/db/src/asof.ts`. `packages/briefing` must import
+  **`@geonerva/db/asof`**, never the root barrel — the barrel re-exports every repository, and a
+  repository read returns the newest row rather than the row as of `T`. The rule
+  `briefing-reads-facts-only-through-asof` now fails the build on any such path, and it was
+  verified to fail before being trusted.
+- **Independence is decided by contributor identity, never by value agreement** (ADR-030). A
+  republication is linked `DERIVED_COPY` — by Stage 1 *and* by Stage 2, which was the review's most
+  serious finding.
+- **`content_sha256` is the only change detector** (ADR-029), and the snapshot's `contentSha256` is
+  taken over a canonical form with `generatedAt` excluded.
+- **An absence is never an answer on its own.** Five axes now decide whether GeoNerva may say
+  "nothing"; see G6 §2.4 for the table of which lie each one prevents.
+- **Mutation controls are standard practice here.** 39 were run this phase and 9 initially
+  survived — a fifth of the new tests were not yet evidence of anything. Run them on every rule.
 
-```sh
-pnpm check > /tmp/check.log 2>&1; echo "exit=$?"
-```
+## 7. Next action
 
-## 5. Architectural context the next session needs
-
-- **Repository state and accepted ADRs are authoritative over the session plan.** This was load
-  bearing three times: the plan's EMSC deletion sweep does not exist (the service answers HTTP 400
-  for `includedeleted`), the plan's availability vocabulary is thinner than the domain's three
-  axes, and the plan's P6.4 shape is a sketch of a frozen contract. `docs/DECISIONS.md` has ADRs
-  001–035.
-- **The layering rules in `.dependency-cruiser.cjs` are enforced on every edge, tests included.**
-  `db → geo` is forbidden with no test exception, which is why the geo/PostGIS agreement test
-  lives in `packages/briefing` — the layer allowed both. Do not weaken a rule to file a test.
-- **`CRITICAL` relevance is structurally gated.** `packages/relevance`'s `Assessment` cannot carry
-  an `AuthoritativeBasis`, so a model can only report that the *condition* is met; the caller
-  attaches the citation or reduces the level. That is invariant I10 made structural rather than
-  conventional, and the synthesis layer must honour it.
-- **The headline must fail closed, and the reason is subtle.** `ARCHITECTURE.md` §9.8: under the
-  `geonerva_web` role, RLS deny-all means the fact query *and* the health query return exactly what
-  a quiet world returns — and health comes back as an **empty array**, not a status of
-  `UNAVAILABLE`. A briefing that looked for `status === 'UNAVAILABLE'` to detect blindness would
-  render an all-clear. So: **no health row for a family's sources ⇒ `DATA_UNAVAILABLE`.** The
-  absence of health evidence, not a particular status, is the signal.
-  `packages/pipeline/src/blindness.int.test.ts` proves the trap is real.
-- **`asOf` is the only fact reader.** `packages/db/src/asof.ts` is the as-of layer, and G6 asks for
-  proof that nothing bypasses it. `nearestObservationVersions` in `spatial/queries.ts` is a raw
-  search over all versions and says in its own doc comment that callers should normally use the
-  as-of path — worth checking whether that is enforced or merely advised.
-- **The live database has real data to test against**, from this session's runs:
-  3,295 source records / 3,295 versions (USGS 2,561, EMSC 529, GDACS 205), 4 role-tagged flood
-  geometries, and 235,707 thermal detections across two daily partitions. It is a dev database at
-  `127.0.0.1:54320`; integration tests create their own.
-
-## 6. Suggested next action
-
-1. Read `docs/reviews/gate-g5.md` §9–§11 and `ARCHITECTURE.md` §9.8 and §5.
-2. Build `buildSnapshot` in `packages/briefing` — it is already allowed to depend on `domain`,
-   `geo`, `db`, `relevance`, `baselines` and `changes`. Wire the five relevance models to the as-of
-   read path, resolve availability per family, and assemble `LocationSnapshotView`.
-3. Make the headline fail closed, with the blindness test as the guard.
-4. Prove determinism (I14) and provenance (I9) with integration tests against the real database.
-5. Two independent reviews, fix every CRITICAL and HIGH, then write `docs/reviews/gate-g6.md`.
-
-`packages/baselines` and `packages/changes` are still stubs and are needed for the full
-`LocationBriefing` (P7), but **not** for `LocationSnapshotView` — `FamilyCard.metrics` can be an
-empty array with a stated reason, which is the honest state until baselines exist.
+Start **P7.1**: the bounded structured evidence object a briefing receives (location, `asOf`,
+hazard evidence, source availability, source freshness), then the deterministic templates for
+`BriefingCopy`. `buildSnapshot` already returns everything P7.1 needs except the change section.
