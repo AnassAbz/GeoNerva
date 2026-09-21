@@ -27,24 +27,33 @@ const ADMIN_URL = 'postgresql://geonerva:geonerva@127.0.0.1:54320/postgres';
  *
  * The failure message said only "Hook timed out", so the first step was to make each cleanup
  * report its own duration. The next full run printed
- * `slow cleanup: drop the database gn_repair_west_test took 69029 ms` against a measured ~330 ms
- * while the server was idle, which named the statement.
+ * `slow cleanup: drop the database gn_repair_west_test took 69029 ms`, which named the step.
+ * Timing the two statements inside it separately then named the cause:
  *
- * ### What the drop is actually waiting for
+ * ```text
+ * gn_repair_west_test: CHECKPOINT 67414 ms, DROP 62 ms
+ * gn_repair_west_test: CHECKPOINT 62697 ms, DROP 74 ms
+ * ```
  *
- * `DROP DATABASE` issues an **immediate, forced checkpoint and waits for it**. Under a write-heavy
- * suite that flush is the entire cost. Measured on this database, with several hundred thousand
- * rows of dirty buffers outstanding:
+ * ### It is the checkpoint, and it cannot be avoided
  *
- * | Sequence | Cost |
- * |---|---|
- * | dirty buffers, then `DROP DATABASE … WITH (FORCE)` | **14,641 ms** |
- * | dirty buffers, `CHECKPOINT` (654 ms), then the same drop | **343 ms** |
+ * `DROP DATABASE` issues an immediate, forced checkpoint and waits for it, so under a write-heavy
+ * suite the flush is the whole cost. An intermediate conclusion here — that checkpointing first
+ * *fixed* it — was wrong, and two further full runs disproved it: the explicit `CHECKPOINT` only
+ * moves the cost into a statement of its own, where it can at least be attributed. The flush is
+ * real work on real dirty buffers, and something has to pay for it.
  *
- * So the cleanup now checkpoints first. The flush still happens — it is real work and cannot be
- * avoided — but it happens in a statement that is not also holding the drop, and the total falls
- * by more than an order of magnitude. `SLOW_CLEANUP_MS` stays, so a future regression reports
- * itself rather than presenting as an unexplained timeout.
+ * ### Why it is this slow on this machine
+ *
+ * Docker's disk image lives on a USB-attached SSD, where small durable writes cost 1.043 ms
+ * against 0.438 ms on the internal NVMe drive — 2.4× slower, measured. A checkpoint is exactly
+ * that pattern: `shared_buffers` is 128 MB, and flushing it in 4 KB durable units at the ~3.3 ms
+ * the container measures puts the arithmetic squarely in the observed 60–70 s. The owner chose to
+ * keep Docker on the USB volume, because the internal drive has no room for it.
+ *
+ * So this hook gets a budget that matches the measured cost, rather than a failure that has to be
+ * re-diagnosed every phase. `SLOW_CLEANUP_MS` stays: if the cost ever changes, the line says so
+ * instead of the hook timing out with no explanation.
  */
 interface NamedCleanup {
   readonly what: string;
@@ -53,8 +62,19 @@ interface NamedCleanup {
 
 const cleanups: NamedCleanup[] = [];
 
-/** Long enough that a healthy run is silent, short enough to catch a step heading for 120 s. */
+/** Long enough that a healthy run is silent, short enough to catch a step that is growing. */
 const SLOW_CLEANUP_MS = 5_000;
+
+/**
+ * Five minutes, against a measured 60–70 s for the checkpoint this hook waits on.
+ *
+ * Vitest's 120 s default — already raised once for this suite — sits below the real cost on this
+ * machine, so the hook failed on roughly half of the full runs while every assertion in the file
+ * passed. This is a budget for known, measured work on a slow volume, not a threshold moved to
+ * make a failure go away: nothing the test asserts changes, and `SLOW_CLEANUP_MS` still reports the
+ * duration on any run that exceeds five seconds.
+ */
+const CLEANUP_TIMEOUT_MS = 300_000;
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) {
@@ -67,7 +87,7 @@ afterEach(async () => {
 `);
     }
   }
-});
+}, CLEANUP_TIMEOUT_MS);
 
 /** A migrations directory holding only the files up to and including `lastVersion`. */
 function migrationsUpTo(lastVersion: string): string {
@@ -103,12 +123,27 @@ async function createDatabaseInZone(name: string, timeZone: string): Promise<str
       await cleanupAdmin.connect();
       try {
         /*
-         * Before the drop, not after, and not instead of it. See the header: the drop waits on a
-         * forced checkpoint, and paying that cost in its own statement is what turns a 69-second
-         * cleanup back into a fast one.
+         * Timed separately, which is the purpose of the explicit `CHECKPOINT` here.
+         *
+         * It does not make the cleanup faster — the flush happens either way. It makes the cost
+         * *attributable*: one number for `connect + CHECKPOINT + DROP + end` could not distinguish
+         * "the drop is slow" from "the drop is waiting on a checkpoint", and that ambiguity is
+         * what kept this timeout unexplained.
          */
+        const beforeCheckpoint = Date.now();
         await cleanupAdmin.query('CHECKPOINT');
+        const afterCheckpoint = Date.now();
         await cleanupAdmin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+        const afterDrop = Date.now();
+
+        if (afterDrop - beforeCheckpoint > SLOW_CLEANUP_MS) {
+          process.stdout.write(
+            `
+    ${name}: CHECKPOINT ${String(afterCheckpoint - beforeCheckpoint)} ms, ` +
+              `DROP ${String(afterDrop - afterCheckpoint)} ms
+`,
+          );
+        }
       } finally {
         await cleanupAdmin.end();
       }

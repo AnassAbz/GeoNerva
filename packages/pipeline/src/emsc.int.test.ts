@@ -41,6 +41,24 @@ beforeEach(async () => {
   await testDb.truncate();
 });
 
+/**
+ * Describes a run outcome for an assertion message.
+ *
+ * A status assertion on its own fails with "expected 'FAILED' to be 'SKIPPED'" and nothing more — which is how five intermittent failures in this file went three phases without
+ * naming their cause. The outcome already carries `errorClass` and the sanitized `detail`; putting
+ * them in the message costs nothing when the test passes and is the entire diagnosis when it does
+ * not.
+ */
+function describeOutcome(outcome: RunOutcome): string {
+  return JSON.stringify({
+    status: outcome.status,
+    errorClass: outcome.errorClass,
+    detail: outcome.detail,
+    counts: outcome.counts,
+    stageMs: outcome.stageMs,
+  });
+}
+
 /** A client whose network is a function of the test, and whose everything else is real. */
 function clientServing(responder: () => Response | Promise<Response>): HttpClient {
   return createSourceClient(emscAdapter.descriptor, {
@@ -99,7 +117,7 @@ describe('a live EMSC poll', () => {
   it('ingests a captured page and reconciles its counts', async () => {
     const outcome = await ingest(serving('json-page.json'));
 
-    expect(outcome.status).toBe('SUCCEEDED');
+    expect(outcome.status, describeOutcome(outcome)).toBe('SUCCEEDED');
     expect(outcome.counts.received).toBe(200);
     expect(outcome.counts.accepted).toBe(200);
     expect(outcome.counts.rejected).toBe(0);
@@ -115,7 +133,7 @@ describe('a live EMSC poll', () => {
     const second = await ingest(serving('json-page.json'));
 
     // The bytes are identical, so this is caught at the digest before anything is parsed.
-    expect(second.status).toBe('SKIPPED');
+    expect(second.status, describeOutcome(second)).toBe('SKIPPED');
     expect((await counts()).records).toBe(200);
     expect((await counts()).versions).toBe(200);
   });
@@ -145,7 +163,7 @@ describe('HTTP 204', () => {
      */
     const outcome = await ingest(servingNoData());
 
-    expect(outcome.status).toBe('SUCCEEDED');
+    expect(outcome.status, describeOutcome(outcome)).toBe('SUCCEEDED');
     expect(outcome.errorClass).toBeNull();
     expect(outcome.counts.received).toBe(0);
 
@@ -173,7 +191,7 @@ describe('HTTP 204', () => {
 
     // And the proof that it matters: the same page again is still recognised as unchanged.
     const third = await ingest(serving('json-page.json'));
-    expect(third.status).toBe('SKIPPED');
+    expect(third.status, describeOutcome(third)).toBe('SKIPPED');
     expect((await counts()).versions).toBe(200);
   });
 
