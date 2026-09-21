@@ -13,7 +13,16 @@ export default defineConfig({
         test: {
           name: 'unit',
           environment: 'node',
-          include: ['{apps,packages}/*/src/**/*.test.ts', 'scripts/**/*.test.ts'],
+          /*
+           * `apps/web` has no `src/`: Next.js requires `app/` at the project root and the server
+           * modules live beside it in `lib/`. Those two directories are listed explicitly rather
+           * than by widening the `src` glob, so a stray test outside them is still not collected.
+           */
+          include: [
+            '{apps,packages}/*/src/**/*.test.ts',
+            'apps/web/{app,lib}/**/*.test.ts',
+            'scripts/**/*.test.ts',
+          ],
           exclude: ['**/*.int.test.ts', '**/node_modules/**'],
         },
       },
@@ -21,7 +30,11 @@ export default defineConfig({
         test: {
           name: 'integration',
           environment: 'node',
-          include: ['{apps,packages}/*/src/**/*.int.test.ts', 'scripts/**/*.int.test.ts'],
+          include: [
+            '{apps,packages}/*/src/**/*.int.test.ts',
+            'apps/web/{app,lib}/**/*.int.test.ts',
+            'scripts/**/*.int.test.ts',
+          ],
           exclude: ['**/node_modules/**'],
           fileParallelism: false,
           testTimeout: 30_000,

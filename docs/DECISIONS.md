@@ -37,6 +37,13 @@ Index:
 | 029 | GDACS incremental sync: RSS trigger + bounded SEARCH windows + content hash | Accepted |
 | 030 | Contributor identity decides independence; EMSC tombstones by reconcile | Accepted |
 | 031 | Target PostGIS 3.3; local/CI images pinned to 17-3.4 | Accepted |
+| 032 | The error taxonomy gains NETWORK, CONFIG_ERROR and ABORTED | Accepted |
+| 033 | Raw payloads are retained by window; a backfill stores the hash without the body | Accepted |
+| 034 | The v1 USGS catalogue is M >= 4.5 from 2016, not from 2000 | Accepted |
+| 035 | Small-magnitude earthquake facts have a replay horizon; M >= 4.5 is kept forever | Accepted |
+| 036 | `packages/briefing` may depend on `packages/correlation` | Accepted |
+| 037 | A snapshot has a recency window, per family | Accepted |
+| 038 | The evidence endpoint sees a raw payload's metadata, never its body | **Proposed** |
 
 > **2026-09-19, product-owner review:** Architecture approved (gate G0 passed). ADR-012 model/budget is resolved: `AI_MODE=disabled` in production for v1, and no paid AI at launch. ADR-018 is resolved: `lean` profile on free infrastructure. Licence is Apache-2.0. The deployment is non-commercial.
 
@@ -516,3 +523,48 @@ Turborepo is not adopted until build times justify it.
 
 - **Trade-offs:** an M7 that happened 31 days ago disappears from the card rather than fading. That is a visible, explainable edge, and it is the right direction for a product whose headline claims something needs your attention *now* — the alternative is a headline that is always alarmed and therefore means nothing. A future revision should consider decay rather than a cliff, which needs a product decision about how a month-old M7 should rank against a day-old M5.
 - **Related:** the same review found that the **replay horizon** (ADR-035) was published in `asOfContext` and never enforced, so a replay past it returned an empty result rather than "outside the indexed window". Both are now enforced in `resolveAvailability`, which is the one place that decides whether an absence may be shown as an absence.
+
+## ADR-038 — Proposed: the evidence endpoint sees a raw payload's *metadata*, never its body
+- **Date:** 2026-09-21 (P8, found while filling `EvidenceDetail`)
+- **Status:** **Proposed.** Awaiting product-owner input. The P8 code ships the interim behaviour described under *Until this is decided* and says so in the response and in its own doc comments.
+- **Context — two accepted decisions disagree, and P8 is where they meet.**
+
+  `ObservationEvidenceDetail` (frozen at G2) declares three fields about the provider's original bytes:
+
+  ```ts
+  readonly rawExcerpt: unknown;          // "a bounded excerpt … null once retention has pruned the body"
+  readonly rawPayloadSha256: string | null;
+  readonly rawPayloadPruned: boolean;
+  ```
+
+  **ADR-033** relies on exactly those fields and names the mechanism: *"after the retention window, `GET /api/v1/evidence/{id}` can still say what was ingested and prove the bytes by digest, but cannot show them. `findRawPayload` already returns `pruned: true` for exactly this case, so the API reports the absence rather than implying the payload never existed."*
+
+  **Migration 0007**, implementing **ADR-008**, does the opposite: `REVOKE SELECT ON geonerva.raw_source_records FROM geonerva_web`, with the comment *"the web role must never be able to reach the raw provider payloads it has no use for"*.
+
+  So the endpoint the architecture asks to report payload state runs as the one role forbidden to read it. This is not a subtle interaction: a query that joins `raw_source_records` from the web process does not return a NULL, it raises `permission denied for table raw_source_records` — a 500 on an endpoint whose whole purpose is making a citation checkable.
+
+- **Why neither side is simply wrong.** ADR-008's revoke is right about the *body*: a raw payload is provider content GeoNerva does not read, several providers' terms restrict redistribution, and a public endpoint that serves arbitrary provider JSON is a redistribution channel nobody designed. ADR-033 is right about the *metadata*: a digest and a pruned flag are what make an evidence citation auditable after the body is gone, and they are GeoNerva's own facts about its own ingestion, 33 bytes wide, containing nothing of the provider's.
+
+  The frozen contract conflates the two by putting them in one group of three fields. The conflict is in the grouping, not in either decision.
+
+- **Alternatives:**
+  - *Grant the web role `SELECT` on the whole table* — rejected. It reverses ADR-008's revoke to obtain two scalar columns, and hands the read path the payload bodies as well. A `SELECT *` written later, by anyone, would then serve them.
+  - *Route the evidence endpoint through the worker* — rejected. There is no internal API between the two processes (ADR-010 forbids a public ingestion endpoint and nothing else exists), and inventing one for two columns would be the largest architectural change in P8 for the smallest reason.
+  - *Drop the three fields from `EvidenceDetail`* — rejected. It needs a `READ_MODEL_SCHEMA_VERSION` bump, and it discards the audit property ADR-033 explicitly bought: a citation that can prove what was ingested after the bytes are gone. Losing that to avoid a `GRANT` is the wrong trade.
+  - **Recommended:** a **column-level grant** that excludes the body, exactly as migration 0007 already does for `agent_outputs`:
+
+    ```sql
+    GRANT SELECT (id, source_id, payload_sha256, payload_pruned, first_seen_at)
+      ON geonerva.raw_source_records TO geonerva_web;
+    ```
+
+    `payload` stays unreachable — `SELECT payload` fails, `SELECT *` fails, and both fail at the database rather than in review. `rawPayloadSha256` and `rawPayloadPruned` then carry their documented meanings, and `rawExcerpt` is **permanently `null`** from the API with its doc comment corrected to say so: the excerpt is an operator artifact, read from the database by someone who already has the credentials, and there is no version of "a bounded excerpt of provider JSON on a public endpoint" that is worth the licence exposure.
+
+    The precedent matters. 0007 already writes `GRANT SELECT (id, snapshot_id, role, model, …) ON geonerva.agent_outputs` after revoking the table, for the same reason in the same words — so this is the pattern the migration established, not a new mechanism.
+
+- **Until this is decided**, P8 ships the honest subset and the code says which parts are weakened:
+  - The four evidence-detail reads **do not touch `raw_source_records`**, so no endpoint can 500 on a permission error.
+  - `rawExcerpt` and `rawPayloadSha256` are `null`.
+  - `rawPayloadPruned` is derived from `observation_versions.raw_record_id`, a column the web role *can* read. `true` means GeoNerva holds no raw row at all for this version; `false` means one exists and this endpoint does not serve its state. That is weaker than the field's doc comment claims and stronger than a hard-coded `false`, and the asymmetry is the reason this ADR exists rather than a quiet choice.
+- **What this does not change:** `content_sha256` on the observation version is unaffected, is readable by the web role, and is the **only** change detector (ADR-029). Two versions remain comparable, and a revision remains provable, without either payload. The audit property ADR-033 bought is degraded by this gap, not lost.
+- **Trade-offs of the recommendation:** one more `GRANT` to keep correct as the schema evolves, and `ALTER DEFAULT PRIVILEGES` does not express column-level grants, so a future table needing the same treatment must be granted explicitly. Against that: the read path gains two auditable scalars and still cannot read a single provider byte.
