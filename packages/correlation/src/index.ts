@@ -35,6 +35,7 @@ export {
 export type { MisfitTerms, Solution, VetoVerdict } from './misfit.ts';
 
 export {
+  candidateScore,
   confidenceFor,
   decideIdentityRef,
   decideSpatiotemporal,

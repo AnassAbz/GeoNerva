@@ -90,8 +90,14 @@ export interface SeedObservationOptions {
   readonly observedAt?: Date;
   readonly lifecycleStatus?: LifecycleStatus;
   readonly magnitude?: number | null;
+  /** Defaults to `mww` when a magnitude is given, matching a USGS moment solution. */
+  readonly magnitudeType?: string | null;
   readonly depthKm?: number | null;
   readonly contributor?: string | null;
+  readonly providerStatus?: string | null;
+  /** The provider's own cross-reference, e.g. GDACS naming the USGS event it restates. */
+  readonly derivedFrom?: unknown;
+  readonly title?: string | null;
   readonly centroid: LatLon;
   readonly geometryKind?: GeometryKind;
   readonly attributes?: Record<string, unknown>;
@@ -134,7 +140,10 @@ export async function seedObservation(
       severityValue: options.severityValue ?? null,
       contributor: options.contributor ?? null,
       magnitude: options.magnitude ?? null,
-      magnitudeType: options.magnitude === undefined ? null : 'mww',
+      magnitudeType: options.magnitudeType ?? (options.magnitude === undefined ? null : 'mww'),
+      providerStatus: options.providerStatus ?? null,
+      derivedFrom: options.derivedFrom,
+      title: options.title ?? null,
       depthKm: options.depthKm ?? null,
       centroid: options.centroid,
       geometryKind: options.geometryKind ?? 'EPICENTER',

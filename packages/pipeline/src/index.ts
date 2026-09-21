@@ -31,3 +31,6 @@ export {
 export type { IngestionLogFields, LogLevel, Logger } from './logging.ts';
 export { runFireIngestion } from './fire-ingest.ts';
 export type { FireIngestionOutcome, RunFireIngestionOptions } from './fire-ingest.ts';
+
+export { correlateEarthquakes, projectCanonicalEvent } from './correlate.ts';
+export type { CorrelateOptions, CorrelateResult } from './correlate.ts';

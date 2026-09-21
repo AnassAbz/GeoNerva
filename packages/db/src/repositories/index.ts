@@ -130,6 +130,15 @@ export type {
 } from './analysis-runs.ts';
 
 export {
+  candidateEventsNear,
+  canonicalEventForAlias,
+  earthquakeRecordsToCorrelate,
+  eventMembers,
+  newestEarthquakeIngestAt,
+} from './correlation.ts';
+export type { CandidateEventRow, CorrelationRecordRow, EventMemberRow } from './correlation.ts';
+
+export {
   createCanonicalEvent,
   insertCorrelationCandidate,
   linkRecord,

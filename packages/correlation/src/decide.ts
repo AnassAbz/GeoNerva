@@ -343,6 +343,24 @@ export function confidenceFor(misfit: number): number {
 }
 
 /**
+ * The 0–1 score stored against a pair that was **not** merged.
+ *
+ * `correlation_candidates.score` is constrained to `[0, 1]`, and a misfit is neither bounded nor
+ * oriented that way — bigger is worse. So the stored number is a monotone restatement of the
+ * misfit on the same axis `confidenceFor` uses, `1 − misfit / possibleMisfit`, which puts a
+ * perfect fit at 1, the edge of the candidate range at 0, and every near-miss in between where a
+ * reader can rank them.
+ *
+ * Deliberately **not** clamped the way `confidenceFor` is. That floor of 0.5 exists because a
+ * link that was actually made carries a minimum of real evidence; a pair that was declined
+ * carries none, and reporting the weakest possible candidate as "0.5" would give a rejected pair
+ * the same footing as a merged one. The misfit itself stays in `reasons`, at full precision.
+ */
+export function candidateScore(misfit: number): number {
+  return Math.min(1, Math.max(0, 1 - misfit / DECISION.possibleMisfit));
+}
+
+/**
  * Whether an existing link survives a revision (ARCHITECTURE §6.1).
  *
  * Hysteresis: a link is kept while the new misfit is within `HYSTERESIS_MISFIT`, which is looser

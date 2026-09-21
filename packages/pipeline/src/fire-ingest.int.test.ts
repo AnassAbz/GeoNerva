@@ -184,11 +184,21 @@ describe('ingesting detections', () => {
      */
     const header =
       'latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,version,bright_ti5,frp,daynight';
+    /*
+     * The acceptable row's timestamp is derived from the clock, not hardcoded.
+     *
+     * It read `<today>,0013` until a run at 00:07 UTC failed it: on that date "today at 00:13" is
+     * six minutes in the *future*, past the five-minute horizon, so both rows were rejected and
+     * the test reported a product fault that did not exist. A fixed wall-clock time inside a
+     * test that compares against `now` is only ever correct for part of the day.
+     */
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1_000);
+    const recentDate = twoHoursAgo.toISOString().slice(0, 10);
+    const recentTime = twoHoursAgo.toISOString().slice(11, 16).replace(':', '');
     const future = new Date(Date.now() + 40 * 24 * 60 * 60 * 1_000).toISOString().slice(0, 10);
-    const today = new Date().toISOString().slice(0, 10);
     const rows = [
       header,
-      `-13.66,17.06,296.27,0.38,0.36,${today},0013,N20,nominal,2.0NRT,285.89,0.35,N`,
+      `-13.66,17.06,296.27,0.38,0.36,${recentDate},${recentTime},N20,nominal,2.0NRT,285.89,0.35,N`,
       `-13.67,17.07,296.27,0.38,0.36,${future},0013,N20,nominal,2.0NRT,285.89,0.35,N`,
     ];
 
