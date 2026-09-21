@@ -284,7 +284,11 @@ importers:
         specifier: 0.29.6
         version: 0.29.6
 
-  packages/changes: {}
+  packages/changes:
+    dependencies:
+      '@geonerva/domain':
+        specifier: workspace:*
+        version: link:../domain
 
   packages/config:
     dependencies:
