@@ -33,7 +33,9 @@ export function gdacsContext(input: {
       methodVersion: BASELINE_METHOD_VERSION,
       count: input.count,
       sinceYear: recordStart.getUTCFullYear(),
-      interpretation: `${within} since ${MONTHS[recordStart.getUTCMonth()] ?? ''} ${String(recordStart.getUTCFullYear())}, when GeoNerva's GDACS record begins.`,
+      // The day, not the month: "since September 2026" for a record begun on the 29th would present
+      // twenty-eight unread days as counted (review round 3).
+      interpretation: `${within} since ${String(recordStart.getUTCDate())} ${MONTHS[recordStart.getUTCMonth()] ?? ''} ${String(recordStart.getUTCFullYear())}, when GeoNerva's GDACS record begins.`,
     };
   }
   const sinceYear = input.asOf.getUTCFullYear() - GDACS_CONTEXT.years;

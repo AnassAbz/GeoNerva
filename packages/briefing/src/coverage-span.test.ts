@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { coveredSince } from './coverage-span.ts';
+import { coveredSince, coveredSinceForEvery } from './coverage-span.ts';
 
 const at = (day: number): Date => new Date(Date.UTC(2026, 0, 1) + day * 86_400_000);
 const span = (from: number, to: number) => ({ from: at(from), to: at(to) });
@@ -40,5 +40,32 @@ describe('coveredSince', () => {
 
   it('ignores an empty span', () => {
     expect(coveredSince([span(5, 5), span(6, 30)], at(30))).toEqual(at(6));
+  });
+});
+
+describe('coveredSinceForEvery', () => {
+  const of = (productId: number, from: number, to: number) => ({ productId, ...span(from, to) });
+
+  it('is the latest start when every product reaches the knowledge time', () => {
+    expect(
+      coveredSinceForEvery({ productIds: [1, 2], spans: [of(1, 0, 30), of(2, 10, 30)] }, at(30)),
+    ).toEqual(at(10));
+  });
+
+  it('is null when any product does not reach it', () => {
+    expect(
+      coveredSinceForEvery({ productIds: [1, 2], spans: [of(1, 0, 30), of(2, 0, 20)] }, at(30)),
+    ).toBeNull();
+    expect(coveredSinceForEvery({ productIds: [1, 2], spans: [of(1, 0, 30)] }, at(30))).toBeNull();
+  });
+
+  it('is null with no product to read', () => {
+    expect(coveredSinceForEvery({ productIds: [], spans: [] }, at(30))).toBeNull();
+  });
+
+  it("never lets one product's coverage stand in for another's", () => {
+    expect(
+      coveredSinceForEvery({ productIds: [1, 2], spans: [of(1, 0, 30), of(1, 0, 30)] }, at(30)),
+    ).toBeNull();
   });
 });

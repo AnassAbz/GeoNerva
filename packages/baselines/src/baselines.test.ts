@@ -409,7 +409,7 @@ describe('GDACS_CONTEXT: a record shorter than five years', () => {
         recordStart: new Date('2026-06-13T00:00:00.000Z'),
       }).interpretation,
     ).toBe(
-      "2 GDACS flood events within 300 km since June 2026, when GeoNerva's GDACS record begins.",
+      "2 GDACS flood events within 300 km since 13 June 2026, when GeoNerva's GDACS record begins.",
     );
   });
 });

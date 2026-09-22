@@ -57,7 +57,7 @@ import type { Kysely } from 'kysely';
 
 import { resolveEvidenceManifest, toAttribution } from './briefing.ts';
 import { contentSha256 } from './content-hash.ts';
-import { coveredSince } from './coverage-span.ts';
+import { coveredSince, coveredSinceForEvery } from './coverage-span.ts';
 import { replayHorizonFor } from './replay-horizon.ts';
 import { asOfContextFor, memberSolutionsOf } from './snapshot.ts';
 
@@ -189,11 +189,15 @@ async function earthquakeHistory(base: Base, windowDays: number): Promise<Histor
    * the retention floor, and a plan above it would leave M4.5-and-up windows short.
    */
   const coverageStart = coveredSince(
-    await catalogCoverageAsOf(db, {
-      asOf,
-      sourceIds: [...EARTHQUAKE_SOURCES],
-      maxMinMagnitude: RETENTION_FLOOR_MAGNITUDE,
-    }),
+    // Any earthquake product of either source: they restate one catalog.
+    (
+      await catalogCoverageAsOf(db, {
+        asOf,
+        sourceIds: [...EARTHQUAKE_SOURCES],
+        hazardTypes: ['EARTHQUAKE'],
+        maxMinMagnitude: RETENTION_FLOOR_MAGNITUDE,
+      })
+    ).spans,
     asOf,
   );
   /*
@@ -376,10 +380,12 @@ async function gdacsHistory(base: Base): Promise<HistoryResponse> {
   const coverageStart =
     family === undefined
       ? null
-      : coveredSince(
+      : // Every GDACS feed the family draws on, each read in its own right (review round 3).
+        coveredSinceForEvery(
           await catalogCoverageAsOf(options.db, {
             asOf: options.asOf,
             sourceIds: ['gdacs'],
+            hazardTypes: family.types,
             maxMinMagnitude: null,
           }),
           options.asOf,

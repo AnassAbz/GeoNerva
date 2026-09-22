@@ -455,7 +455,7 @@ describe('GDACS_CONTEXT', () => {
     const response = await history({ family: 'FLOODS', metric: 'GDACS_CONTEXT', radiusKm: 300 });
     expect(response.metric.observedValue).toEqual({ kind: 'count', value: 1 });
     expect(response.metric.interpretation).toBe(
-      "1 GDACS flood event within 300 km since June 2026, when GeoNerva's GDACS record begins.",
+      "1 GDACS flood event within 300 km since 13 June 2026, when GeoNerva's GDACS record begins.",
     );
   });
 
@@ -826,5 +826,82 @@ describe('live coverage is unbroken, successful, scheduled polling (fix-verifica
     });
     await polled(daysAgo(1), daysAgo(0.01));
     expect((await history()).metric.status).toBe('INSUFFICIENT_COVERAGE');
+  });
+});
+
+describe('GDACS coverage is per feed (review round 3)', () => {
+  async function gdacsProduct(code: string): Promise<number> {
+    const result = await sql<{ id: number }>`
+      SELECT id FROM geonerva.source_products WHERE source_id = 'gdacs' AND code = ${code}
+    `.execute(db);
+    const id = result.rows[0]?.id;
+    if (id === undefined) throw new Error(`no gdacs product ${code}`);
+    return id;
+  }
+
+  /** GDACS read for six years through one product's feed only, then polled through it. */
+  async function readOnly(code: string): Promise<void> {
+    const productId = await gdacsProduct(code);
+    await sql`
+      WITH plan AS (
+        INSERT INTO geonerva.backfill_plans
+          (id, source_id, product_id, mode, range_from, range_to, window_ms, min_window_ms,
+           status, finished_at)
+        VALUES (gen_random_uuid(), 'gdacs', ${productId}, 'HISTORICAL', ${daysAgo(6 * 365)},
+                ${daysAgo(0.01)}, ${DAY}, ${DAY}, 'COMPLETED', ${daysAgo(0.01)})
+        RETURNING id
+      )
+      INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
+      SELECT id, ${daysAgo(6 * 365)}, ${daysAgo(0.01)}, 'DONE', ${daysAgo(0.01)} FROM plan
+    `.execute(db);
+    await seedRun(db, {
+      sourceId: 'gdacs',
+      productId,
+      status: 'SUCCEEDED',
+      startedAt: daysAgo(0.01),
+    });
+    await seedRan(daysAgo(0.01));
+  }
+
+  const floods = { family: 'FLOODS', metric: 'GDACS_CONTEXT', radiusKm: 300 } as const;
+
+  it('does not take the earthquake feed as evidence that the flood feed was read', async () => {
+    await readOnly('EQ');
+    const response = await history(floods);
+    expect(response.metric.status).toBe('INSUFFICIENT_COVERAGE');
+    expect(response.metric.observedValue.kind).toBe('unavailable');
+  });
+
+  it('counts floods once the flood feed itself was read', async () => {
+    await readOnly('FL');
+    await quake({
+      observedAt: daysAgo(40),
+      hazardType: 'FLOOD',
+      sourceId: 'gdacs',
+      magnitude: null,
+      km: 100,
+    });
+    expect((await history(floods)).metric.observedValue).toEqual({ kind: 'count', value: 1 });
+  });
+
+  it("does not take the earthquake feed's backfill as the flood feed's history", async () => {
+    // Six years backfilled through EQ only; the flood feed polled live, and only just now.
+    await readOnly('EQ');
+    await seedRun(db, {
+      sourceId: 'gdacs',
+      productId: await gdacsProduct('FL'),
+      status: 'SUCCEEDED',
+      startedAt: daysAgo(0.01),
+    });
+    const response = await history(floods);
+    expect(response.metric.interpretation).toBe(
+      "0 GDACS flood events within 300 km since 20 September 2026, when GeoNerva's GDACS record begins.",
+    );
+  });
+
+  it('needs every feed a family draws on: volcanoes read, droughts not, is not read', async () => {
+    await readOnly('VO');
+    const response = await history({ family: 'OTHER', metric: 'GDACS_CONTEXT', radiusKm: 300 });
+    expect(response.metric.status).toBe('INSUFFICIENT_COVERAGE');
   });
 });

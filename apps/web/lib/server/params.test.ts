@@ -856,6 +856,14 @@ describe('containsPreciseCoordinate: the spellings a geocoder understands', () =
     '４８.８５６６１４,２.３５２２２２',
     '-33.868;151.21',
     '48.85 2.352',
+    // Typographic marks fold under NFKC; decimal minutes and spaced forms are just as precise.
+    '48°51′24″N 2°21′08″E',
+    '48°51′24.8″ N, 2°21′8.0″ E',
+    '48°51.397N 2°21.113E',
+    'N 48° 51.3969 E 2° 21.1134',
+    '48 51.3969N 2 21.1134E',
+    `48°51'24N 2°21'08E`,
+    '48 51 24 N 2 21 08 E',
   ])('finds a precise position in %s', (query) => {
     expect(containsPreciseCoordinate(query)).toBe(true);
   });
@@ -871,6 +879,10 @@ describe('containsPreciseCoordinate: the spellings a geocoder understands', () =
     'Paris 75001',
     // A digit between two decimals means they are not a pair.
     'Line 1.5, 2 stops, 4.125 km',
+    '10.30 am',
+    'Terminal 2 Gate 14 North',
+    'Flight 12 34 Newark',
+    '12.345,67 EUR',
   ])('lets %s through', (query) => {
     expect(containsPreciseCoordinate(query)).toBe(false);
   });

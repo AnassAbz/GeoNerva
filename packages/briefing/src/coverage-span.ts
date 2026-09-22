@@ -7,7 +7,7 @@
  * baseline must not reach across them.
  */
 
-import type { CoverageSpan } from '@geonerva/db/asof';
+import type { CatalogCoverage, CoverageSpan } from '@geonerva/db/asof';
 
 /**
  * The start of the contiguous covered span that reaches `asOf`, or `null` when nothing covered
@@ -34,4 +34,23 @@ export function coveredSince(spans: readonly CoverageSpan[], asOf: Date): Date |
     if (start <= asOf.getTime() && end >= asOf.getTime()) answer = start;
   }
   return answer === null ? null : new Date(answer);
+}
+
+/**
+ * Where coverage began when **every** product had to be read — a GDACS family whose events come
+ * from more than one feed, say. The latest of the products' starts, or `null` if any product's
+ * coverage does not reach `asOf`, or there is no product at all.
+ */
+export function coveredSinceForEvery(coverage: CatalogCoverage, asOf: Date): Date | null {
+  if (coverage.productIds.length === 0) return null;
+  let latest: number | null = null;
+  for (const productId of coverage.productIds) {
+    const start = coveredSince(
+      coverage.spans.filter((span) => span.productId === productId),
+      asOf,
+    );
+    if (start === null) return null;
+    latest = latest === null ? start.getTime() : Math.max(latest, start.getTime());
+  }
+  return latest === null ? null : new Date(latest);
 }

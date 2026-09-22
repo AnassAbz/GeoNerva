@@ -13,6 +13,13 @@ export interface CoverageSpan {
   readonly to: Date;
 }
 
+/** Coverage per product: which products answer the question, and what each had read. */
+export interface CatalogCoverage {
+  /** Every product of the requested sources whose hazard types meet the requested ones. */
+  readonly productIds: readonly number[];
+  readonly spans: readonly (CoverageSpan & { readonly productId: number })[];
+}
+
 /**
  * The spans of observation time a set of sources had been **read** for, as known at `asOf`.
  *
@@ -36,6 +43,12 @@ export interface CoverageSpan {
  * `maxMinMagnitude` excludes plans that fetched only above a magnitude the caller will count
  * below: a plan for M5+ does not cover M4.5–5.0. `null` accepts every plan.
  *
+ * **Per product.** One source can publish several feeds — GDACS has six, one per hazard — and
+ * polling its earthquake feed is no evidence that its cyclone feed was read (fix-verification
+ * review, round 3). So every span belongs to a product whose `hazard_types` meet `hazardTypes`,
+ * chains are built per product, and the caller decides whether it needs any product or all of
+ * them. A run or plan with no product is source-level and counts for each of its source's products.
+ *
  * Every direction of error here is towards less coverage, which a caller turns into a refusal,
  * never a count. One such direction is structural and recorded as ADR-041: ADR-033 keeps
  * `ingestion_runs` for 90 days on the lean profile, so once pruning is scheduled the live chains
@@ -47,25 +60,42 @@ export async function catalogCoverageAsOf(
   options: {
     readonly asOf: Date;
     readonly sourceIds: readonly string[];
+    readonly hazardTypes: readonly string[];
     readonly maxMinMagnitude: number | null;
   },
-): Promise<CoverageSpan[]> {
-  if (options.sourceIds.length === 0) return [];
+): Promise<CatalogCoverage> {
+  if (options.sourceIds.length === 0 || options.hazardTypes.length === 0) {
+    return { productIds: [], spans: [] };
+  }
+  const products = await sql<{ id: number }>`
+    SELECT p.id
+    FROM geonerva.source_products p
+    WHERE p.source_id = ANY(${sql.val(options.sourceIds)}::text[])
+      AND p.hazard_types && ${sql.val(options.hazardTypes)}::text[]
+    ORDER BY p.id
+  `.execute(db);
   const magnitudeFilter =
     options.maxMinMagnitude === null
       ? sql`TRUE`
       : sql`(p.min_magnitude IS NULL OR p.min_magnitude <= ${options.maxMinMagnitude})`;
-  const result = await sql<{ from_at: Date; to_at: Date }>`
-    WITH polls AS (
-      SELECT r.source_id,
+  const result = await sql<{ product_id: number; from_at: Date; to_at: Date }>`
+    WITH wanted AS (
+      SELECT p.id AS product_id, p.source_id
+      FROM geonerva.source_products p
+      WHERE p.source_id = ANY(${sql.val(options.sourceIds)}::text[])
+        AND p.hazard_types && ${sql.val(options.hazardTypes)}::text[]
+    ),
+    polls AS (
+      SELECT w.product_id,
              r.committed_at,
              make_interval(secs => (s.policy -> 'freshness' ->> 'fetchStaleAfterS')::double precision)
                AS max_gap,
-             lag(r.committed_at) OVER (PARTITION BY r.source_id ORDER BY r.committed_at) AS previous
+             lag(r.committed_at) OVER (PARTITION BY w.product_id ORDER BY r.committed_at) AS previous
       FROM geonerva.ingestion_runs r
+      JOIN wanted w
+        ON w.source_id = r.source_id AND (r.product_id IS NULL OR r.product_id = w.product_id)
       JOIN geonerva.sources s ON s.id = r.source_id
-      WHERE r.source_id = ANY(${sql.val(options.sourceIds)}::text[])
-        AND r.trigger = 'SCHEDULE'
+      WHERE r.trigger = 'SCHEDULE'
         AND r.status IN ('SUCCEEDED', 'SKIPPED')
         AND r.committed_at IS NOT NULL
         AND r.committed_at <= ${options.asOf}
@@ -73,25 +103,34 @@ export async function catalogCoverageAsOf(
     chained AS (
       SELECT polls.*,
              sum(CASE WHEN previous IS NULL OR committed_at - previous > max_gap THEN 1 ELSE 0 END)
-               OVER (PARTITION BY source_id ORDER BY committed_at) AS chain
+               OVER (PARTITION BY product_id ORDER BY committed_at) AS chain
       FROM polls
     )
-    SELECT i.interval_from AS from_at, LEAST(i.interval_to, i.completed_at) AS to_at
+    SELECT w.product_id, i.interval_from AS from_at, LEAST(i.interval_to, i.completed_at) AS to_at
     FROM geonerva.backfill_intervals i
     JOIN geonerva.backfill_plans p ON p.id = i.plan_id
+    JOIN wanted w
+      ON w.source_id = p.source_id AND (p.product_id IS NULL OR p.product_id = w.product_id)
     WHERE p.mode = 'HISTORICAL'
-      AND p.source_id = ANY(${sql.val(options.sourceIds)}::text[])
       AND i.status = 'DONE'
       AND i.completed_at <= ${options.asOf}
       AND ${magnitudeFilter}
     UNION ALL
-    SELECT min(committed_at) AS from_at,
+    SELECT product_id,
+           min(committed_at) AS from_at,
            CASE WHEN ${options.asOf}::timestamptz - max(committed_at) <= max(max_gap)
                 THEN ${options.asOf}::timestamptz
                 ELSE max(committed_at)
            END AS to_at
     FROM chained
-    GROUP BY source_id, chain
+    GROUP BY product_id, chain
   `.execute(db);
-  return result.rows.map((row) => ({ from: row.from_at, to: row.to_at }));
+  return {
+    productIds: products.rows.map((row) => row.id),
+    spans: result.rows.map((row) => ({
+      productId: row.product_id,
+      from: row.from_at,
+      to: row.to_at,
+    })),
+  };
 }

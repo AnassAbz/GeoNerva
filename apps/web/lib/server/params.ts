@@ -447,9 +447,23 @@ export function parseQuery(search: URLSearchParams, name = 'q'): string {
  * Both numbers must be decimals. An address like "Av. Paulista 1.578, 01310-200", where "1.578" is
  * a house number with a thousands separator, has one decimal number and passes.
  */
+/*
+ * Sexagesimal forms precise on their own. After NFKC the typographic double prime (″) is two
+ * primes (′′), which the first version of this list did not match (review round 3).
+ *
+ *  - degrees, minutes and seconds, whatever marks the seconds (or nothing does);
+ *  - degrees and decimal minutes to two or more places (about 20 m);
+ *  - the same written with spaces and a hemisphere letter instead of symbols.
+ */
+const SEXAGESIMAL: readonly RegExp[] = [
+  /\d{1,3}\s*°\s*\d{1,2}\s*['′]\s*\d{1,2}(?:[.,]\d+)?/u,
+  /\d{1,3}\s*°\s*\d{1,2}[.,]\d{2,}/u,
+  /(?<![\d.])\d{1,3}\s+\d{1,2}(?:[.,]\d{2,}|\s+\d{1,2}(?:[.,]\d+)?)\s*[NSEW](?![a-z])/iu,
+];
+
 export function containsPreciseCoordinate(raw: string): boolean {
   const text = raw.normalize('NFKC');
-  if (/\d{1,3}\s*°\s*\d{1,2}\s*['′]\s*\d{1,2}(?:[.,]\d+)?\s*(?:["″]|'')/u.test(text)) return true;
+  if (SEXAGESIMAL.some((pattern) => pattern.test(text))) return true;
 
   // Not after a digit or a dot, so a match never starts inside another number; after a comma is
   // fine, since "48.856614,2.352222" separates its pair with one.
