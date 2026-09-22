@@ -1,5 +1,276 @@
 # Gate G8 — the read-only domain API
 
+This file holds two checkpoints. **Checkpoint 2** (below) is current. **Checkpoint 1**, the FAIL
+of 2026-09-21, is kept unchanged after it, because its findings, measurements and corrections are
+still the record of how the API got here.
+
+**A naming warning, first** (unchanged from checkpoint 1). This gate is the one the P8 continuation
+prompt defines. The repository's own acceptance criterion for its phase P8 is **G6**
+(`docs/IMPLEMENTATION_PLAN.md`), and the repository's G8 is a different thing. This file uses the
+prompt's numbering.
+
+---
+
+# Checkpoint 2 — 2026-09-22
+
+- **Commits:** `56260f9` → `d2b8b6c` — 12, plus this report.
+- **Verdict: PASS.** Every criterion of the G8 acceptance gate is met and evidenced below: all
+  eleven P0 endpoints served against their frozen contracts; the API reads facts only through the
+  as-of layer; validation and error semantics tested; the security review found no CRITICAL or
+  HIGH; representative latency measured; schemas documented as a generated OpenAPI document; every
+  suite green; **no CRITICAL or HIGH finding open** after four review rounds. The public API
+  contract is **frozen at `d2b8b6c`** as `docs/openapi.json` and
+  `packages/domain/src/read-models/schemas.ts`.
+
+  Two things the owner should read before relying on that word. **`/history`'s fire metric is
+  served as a refusal**: `FIRE_TREND` answers `INSUFFICIENT_COVERAGE` until ADR-040 is decided —
+  the endpoint and its contract are complete, the data behind that one metric does not exist yet.
+  And **every GDACS family's baseline refuses in production today**, correctly, because the worker
+  schedules only USGS; `/history` for floods, cyclones and volcanoes will answer once GDACS is
+  polled per feed. Neither is a false answer; both are honest absences.
+
+## 1. The six questions
+
+| Question | Answer |
+|---|---|
+| Did any architectural assumption change? | **Yes — recorded, none silently.** A baseline's reference now rests on *coverage* (what GeoNerva read), not on the oldest record it holds; a coverage record that outlives run retention is ADR-041 (Proposed). ADR-040 (Proposed) for the fire trend. ADR-039 decided *not* to be needed for G8 (§3). §13.4 gains one rate-limit row. See §3. |
+| Does any endpoint depend on runtime AI? | **No.** `apps/web`, tests excluded, reaches `baselines, briefing, changes, config, correlation, db, domain, geo, geocoding, http, relevance` — not `packages/ai`, `sources` or `pipeline` (dependency-cruiser, 280 modules). |
+| Was any production or external provider called? | **No.** The one outbound path the web process has is the Nominatim adapter (`geocoding → http`), and every test that reaches it injects a fake geocoder or a recording `fetch`. No test, benchmark or script in this checkpoint made a network call to a provider. |
+| Did any live-model call occur? | **No.** There is no code path from the API to a model client. |
+| Does the web process have write capability? | **Yes, bounded, unchanged in kind:** `rate_limit_buckets` and `geocode_cache` (migration 0007). Migration 0015 grants nothing. The only new write the web process performs is the geocode-cache upsert on a Nominatim miss, which 0007 already provided for. |
+| Do replay/as-of invariants hold through the API boundary? | **Yes, as tested.** Every new read is bounded on its replay column — `ingested_at`, `as_of`, `committed_at`, `linked_at`, `finished_at`, and now backfill `completed_at` — and each bound is killed by a mutation control at the read or at the endpoint. One known exception is recorded, not fixed: aliases re-pointed in place by a record merge (§6). |
+
+## 2. Endpoints — 11 of 11 served
+
+| Endpoint | Commit | Contract | Cache |
+|---|---|---|---|
+| `GET /briefing` | (checkpoint 1) | `locationBriefingSchema` | live 120 s / replay immutable |
+| `GET /events` | `56260f9` | `mapFeaturesResponseSchema` | 120 s, bbox quantized |
+| `GET /events/{publicId}` | `0d61ec4` | `eventDetailSchema` | 120 s; merged ids 308 |
+| `GET /fire-clusters/{publicId}` | `0d61ec4` | `fireClusterDetailSchema` | 300 s; merged ids 308 |
+| `GET /history` | `d362809` | `historyResponseSchema` | 3,600 s |
+| `GET /places/suggest` | `9acc628` | `placeSuggestResponseSchema` | 86,400 s |
+| `GET /places/search` | `9acc628` | `placeSearchResponseSchema` | 86,400 s |
+| `GET /places/reverse` | `9acc628` | `placeSearchResponseSchema` | 86,400 s |
+| `GET /evidence/{id}` | (checkpoint 1) | `evidenceDetailSchema` | conditional immutable |
+| `GET /sources/status` | (checkpoint 1) | `sourceStatusSchema` | 60 s |
+| `GET /replay/horizon` | (checkpoint 1) | `replayHorizonResponseSchema` | 3,600 s |
+
+Every served contract is a runtime schema with a compile-time proof of equivalence to the frozen
+interface, and `docs/openapi.json` is generated from them with a drift test. The contract test's
+served list is exactly the eleven.
+
+**What `/history` serves, precisely.** `EQ_COUNT_7D` and `EQ_COUNT_30D` in full (§8.1);
+`GDACS_CONTEXT` as a count (§8.3); `FIRE_TREND` answers `200` with `INSUFFICIENT_COVERAGE` until
+ADR-040 is decided — never a trend computed from nothing. §13.1 gives this endpoint no `as_of`, and
+it refuses one.
+
+**Two parameter decisions worth stating.** `/fire-clusters/{id}` accepts `as_of` only, as §13.1
+lists, although its frozen contract can carry a relevance assessment; the builder supports a
+location and the route does not expose it. And `/history` requires `family` rather than defaulting
+it, so a mistyped family is a 400 and not an earthquake chart.
+
+## 3. Decisions and architectural changes
+
+- **ADR-039 (FIRMS historical detections) — not needed for G8, and not chosen.** G8's acceptance
+  list does not require individual historical detections. The fire-cluster detail serves the
+  detection sample only when the stored members verify against the version's own count, and
+  otherwise says so; individual historical detections are **unsupported** and documented as such.
+  The storage model is unchanged.
+- **ADR-040 (Proposed)** — `FIRE_TREND` needs an append-only daily aggregate with a knowledge time.
+- **ADR-041 (Proposed)** — coverage is derived from `ingestion_runs` and backfill checkpoints; once
+  ADR-033's 90-day run retention is scheduled, that evidence disappears and baselines refuse. A
+  coverage ledger is recommended, and the run-retention sweep must wait for it.
+- **Coverage, not the oldest record.** `/history` counts a reference window only if GeoNerva read
+  it: `DONE` historical backfill intervals up to their completion, and chains of successful
+  scheduled polls unbroken by more than the source's own `fetchStaleAfterS`. Refused otherwise.
+  This came from review, not from design (§5).
+- **Fire distances carry their basis.** When a cluster's members cannot be verified, relevance is
+  judged on the hull distance as before, but the sentence names it ("the area where the cluster was
+  detected") and the detail reports `nearestDetectionKm: null`. The P8 schema refinement that
+  forced both distances together was narrowed to the implication the frozen `number | null`
+  interface allows.
+- **§13.4 gains a row:** Nominatim cache misses cost 10/min per key before the 1/s global.
+- **ADR-038** (raw-payload metadata on `/evidence`) remains Proposed from checkpoint 1.
+
+## 4. Latency (P8.6) — measured, with what the numbers are
+
+`pnpm bench:api` seeds a separate `_test` database and times every endpoint **in process, one
+request at a time**: 60 samples after 5 warm-ups, parsing through serialization, the rate-limit
+write included. The dataset is dense on purpose: 6,150 earthquakes (ten years around Marrakech,
+Gutenberg–Richter from M2.5, a busy week, EMSC restating it, a global background), 150 active fire
+clusters with 24,500 detections, 50 floods, 20,001 places, completed USGS/GDACS backfills, and
+**ninety days of scheduled polls at each source's interval** — the lean profile's run retention.
+
+| Endpoint | p50 ms | p95 ms | max ms |
+|---|---|---|---|
+| briefing, live, 24h | 117.2 | 129.5 | 137.2 |
+| briefing, live, 7d | 115.1 | 131.3 | 173.9 |
+| briefing, replay | 89.3 | 100.7 | 104.1 |
+| briefing, by place | 115.5 | 132.5 | 150.8 |
+| events, zoom 6 | 19.1 | 22.8 | 27.1 |
+| event detail | 10.6 | 11.5 | 14.6 |
+| fire-cluster detail | 8.8 | 10.6 | 14.6 |
+| history, EQ 7d, 150 km | 176.9 | 193.0 | 196.2 |
+| history, EQ 30d, 300 km | 176.7 | 195.7 | 198.1 |
+| history, GDACS floods | 42.7 | 49.0 | 53.0 |
+| sources/status | 32.2 | 39.6 | 45.9 |
+| places/suggest | 3.0 | 3.7 | 4.0 |
+| evidence | 4.5 | 5.3 | 5.4 |
+| replay/horizon | 1.9 | 2.3 | 10.4 |
+
+Measured at `d2b8b6c`.
+
+Every row returned `200` on every sample. The briefing p95 is well inside G6's 600 ms.
+
+**What these numbers are not.** Service time, not latency under load: no concurrency, no TLS, no
+platform routing, no CDN (which serves most live traffic, §13.3). The database is the local Docker
+container on a USB-attached SSD. Not a production measurement.
+
+**What measuring found.**
+
+1. **A real regression, fixed** (`7b0a9b3`). The first valid run put `/briefing?window=7d` at p95
+   **703 ms**. One read was 658 ms of it: the planner estimated a geography `ST_DWithin` at one row
+   and chose a nested-loop semi-join that rescanned 3,065 candidates 6,043 times. `= ANY(ARRAY(…))`
+   makes it an InitPlan: 1,275 ms → 14 ms under `EXPLAIN ANALYZE`, same semantics.
+2. **Two invalid runs, discarded.** The first run's caller rotation varied only the last octet, the
+   limiter keys on the /24, and half the rows timed the 429 path. Later, after the coverage fix,
+   `/history`'s 20 ms rows timed the *refusal*, because the dataset had no backfill checkpoints.
+   The script now uses a fresh /24 per request, reports the worst status per row, and prints the
+   status history returned before timing it.
+3. **The coverage read costs ~115–135 ms** over 51,000 runs — most of `/history`'s 200 ms. It grows
+   with run history; ADR-041's ledger would make it proportional to the number of spans.
+4. **Unexplained:** `places/suggest` p95 moved between ~4 ms and ~38 ms across runs on identical
+   data. Not diagnosed.
+
+## 5. The reviews — three rounds, because each round of fixes had a flaw of its own
+
+| Round | Scope | CRITICAL | HIGH | MEDIUM | LOW |
+|---|---|---|---|---|---|
+| 1a security & privacy | `8a621c8..d362809` | 0 | 0 | 3 | 5 |
+| 1b correctness & honesty | `8a621c8..d362809` | 0 | 3 | 7 | ~10 |
+| 2 verification of the fixes | `0de5408`, `ca20260` | 0 | 1 | 4 | 6 |
+| 3 verification of the fixes | `650c5fb` | 0 | 1 (latent) | 4 | 5 |
+| 4 verification of the fixes | `8ea8cc2` | 0 | 0 | 3 | 5 |
+
+Every HIGH was reproduced against the code before it was changed.
+
+**Round 1, HIGH — all fixed** (`0de5408`):
+- **H1.** The earthquake reference started at the oldest record held. A backfill that finished
+  2016–2017 and stopped left eight unread years counted as quiet weeks, and an ordinary week read
+  "above typical" with the elevated-activity caveat.
+- **H2.** `GDACS_CONTEXT` counted five years it may never have read, with no check that events had
+  been opened. A shorter record is now named: "since June 2026, when GeoNerva's GDACS record begins."
+- **H3.** An unverifiable fire cluster's hull distance was stated as "the nearest detection is about
+  N km away" — inside the hull, "about 0 km".
+
+**Round 2, HIGH — fixed** (`650c5fb`): the H1 fix itself took live coverage from the first
+committed run of any trigger and status, and treated polling as continuous — so a failed first
+poll, a one-off manual run or a deletion sweep bridged months never read, and an outage counted as
+quiet weeks. That is H1's false zero through another door.
+
+**Round 3, HIGH — fixed** (`8ea8cc2`), latent because production schedules only USGS: coverage was
+chained per *source*, and GDACS is one source with six feeds, so polling its earthquake feed made
+"0 tropical cyclone events … since …" a count over a feed never read. Coverage is now per product,
+from each product's `hazard_types`; a GDACS family needs every feed it draws on.
+
+**Round 4** found no CRITICAL or HIGH. Its cheap findings are fixed in `d2b8b6c`; the changes in
+that commit were not themselves put through a fifth review — they are small, pure, and each is
+killed by a mutation control.
+
+**MEDIUM fixed:** the window-boundary event counted nowhere; "the largest since" below M4.5 under a
+reference reaching past retention; precise coordinates in search queries (ADR-015), first as a
+pattern and then — after round 2 walked past it with hemisphere letters, degree signs, DMS and
+fullwidth digits — as a scan; `/places/reverse` able to hold the global Nominatim ceiling alone;
+backfill intervals claiming past their completion; a count over a partly read current window; the
+GDACS record's start rounded to the month, then to the day, now the first whole day covered;
+typographic, hemisphere-first, colon and `º` sexagesimal forms in search queries.
+
+**MEDIUM carried, with reasons** (§6).
+
+## 6. Open items carried forward
+
+Nothing below is CRITICAL or HIGH.
+
+1. **Aliases re-pointed in place by a record merge leak into earlier replays** (round-1 M3). An
+   event-detail replay before a merge shows the absorbed record's alias under the survivor. Needs
+   alias history — a schema change of its own.
+2. **The horizon check ignores the recency window** (round-1 M4). Latent until pruning is scheduled
+   (P10): `as_of = now − 15 d` would then silently drop sub-M4.5 quakes 30–45 days old.
+3. **No Nominatim circuit breaker** (security M3). A provider 429 is surfaced to one caller and not
+   remembered; SECURITY.md H3 lists a breaker as a mitigation.
+4. **`/history` computes per request** (security M1): no `baseline_metrics` materialization and no
+   in-process LRU (§13.3). Now measured at ~200 ms p95, bounded by a 100,000-row catalog bound that
+   throws rather than truncates.
+5. **Nominatim labels in local scripts** (no `accept-language`), and suggest's `admin1` is a
+   GeoNames code where search returns a name.
+6. **Coordinate locations carry an invented `timezone: 'UTC'`** (pre-existing).
+7. **ADR-038, 040, 041 await decisions.** ADR-041 now carries two reasons: run retention would
+   erase the coverage evidence, and `fetchStaleAfterS` is not what each poll read — USGS reads 24 h
+   back, so any worker stop over an hour on this machine cuts every earlier backfill off from the
+   present (a refusal, live), while EMSC reads 15 minutes back, so an outage could lose events the
+   chain calls covered (latent: EMSC is not scheduled).
+7a. **Coverage metadata is read as it is now** (round 4 M2): product membership (`source_products`)
+   and `fetchStaleAfterS` are not versioned. Adding a product turns past answers into refusals;
+   deleting an unpolled one could turn a past refusal into a count — which needs a manual data
+   change nobody makes today.
+7b. **A retired product stays required** (round 4 M3): if `gdacs/DR` is retired, OTHER refuses
+   from then on. Availability, never a false count.
+7c. **A run or plan with no product counts for every product of its source** (round 4 L2). Nothing
+   in production writes one today; a future multi-product backfill that omitted it would.
+7d. **The query scan refuses a few contrived strings** such as "size 10 12 14 S", which are valid
+   positions; a clear 400, never a leak.
+8. **Least-privilege is enforced by structure, not by RLS** (checkpoint 1 §9.3), unchanged.
+9. **Intermittents, not diagnosed:** `emsc.int.test.ts` (checkpoint 1), and a second shape in
+   `fire-ingest.int.test.ts` seen once earlier in this phase — a FAILED outcome whose stored run row
+   lacked its status and message; it passed alone and on rerun. Neither has recurred in the eight full
+   runs of this checkpoint's last day — which is not evidence that either is fixed. One full run failed on a test of mine that straddled an
+   epoch-aligned rate-limit window; that was diagnosed and fixed, not retried until green.
+10. **LOWs** from all rounds are listed in the review hand-offs; the cheap ones were fixed.
+
+## 7. Tests and controls
+
+- `pnpm check` exit **0** at `d2b8b6c`: typecheck, eslint, prettier, dependency-cruiser (280
+  modules, 1,076 dependencies, no violations), **1,610** unit tests.
+- Integration **699/699**, twice consecutively (294 s, 349 s), after the last change. Every full
+  run this checkpoint, in order: 688/688; 687/688 (the window-straddling test, §6.9); 695/695 ×2;
+  699/699 ×2 after round 3; 699/699 ×2 after round 4.
+- Mutation controls, valid runs only (commit charge logged per control, 79–82 %, no database
+  outage):
+
+| Target | First run | Final |
+|---|---|---|
+| `/events` | 52/53 | the survivor exposed an unreachable guard, removed; its replacement killed |
+| P7 fire proximity | 9/9 | 9/9 |
+| event & fire-cluster detail | 19/24 | 24/24 |
+| places | 22/24 | 24/24 |
+| `/history` | 17/26 | 26/26 |
+| round-1 HIGH fixes | 15/19 | 19/19 |
+| round-1 MEDIUM fixes | 6/9 (two stale anchors) | 9/9 |
+| round-2 fixes | 10/13 | 13/13 |
+| round-3 fixes | 9/10 | 10/10 (one kill discarded first: the new test did not compile) |
+| round-4 fixes | 6/7 | 6/6; the seventh target was dead code, removed |
+
+Every final kill was against a test that passes on the unmutated code; three kills during this
+checkpoint were discarded and rerun because the new test failed on unmutated code first.
+
+## 8. What the next phase inherits
+
+- **The frozen contract.** Eleven endpoints, `docs/openapi.json`, and the schemas that prove it.
+  A change to any of them is a contract change.
+- **Decisions for the owner:** ADR-038 (raw-payload metadata on `/evidence`), ADR-040 (the fire
+  trend's daily aggregate), ADR-041 (a coverage ledger with read windows). ADR-041 constrains P10:
+  do not schedule the `ingestion_runs` retention sweep before it.
+- **Scheduling GDACS and EMSC** will turn several latent findings live (§6.7); read them first.
+- **The open items in §6**, none CRITICAL or HIGH.
+- **P9 builds against these contracts.** Server components call `lib/server/services.ts` with the
+  same validated requests the routes use, never the API over loopback.
+
+---
+
+# Checkpoint 1 — 2026-09-21
+
+
 - **Date:** 2026-09-21
 - **Commits:** `e2927f1` → `5948858` — 8, plus this report
 - **Verdict: FAIL.** Not because anything built is unsound — no CRITICAL or HIGH finding remains
