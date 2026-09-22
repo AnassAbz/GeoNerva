@@ -2,10 +2,18 @@
 
 import { PlaceSearch } from '../components/place-search.tsx';
 import { COPY } from '../lib/view/copy.ts';
-import { getCuratedPlaces, getPlaceSuggestions } from '../lib/view/data.ts';
+import { getCuratedPlaces } from '../lib/view/data.ts';
 
+/*
+ * The search box is no longer handed a list of places to filter. P0 capability 1 is "local
+ * type-ahead (GeoNames)", and the endpoint that serves it — `/api/v1/places/suggest` — reads the
+ * same table this page would have had to read, with the query validation, the rate limit and the
+ * cache policy already around it. Rendering a copy of the list into the page was the P9a
+ * stand-in for having no database; keeping it would mean two sources of suggestions that can
+ * disagree, and a list that goes stale the moment the page is cached.
+ */
 export default async function HomePage() {
-  const [suggestions, curated] = await Promise.all([getPlaceSuggestions(), getCuratedPlaces()]);
+  const curated = await getCuratedPlaces();
   return (
     <main id="main" className="mx-auto flex max-w-2xl flex-col gap-8 px-4 py-12 md:py-16">
       <div>
@@ -15,7 +23,7 @@ export default async function HomePage() {
       </div>
 
       <div>
-        <PlaceSearch suggestions={suggestions} />
+        <PlaceSearch />
         <p className="mt-3 flex flex-wrap items-center gap-2 text-sm text-fg-muted">
           <span>{COPY.home.tryLabel}</span>
           {curated.map((place) => (

@@ -160,9 +160,32 @@ export const COPY = {
   },
   home: {
     searchLabel: 'Search for a place',
-    searchPlaceholder: 'City or place name',
+    searchPlaceholder: 'City, place name or coordinates',
     searchSubmit: 'Show briefing',
     noMatch: 'No matching place in the local list.',
+    searchTooShort: 'Type at least two characters.',
+    /* Shown while the type-ahead cannot be reached; submitting still calls the geocoder. */
+    suggestUnavailable: 'Suggestions are unavailable right now. Choose Show briefing to search.',
+    searching: 'Searching…',
+    searchNoResult: 'No place found for that search.',
+    searchChoose: (count: number) => `${String(count)} places found. Choose one.`,
+    searchFailed: 'Place search is unavailable right now. Try again in a moment.',
+    /* Coordinate entry. The pair is already rounded by the time it reaches this sentence. */
+    coordinateOption: (point: string) => `Go to ${point}`,
+    coordinateRounded: 'Coordinates are rounded to two decimals, about 1 km, before they are used.',
+    coordinateOutOfRange:
+      'A latitude must be between −90 and 90, and a longitude between −180 and 180.',
+    coordinateSexagesimal: 'Enter coordinates as decimal degrees, for example 31.63, -8.00.',
+    /* "Use my location": an explicit click, and a plain sentence whenever it cannot answer. */
+    useMyLocation: 'Use my location',
+    locating: 'Finding your location…',
+    locationDenied: 'Location permission was declined. Type a place name or coordinates instead.',
+    locationUnavailable:
+      'Your location could not be determined. Type a place name or coordinates instead.',
+    locationTimedOut:
+      'Finding your location took too long. Type a place name or coordinates instead.',
+    locationUnsupported:
+      'This browser does not offer a location. Type a place name or coordinates instead.',
     tryLabel: 'Try:',
     howTitle: 'How it works',
     howSteps: [
