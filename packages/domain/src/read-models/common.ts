@@ -53,8 +53,12 @@ import type { SourceHealthReason } from '../health/source-health.ts';
 import type { SubjectRef } from '../value-objects/subject-ref.ts';
 import type { IsoTimestamp } from '../value-objects/time.ts';
 
-/** Current version of the read-model contracts. Bumping it requires an ADR. */
-export const READ_MODEL_SCHEMA_VERSION = 1;
+/**
+ * Current version of the read-model contracts. Bumping it requires an ADR.
+ *
+ * 2 — ADR-038: `ObservationEvidenceDetail.rawPayload`, the raw-payload lifecycle state.
+ */
+export const READ_MODEL_SCHEMA_VERSION = 2;
 
 export type ReadModelSchemaVersion = typeof READ_MODEL_SCHEMA_VERSION;
 

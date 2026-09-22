@@ -118,7 +118,9 @@ import type {
   FireClusterVersionEvidenceDetail,
   IngestionRunEvidenceDetail,
   ObservationEvidenceDetail,
+  RawPayloadView,
 } from './evidence-item.ts';
+import { RAW_PAYLOAD_STATES } from './evidence-item.ts';
 import type {
   AiBriefingView,
   AiSection,
@@ -964,25 +966,89 @@ export type LocationBriefingMatches = Expect<
  * ── Evidence detail ───────────────────────────────────────────────────────────
  */
 
-export const observationEvidenceDetailSchema = z.object({
-  kind: z.literal('OBS'),
-  versionId: z.string(),
-  versionSeq: z.number().int().positive(),
-  sourceRecordPrimaryKey: z.string(),
-  hazardType: z.string(),
-  lifecycleStatus: z.enum(LIFECYCLE_STATUSES),
-  observedAt: isoTimestamp,
-  validFrom: isoTimestamp.nullable(),
-  validTo: isoTimestamp.nullable(),
-  sourceUpdatedAt: isoTimestamp.nullable(),
-  ingestedAt: isoTimestamp,
-  contributor: z.string().nullable(),
-  contentSha256: z.string().regex(/^[0-9a-f]{64}$/u),
-  rawExcerpt: z.unknown(),
-  rawPayloadSha256: z.string().nullable(),
-  rawPayloadPruned: z.boolean(),
-  sourceUrl: z.string().nullable(),
-});
+export const rawPayloadViewSchema = z
+  .object({
+    state: z.enum(RAW_PAYLOAD_STATES),
+    sha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/u)
+      .nullable(),
+    capturedAt: isoTimestamp.nullable(),
+    retentionExpiresAt: isoTimestamp.nullable(),
+  })
+  .superRefine((view, ctx) => {
+    const captured = view.state === 'AVAILABLE' || view.state === 'PRUNED';
+    // A captured body has a digest, a capture time and an expiry; nothing else claims either time.
+    if (
+      captured !== (view.capturedAt !== null) ||
+      captured !== (view.retentionExpiresAt !== null)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['capturedAt'],
+        message: 'capture and expiry times exist exactly when a body was captured',
+      });
+    }
+    if (captured && view.sha256 === null) {
+      ctx.addIssue({ code: 'custom', path: ['sha256'], message: 'a captured body has a digest' });
+    }
+    if (view.state === 'SOURCE_UNAVAILABLE' && view.sha256 !== null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['sha256'],
+        message: 'an unreadable raw row has no readable digest',
+      });
+    }
+  });
+export type RawPayloadViewMatches = Expect<
+  Exact<z.infer<typeof rawPayloadViewSchema>, RawPayloadView>
+>;
+
+export const observationEvidenceDetailSchema = z
+  .object({
+    kind: z.literal('OBS'),
+    versionId: z.string(),
+    versionSeq: z.number().int().positive(),
+    sourceRecordPrimaryKey: z.string(),
+    hazardType: z.string(),
+    lifecycleStatus: z.enum(LIFECYCLE_STATUSES),
+    observedAt: isoTimestamp,
+    validFrom: isoTimestamp.nullable(),
+    validTo: isoTimestamp.nullable(),
+    sourceUpdatedAt: isoTimestamp.nullable(),
+    ingestedAt: isoTimestamp,
+    contributor: z.string().nullable(),
+    contentSha256: z.string().regex(/^[0-9a-f]{64}$/u),
+    rawExcerpt: z.unknown(),
+    rawPayloadSha256: z.string().nullable(),
+    rawPayloadPruned: z.boolean(),
+    rawPayload: rawPayloadViewSchema,
+    sourceUrl: z.string().nullable(),
+  })
+  .superRefine((detail, ctx) => {
+    // The two P8 fields restate the lifecycle; they may never disagree with it (ADR-038).
+    if (detail.rawExcerpt !== null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['rawExcerpt'],
+        message: 'provider bodies are never served',
+      });
+    }
+    if (detail.rawPayloadSha256 !== detail.rawPayload.sha256) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['rawPayloadSha256'],
+        message: 'must equal rawPayload.sha256',
+      });
+    }
+    if (detail.rawPayloadPruned !== (detail.rawPayload.state === 'PRUNED')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['rawPayloadPruned'],
+        message: "must equal rawPayload.state === 'PRUNED'",
+      });
+    }
+  });
 export type ObservationEvidenceDetailMatches = Expect<
   Exact<z.infer<typeof observationEvidenceDetailSchema>, ObservationEvidenceDetail>
 >;

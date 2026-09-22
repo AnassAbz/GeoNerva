@@ -208,4 +208,6 @@ export type {
   SourceHealthReason,
 } from './health/source-health.ts';
 
+export { LIVE_PAYLOAD_RETENTION_DAYS, type RetentionProfile } from './value-objects/retention.ts';
+
 export * from './read-models/index.ts';

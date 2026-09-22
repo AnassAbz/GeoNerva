@@ -24,11 +24,21 @@
 import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createCanonicalEvent, createDb, linkRecord, type DB } from '@geonerva/db';
+import {
+  createCanonicalEvent,
+  createDb,
+  linkRecord,
+  upsertRawRecords,
+  type DB,
+} from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import { seedObservation, seedRun } from '@geonerva/db/testing/factories';
 import { loadWebConfig } from '@geonerva/config';
-import { PROBLEM_MEDIA_TYPE } from '@geonerva/domain';
+import {
+  PROBLEM_MEDIA_TYPE,
+  READ_MODEL_SCHEMA_VERSION,
+  evidenceDetailSchema,
+} from '@geonerva/domain';
 
 import { setWebConfigForTesting } from '../../../lib/server/config.ts';
 import { setDatabaseForTesting } from '../../../lib/server/db.ts';
@@ -309,7 +319,7 @@ describe('GET /api/v1/replay/horizon', () => {
 
     expect(response.status).toBe(200);
     expect(Object.keys(body).sort()).toEqual(['generatedAt', 'horizon', 'schemaVersion']);
-    expect(body['schemaVersion']).toBe(1);
+    expect(body['schemaVersion']).toBe(READ_MODEL_SCHEMA_VERSION);
     expect((body['horizon'] as { profile: string }).profile).toBe('lean');
   });
 
@@ -697,7 +707,7 @@ describe('GET /api/v1/briefing', () => {
     const body = await bodyOf(response);
 
     expect(response.status).toBe(200);
-    expect(body['schemaVersion']).toBe(1);
+    expect(body['schemaVersion']).toBe(READ_MODEL_SCHEMA_VERSION);
     const families = body['snapshot'] as { families: Record<string, { items: unknown[] }> };
     expect(families.families['EARTHQUAKES']?.items.length).toBeGreaterThan(0);
   });
@@ -952,7 +962,7 @@ describe('GET /api/v1/evidence/{id}', () => {
     const body = await bodyOf(response);
 
     expect(response.status).toBe(200);
-    expect(body['schemaVersion']).toBe(1);
+    expect(body['schemaVersion']).toBe(READ_MODEL_SCHEMA_VERSION);
     expect(body['item']).toMatchObject({
       id: `EV:OBS:${versionId}`,
       kind: 'OBS',
@@ -968,14 +978,79 @@ describe('GET /api/v1/evidence/{id}', () => {
     expect((body['detail'] as { contentSha256: string }).contentSha256).toMatch(/^[0-9a-f]{64}$/u);
   });
 
-  /* ADR-038: the web role cannot read `raw_source_records`, so the excerpt is never served. */
-  it('serves no raw provider payload', async () => {
+  /**
+   * ADR-038 (accepted): the raw payload's lifecycle and digest are served, its body never is.
+   * A raw row is attached to the version the way the pipeline attaches one, then read back through
+   * the endpoint as the web process reads it.
+   */
+  async function withRawRow(
+    versionId: string,
+    options: { readonly pruned: boolean },
+  ): Promise<string> {
+    const sha = Buffer.alloc(32, 7);
+    const ids = await upsertRawRecords(db, [
+      {
+        sourceId: 'usgs',
+        payloadSha256: sha,
+        payload: { type: 'Feature', id: 'us7000tikb' },
+        firstSeenAt: INGEST,
+        pruned: options.pruned,
+      },
+    ]);
+    await sql`
+      UPDATE geonerva.observation_versions SET raw_record_id = ${ids.get(sha.toString('hex'))}::bigint
+      WHERE id = ${versionId}::bigint
+    `.execute(db);
+    return sha.toString('hex');
+  }
+
+  it('describes a live raw payload without serving it', async () => {
     await healthyRun('usgs', USGS_PRODUCT);
     const { versionId } = await seedQuake();
+    const sha = await withRawRow(versionId, { pruned: false });
     const body = await bodyOf(
       await evidence(request(`/api/v1/evidence/EV:OBS:${versionId}?as_of=${NOW.toISOString()}`)),
     );
-    expect(body['detail']).toMatchObject({ rawExcerpt: null, rawPayloadSha256: null });
+    const detail = evidenceDetailSchema.parse(body).detail;
+    expect(detail).toMatchObject({
+      rawExcerpt: null,
+      rawPayloadSha256: sha,
+      rawPayloadPruned: false,
+      rawPayload: {
+        state: 'AVAILABLE',
+        sha256: sha,
+        capturedAt: INGEST.toISOString(),
+        retentionExpiresAt: new Date(INGEST.getTime() + 30 * 86_400_000).toISOString(),
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain('us7000tikb"}');
+  });
+
+  it('says a backfilled payload was never captured, and a version without one likewise', async () => {
+    await healthyRun('usgs', USGS_PRODUCT);
+    const { versionId } = await seedQuake();
+    const withoutRow = evidenceDetailSchema.parse(
+      await bodyOf(
+        await evidence(request(`/api/v1/evidence/EV:OBS:${versionId}?as_of=${NOW.toISOString()}`)),
+      ),
+    ).detail;
+    expect(withoutRow).toMatchObject({ rawPayload: { state: 'NOT_CAPTURED', sha256: null } });
+
+    const sha = await withRawRow(versionId, { pruned: true });
+    const backfilled = evidenceDetailSchema.parse(
+      await bodyOf(
+        await evidence(request(`/api/v1/evidence/EV:OBS:${versionId}?as_of=${NOW.toISOString()}`)),
+      ),
+    ).detail;
+    expect(backfilled).toMatchObject({
+      rawPayloadPruned: false,
+      rawPayload: {
+        state: 'NOT_CAPTURED',
+        sha256: sha,
+        capturedAt: null,
+        retentionExpiresAt: null,
+      },
+    });
   });
 
   it('resolves an ingestion run with its counts', async () => {

@@ -21,6 +21,7 @@
  */
 
 export { READ_MODEL_SCHEMA_VERSION, UNAVAILABLE_REASONS, CHANGE_WINDOWS } from './common.ts';
+export { RAW_PAYLOAD_STATES } from './evidence-item.ts';
 
 export { toFreshnessPolicyView, toSourceHealthView } from './health-view.ts';
 
@@ -79,6 +80,7 @@ export {
   mapFeatureSchema,
   mapFeaturesResponseSchema,
   observationEvidenceDetailSchema,
+  rawPayloadViewSchema,
   placeSearchResponseSchema,
   placeSearchResultSchema,
   placeSuggestResponseSchema,
@@ -146,6 +148,8 @@ export type {
   FireClusterVersionEvidenceDetail,
   IngestionRunEvidenceDetail,
   ObservationEvidenceDetail,
+  RawPayloadState,
+  RawPayloadView,
 } from './evidence-item.ts';
 
 export type {

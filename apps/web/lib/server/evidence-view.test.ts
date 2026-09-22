@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { EVIDENCE_KINDS, type EvidenceKind } from '@geonerva/domain';
+import { EVIDENCE_KINDS, type EvidenceKind, READ_MODEL_SCHEMA_VERSION } from '@geonerva/domain';
 
 import type {
   AttributionRow,
@@ -32,6 +32,7 @@ import {
   correlationPayload,
   isResolvableKind,
   observationPayload,
+  rawPayloadViewOf,
   runPayload,
   toEvidenceItem,
 } from './evidence-view.ts';
@@ -151,9 +152,17 @@ describe('observationPayload', () => {
       content_sha256: 'b'.repeat(64),
       source_url: 'https://earthquake.usgs.gov/earthquakes/eventpage/us7000tikb',
       raw_record_present: true,
+      raw_payload_sha256: 'c'.repeat(64),
+      raw_payload_pruned: false,
+      raw_payload_captured: true,
+      raw_first_seen_at: new Date('2026-09-21T12:04:00.000Z'),
       ...overrides,
     };
   }
+
+  /** A knowledge time inside the lean profile's 30-day window, and one after it. */
+  const WITHIN = { asOf: new Date('2026-09-22T00:00:00.000Z'), retentionProfile: 'lean' } as const;
+  const AFTER = { asOf: new Date('2026-10-22T00:00:00.000Z'), retentionProfile: 'lean' } as const;
 
   /**
    * The whole point of this payload: four times, four answers.
@@ -163,7 +172,7 @@ describe('observationPayload', () => {
    * only checked the fields were present.
    */
   it('reports the four time semantics as four distinct values', () => {
-    const payload = observationPayload(observation());
+    const payload = observationPayload(observation(), WITHIN);
     expect(payload).toMatchObject({
       kind: 'OBS',
       observedAt: '2026-09-21T11:58:00.000Z',
@@ -180,6 +189,7 @@ describe('observationPayload', () => {
         valid_from: new Date('2026-09-21T06:00:00.000Z'),
         valid_to: new Date('2026-09-21T18:00:00.000Z'),
       }),
+      WITHIN,
     );
     expect(payload).toMatchObject({
       validFrom: '2026-09-21T06:00:00.000Z',
@@ -188,48 +198,105 @@ describe('observationPayload', () => {
   });
 
   it('reports a null sourceUpdatedAt for a source with no revision time, such as FIRMS', () => {
-    expect(observationPayload(observation({ source_updated_at: null }))).toMatchObject({
+    expect(observationPayload(observation({ source_updated_at: null }), WITHIN)).toMatchObject({
       sourceUpdatedAt: null,
     });
   });
 
   it('carries the contributor, which is load-bearing for independence (ADR-030)', () => {
-    expect(observationPayload(observation({ contributor: 'nc' }))).toMatchObject({
+    expect(observationPayload(observation({ contributor: 'nc' }), WITHIN)).toMatchObject({
       contributor: 'nc',
     });
-    expect(observationPayload(observation({ contributor: null }))).toMatchObject({
+    expect(observationPayload(observation({ contributor: null }), WITHIN)).toMatchObject({
       contributor: null,
     });
   });
 
   it('serves the normalized content hash, which is the only change detector (ADR-029)', () => {
-    expect(observationPayload(observation())).toMatchObject({ contentSha256: 'b'.repeat(64) });
+    expect(observationPayload(observation(), WITHIN)).toMatchObject({
+      contentSha256: 'b'.repeat(64),
+    });
   });
 
   /*
-   * ADR-038. The web role has no SELECT on `raw_source_records`, so the excerpt and the payload
-   * digest are not available to this endpoint at all.
+   * ADR-038 (accepted): the raw payload is described, never served. Each lifecycle state, and the
+   * two P8 fields that restate it.
    */
-  it('serves no raw excerpt and no payload digest', () => {
-    expect(observationPayload(observation())).toMatchObject({
+  it('never serves a raw excerpt, and restates the lifecycle in the P8 fields', () => {
+    const payload = observationPayload(observation(), WITHIN);
+    expect(payload).toMatchObject({
       rawExcerpt: null,
-      rawPayloadSha256: null,
+      rawPayloadSha256: 'c'.repeat(64),
+      rawPayloadPruned: false,
+      rawPayload: {
+        state: 'AVAILABLE',
+        sha256: 'c'.repeat(64),
+        capturedAt: '2026-09-21T12:04:00.000Z',
+        retentionExpiresAt: '2026-10-21T12:04:00.000Z',
+      },
+    });
+    expect(observationPayload(observation(), AFTER)).toMatchObject({
+      rawPayloadPruned: true,
+      rawPayload: { state: 'PRUNED' },
     });
   });
 
-  /**
-   * The gap reported as a gap.
-   *
-   * `rawPayloadPruned` is derived from `raw_record_id`: `true` means GeoNerva holds no raw row at
-   * all, `false` means one exists and this endpoint does not serve its state. A hard-coded `false`
-   * would be a confident claim GeoNerva cannot support, and is the mutation this asserts against.
-   */
-  it('derives rawPayloadPruned from whether a raw row exists', () => {
-    expect(observationPayload(observation({ raw_record_present: false }))).toMatchObject({
-      rawPayloadPruned: true,
+  it('judges pruning against the expiry at the knowledge time, not the row as it is now', () => {
+    // Pruned today; a replay from before the expiry saw a body that was still held.
+    const pruned = observation({ raw_payload_pruned: true });
+    expect(rawPayloadViewOf(pruned, WITHIN).state).toBe('AVAILABLE');
+    expect(rawPayloadViewOf(pruned, AFTER).state).toBe('PRUNED');
+    // The standard profile keeps bodies for ninety days.
+    expect(rawPayloadViewOf(pruned, { ...AFTER, retentionProfile: 'standard' })).toMatchObject({
+      state: 'AVAILABLE',
+      retentionExpiresAt: '2026-12-20T12:04:00.000Z',
     });
-    expect(observationPayload(observation({ raw_record_present: true }))).toMatchObject({
+  });
+
+  it('is exactly at expiry already pruned', () => {
+    const atExpiry = {
+      asOf: new Date('2026-10-21T12:04:00.000Z'),
+      retentionProfile: 'lean',
+    } as const;
+    expect(rawPayloadViewOf(observation(), atExpiry).state).toBe('PRUNED');
+    const justBefore = { ...atExpiry, asOf: new Date('2026-10-21T12:03:59.999Z') };
+    expect(rawPayloadViewOf(observation(), justBefore).state).toBe('AVAILABLE');
+  });
+
+  it('says a backfilled body was never captured, with its digest and no times', () => {
+    expect(
+      rawPayloadViewOf(
+        observation({ raw_payload_captured: false, raw_payload_pruned: true }),
+        AFTER,
+      ),
+    ).toEqual({
+      state: 'NOT_CAPTURED',
+      sha256: 'c'.repeat(64),
+      capturedAt: null,
+      retentionExpiresAt: null,
+    });
+  });
+
+  it('says a version with no raw row was never captured', () => {
+    expect(rawPayloadViewOf(observation({ raw_record_present: false }), WITHIN)).toEqual({
+      state: 'NOT_CAPTURED',
+      sha256: null,
+      capturedAt: null,
+      retentionExpiresAt: null,
+    });
+  });
+
+  it('degrades to SOURCE_UNAVAILABLE when a referenced row cannot be read', () => {
+    const unreadable = observation({
+      raw_payload_sha256: null,
+      raw_payload_pruned: null,
+      raw_payload_captured: null,
+      raw_first_seen_at: null,
+    });
+    expect(observationPayload(unreadable, WITHIN)).toMatchObject({
+      rawPayloadSha256: null,
       rawPayloadPruned: false,
+      rawPayload: { state: 'SOURCE_UNAVAILABLE', sha256: null },
     });
   });
 });
@@ -329,24 +396,31 @@ describe('runPayload', () => {
   /* L-5: a provider-controlled URL with a scheme a reader must not follow is dropped. */
   it('drops a source URL whose scheme is not http or https', () => {
     expect(
-      observationPayload({
-        version_id: '41',
-        version_seq: 1,
-        source_id: 'usgs',
-        product_id: 1,
-        primary_key: 'us7000tikb',
-        hazard_type: 'EARTHQUAKE',
-        lifecycle_status: 'ACTIVE',
-        observed_at: new Date('2026-09-21T11:58:00.000Z'),
-        valid_from: null,
-        valid_to: null,
-        source_updated_at: null,
-        ingested_at: new Date('2026-09-21T12:04:00.000Z'),
-        contributor: null,
-        content_sha256: 'b'.repeat(64),
-        source_url: 'javascript:alert(document.domain)',
-        raw_record_present: false,
-      }),
+      observationPayload(
+        {
+          version_id: '41',
+          version_seq: 1,
+          source_id: 'usgs',
+          product_id: 1,
+          primary_key: 'us7000tikb',
+          hazard_type: 'EARTHQUAKE',
+          lifecycle_status: 'ACTIVE',
+          observed_at: new Date('2026-09-21T11:58:00.000Z'),
+          valid_from: null,
+          valid_to: null,
+          source_updated_at: null,
+          ingested_at: new Date('2026-09-21T12:04:00.000Z'),
+          contributor: null,
+          content_sha256: 'b'.repeat(64),
+          source_url: 'javascript:alert(document.domain)',
+          raw_record_present: false,
+          raw_payload_sha256: null,
+          raw_payload_pruned: null,
+          raw_payload_captured: null,
+          raw_first_seen_at: null,
+        },
+        { asOf: new Date('2026-09-22T00:00:00.000Z'), retentionProfile: 'lean' },
+      ),
     ).toMatchObject({ sourceUrl: null });
   });
 
@@ -537,7 +611,7 @@ describe('buildEvidenceDetail', () => {
     });
 
     expect(Object.keys(detail).sort()).toEqual(['attribution', 'detail', 'item', 'schemaVersion']);
-    expect(detail.schemaVersion).toBe(1);
+    expect(detail.schemaVersion).toBe(READ_MODEL_SCHEMA_VERSION);
     expect(detail.detail.kind).toBe('RUN');
   });
 

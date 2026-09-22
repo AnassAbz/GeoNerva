@@ -36,6 +36,9 @@ import {
   type EvidenceItem,
   type EvidenceKind,
   type LifecycleStatus,
+  LIVE_PAYLOAD_RETENTION_DAYS,
+  type RawPayloadView,
+  type RetentionProfile,
 } from '@geonerva/domain';
 
 import { toAttribution } from './attribution.ts';
@@ -85,28 +88,64 @@ export function buildEvidenceDetail(input: {
 }
 
 /**
+ * The raw payload's lifecycle at a knowledge time (ADR-038).
+ *
+ * `payload_pruned` is updated in place when retention removes a body, so reading it as it is now
+ * would let a replay see a pruning that happened after its knowledge time. Retention never removes
+ * a body before `first_seen_at` plus the profile's window, so the state at `asOf` is judged against
+ * that expiry instead: before it the body was held, after it the body is — or will be — gone.
+ */
+export function rawPayloadViewOf(
+  row: ObservationEvidenceRow,
+  context: { readonly asOf: Date; readonly retentionProfile: RetentionProfile },
+): RawPayloadView {
+  if (!row.raw_record_present) {
+    return { state: 'NOT_CAPTURED', sha256: null, capturedAt: null, retentionExpiresAt: null };
+  }
+  if (row.raw_payload_sha256 === null || row.raw_first_seen_at === null) {
+    return {
+      state: 'SOURCE_UNAVAILABLE',
+      sha256: null,
+      capturedAt: null,
+      retentionExpiresAt: null,
+    };
+  }
+  if (row.raw_payload_captured !== true) {
+    return {
+      state: 'NOT_CAPTURED',
+      sha256: row.raw_payload_sha256,
+      capturedAt: null,
+      retentionExpiresAt: null,
+    };
+  }
+  const expiresAt = new Date(
+    row.raw_first_seen_at.getTime() +
+      LIVE_PAYLOAD_RETENTION_DAYS[context.retentionProfile] * 24 * 60 * 60 * 1000,
+  );
+  return {
+    state: context.asOf.getTime() < expiresAt.getTime() ? 'AVAILABLE' : 'PRUNED',
+    sha256: row.raw_payload_sha256,
+    capturedAt: row.raw_first_seen_at.toISOString(),
+    retentionExpiresAt: expiresAt.toISOString(),
+  };
+}
+
+/**
  * `EV:OBS` — the observation version payload.
  *
- * ### The three raw-payload fields are `null`, and this is a known contract gap
+ * The raw payload is described, never served (ADR-038): `rawPayload` carries its lifecycle state,
+ * digest, capture time and retention expiry; `rawExcerpt` is always `null`; `rawPayloadSha256` and
+ * `rawPayloadPruned` restate `rawPayload` for the fields P8 shipped with.
  *
- * `ObservationEvidenceDetail` declares `rawExcerpt`, `rawPayloadSha256` and `rawPayloadPruned`,
- * all of which live in `raw_source_records` — a table migration 0007 explicitly revokes `SELECT`
- * on from `geonerva_web`, because "the web role must never be able to reach the raw provider
- * payloads it has no use for". Two accepted decisions therefore disagree, and the disagreement is
- * recorded in **ADR-038** rather than resolved by quietly choosing one.
- *
- * Until that ADR is decided, the endpoint serves `null` for the excerpt and the payload digest,
- * and derives `rawPayloadPruned` from `observation_versions.raw_record_id` — a column the web role
- * *can* read. So `rawPayloadPruned: true` means GeoNerva genuinely holds no raw payload for this
- * version; `false` means one exists but this endpoint does not serve it. That is weaker than the
- * field's doc comment claims and stronger than a hard-coded `false`, and the asymmetry is why the
- * ADR exists.
- *
- * `contentSha256` is unaffected and is the field that matters: it is the **only** change detector
- * (ADR-029), it is computed over the normalized content, and it is what makes two versions
- * comparable without either payload.
+ * `contentSha256` is the field that matters for comparison: it is the **only** change detector
+ * (ADR-029), computed over the normalized content, so two versions stay comparable without either
+ * payload.
  */
-export function observationPayload(row: ObservationEvidenceRow): EvidenceDetailPayload {
+export function observationPayload(
+  row: ObservationEvidenceRow,
+  context: { readonly asOf: Date; readonly retentionProfile: RetentionProfile },
+): EvidenceDetailPayload {
+  const rawPayload = rawPayloadViewOf(row, context);
   return {
     kind: 'OBS',
     versionId: row.version_id,
@@ -122,8 +161,9 @@ export function observationPayload(row: ObservationEvidenceRow): EvidenceDetailP
     contributor: row.contributor,
     contentSha256: row.content_sha256,
     rawExcerpt: null,
-    rawPayloadSha256: null,
-    rawPayloadPruned: !row.raw_record_present,
+    rawPayloadSha256: rawPayload.sha256,
+    rawPayloadPruned: rawPayload.state === 'PRUNED',
+    rawPayload,
     sourceUrl: webUrlOrNull(row.source_url),
   };
 }

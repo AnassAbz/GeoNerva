@@ -230,7 +230,7 @@ Every derived sentence ends with an unobtrusive evidence affordance (e.g. `[2]`)
 - `observed_at` / `ingested_at`
 - a one-line summary
 - "View original" (provider URL)
-- "Raw record" (excerpt from the resolver)
+- "Raw record": the payload's lifecycle — held, pruned (with the date it expired), or never captured — and its SHA-256 digest; the provider's bytes themselves are not shown (ADR-038)
 
 ### 6.9 Methodology page
 

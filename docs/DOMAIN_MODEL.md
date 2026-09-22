@@ -150,6 +150,8 @@ One execution of one adapter for one product. Created `RUNNING` at start; ends `
 
 The exact provider payload for one record (event-scale sources only: USGS, GDACS, ECCC), content-addressed by `sha256`. Deduplicated: identical payloads are stored once and referenced by each version. **Not used for FIRMS**: a FIRMS CSV row is already flat and is stored losslessly in `fire_detections` (all original columns kept); the batch hash lives on the run. Raw payload bodies are pruned after the retention window; the hash stays on the version forever.
 
+**Lifecycle, as the API reports it (ADR-038).** `payload_captured` records whether a body was ever stored — false for backfilled payloads, which keep only their digest from the outset (ADR-033). `GET /api/v1/evidence/{id}` reports, per observation version, `rawPayload.state` ∈ `AVAILABLE` (captured and within retention at the knowledge time), `PRUNED` (captured, retention expired by then), `NOT_CAPTURED` (no row, or a row without a body ever), `SOURCE_UNAVAILABLE` (a referenced row the serving role cannot read), with the digest, capture time and retention expiry. The body itself is never served: the web role holds a column-level grant that excludes `payload`. Because pruning updates the row in place, the state at a knowledge time is judged against `first_seen_at` plus the profile's window, never against the current `payload_pruned`.
+
 ### 4.6 SourceRecord & aliases
 
 The GeoNerva identity of "one thing a provider talks about":

@@ -1630,11 +1630,11 @@ export async function sourceCatalog(db: Kysely<DB>): Promise<{
  * `committed_at`, `linked_at`), and the whole point of this file is that each one is filtered on
  * the column that actually participates in replay.
  *
- * **None of them reads `raw_source_records`.** Migration 0007 revokes `SELECT` on that table from
- * `geonerva_web`, so a join to it would not merely omit a field — it would make the endpoint fail
- * with a permission error for the role that serves it. `observation_versions.raw_record_id` is
- * readable, so the query reports whether a raw record exists without reading it. See ADR-038 for
- * the resulting gap in `ObservationEvidenceDetail`.
+ * **None of them reads a raw payload body.** Migration 0007 revokes `SELECT` on
+ * `raw_source_records` from `geonerva_web`, and migration 0016 (ADR-038) grants back exactly the
+ * metadata columns — digest, pruned, captured, first seen. The observation read names only those
+ * columns; `payload` is unreachable from the web role, so a later `SELECT *` fails at the database
+ * rather than in review.
  */
 
 /** `EV:OBS:<id>` — one immutable observation version. */
@@ -1654,8 +1654,16 @@ export interface ObservationEvidenceRow {
   readonly contributor: string | null;
   readonly content_sha256: string;
   readonly source_url: string | null;
-  /** Whether a raw payload row exists. Its contents are not readable by the web role. */
+  /** Whether the version references a raw payload row at all. */
   readonly raw_record_present: boolean;
+  /**
+   * The referenced row's metadata, or `null` when it cannot be read — no row, or one the serving
+   * role cannot see. Never the body (ADR-038).
+   */
+  readonly raw_payload_sha256: string | null;
+  readonly raw_payload_pruned: boolean | null;
+  readonly raw_payload_captured: boolean | null;
+  readonly raw_first_seen_at: Date | null;
 }
 
 /**
@@ -1687,9 +1695,14 @@ export async function observationEvidenceAsOf(
            v.contributor,
            encode(v.content_sha256, 'hex')  AS content_sha256,
            v.source_url,
-           (v.raw_record_id IS NOT NULL)    AS raw_record_present
+           (v.raw_record_id IS NOT NULL)    AS raw_record_present,
+           encode(w.payload_sha256, 'hex')  AS raw_payload_sha256,
+           w.payload_pruned                 AS raw_payload_pruned,
+           w.payload_captured               AS raw_payload_captured,
+           w.first_seen_at                  AS raw_first_seen_at
     FROM geonerva.observation_versions v
     JOIN geonerva.source_records r ON r.id = v.source_record_id
+    LEFT JOIN geonerva.raw_source_records w ON w.id = v.raw_record_id
     WHERE v.id = ${options.versionId}::bigint
       AND v.ingested_at <= ${options.asOf}
   `.execute(db);

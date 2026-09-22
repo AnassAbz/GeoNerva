@@ -66,6 +66,11 @@ export interface AnalysisRuns {
   finished_at: Timestamp | null;
   id: string;
   inputs_sha256: Buffer | null;
+  /**
+   * The derivation that ran. SEED is distinct from CORRELATION: it opens a canonical event for a
+   *    single-source hazard without deciding a match, and a successful seed must never be read as
+   *    evidence that correlation is current (P6 review).
+   */
   kind: string;
   location_key: string | null;
   started_at: Timestamp;
@@ -76,6 +81,9 @@ export interface AnalysisRuns {
 export interface BackfillIntervals {
   attempts: Generated<number>;
   completed_at: Timestamp | null;
+  /**
+   * Sanitized failure class (ADR-032), same taxonomy as ingestion_runs.error_class.
+   */
   error_class: string | null;
   error_message: string | null;
   ingestion_run_id: string | null;
@@ -378,6 +386,10 @@ export interface ObservationVersions {
 
 export interface Places {
   admin1: string | null;
+  /**
+   * GeoNames alternatenames, comma-separated and verbatim. Searched for type-ahead: many places are
+   *    typed by an alternate (Marrakech for Marrakesh), so the primary name alone is not enough.
+   */
   alt_names: string | null;
   ascii_name: string;
   country_code: string | null;
@@ -399,6 +411,11 @@ export interface RawSourceRecords {
   first_seen_at: Generated<Timestamp>;
   id: Generated<Int8>;
   payload: Json | null;
+  /**
+   * Whether a body was ever stored. False for backfilled payloads (ADR-033), which keep only their
+   *    digest from the outset; true for live payloads, including after retention prunes them (ADR-038).
+   */
+  payload_captured: Generated<boolean>;
   payload_pruned: Generated<boolean>;
   payload_sha256: Buffer;
   source_id: string;

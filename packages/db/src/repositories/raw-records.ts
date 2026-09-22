@@ -58,9 +58,9 @@ export async function upsertRawRecords(
     const pruned = record.pruned === true;
     const result = await sql<{ id: string }>`
       INSERT INTO geonerva.raw_source_records
-        (source_id, payload_sha256, payload, payload_pruned, first_seen_at)
+        (source_id, payload_sha256, payload, payload_pruned, payload_captured, first_seen_at)
       VALUES (${record.sourceId}, ${record.payloadSha256},
-              ${pruned ? null : JSON.stringify(record.payload)}::jsonb, ${pruned},
+              ${pruned ? null : JSON.stringify(record.payload)}::jsonb, ${pruned}, ${!pruned},
               ${record.firstSeenAt ?? new Date()})
       ON CONFLICT (source_id, payload_sha256) DO UPDATE
         -- Fill the body in when this writer has one and the stored row does not.
@@ -73,7 +73,10 @@ export async function upsertRawRecords(
         -- because pruning only ever removes.
         SET payload = COALESCE(geonerva.raw_source_records.payload, EXCLUDED.payload),
             payload_pruned = geonerva.raw_source_records.payload_pruned
-                             AND EXCLUDED.payload IS NULL
+                             AND EXCLUDED.payload IS NULL,
+            -- Once a body is stored the row was captured, and stays so after pruning (ADR-038).
+            payload_captured = geonerva.raw_source_records.payload_captured
+                               OR EXCLUDED.payload IS NOT NULL
       RETURNING id::text AS id
     `.execute(db);
     const id = result.rows[0]?.id;

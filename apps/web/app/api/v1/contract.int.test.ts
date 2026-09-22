@@ -41,6 +41,7 @@ import {
   problemTypeUri,
   replayHorizonResponseSchema,
   sourceStatusSchema,
+  READ_MODEL_SCHEMA_VERSION,
 } from '@geonerva/domain';
 
 import { setWebConfigForTesting } from '../../../lib/server/config.ts';
@@ -174,7 +175,7 @@ describe('every served endpoint satisfies its frozen contract', () => {
       await replayHorizon(request('/api/v1/replay/horizon')),
       replayHorizonResponseSchema,
     );
-    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.schemaVersion).toBe(READ_MODEL_SCHEMA_VERSION);
     expect(parsed.horizon.profile).toBe('lean');
   });
 

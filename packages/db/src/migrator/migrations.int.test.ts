@@ -217,8 +217,47 @@ describe('schema shape', () => {
       'UPDATE',
     ]);
 
-    // Raw provider payloads are not the web app's business.
+    // Raw provider payloads are not the web app's business: no table-level privilege at all.
     expect(byTable.get('raw_source_records')).toBeUndefined();
+  });
+
+  /**
+   * ADR-038: the web role reads a raw payload's metadata and never its body. Asserted at the
+   * column grant and then by trying, as that role, both a permitted and a forbidden column.
+   */
+  it('lets the web role read raw-payload metadata columns and never the body', async () => {
+    const grants = await sql<{ column_name: string }>`
+      SELECT column_name FROM information_schema.role_column_grants
+      WHERE grantee = 'geonerva_web' AND table_schema = 'geonerva'
+        AND table_name = 'raw_source_records' AND privilege_type = 'SELECT'
+      ORDER BY column_name
+    `.execute(db);
+    expect(grants.rows.map((row) => row.column_name)).toStrictEqual([
+      'first_seen_at',
+      'id',
+      'payload_captured',
+      'payload_pruned',
+      'payload_sha256',
+      'source_id',
+    ]);
+
+    await db.transaction().execute(async (trx) => {
+      await sql`SET LOCAL ROLE geonerva_web`.execute(trx);
+      await sql`SELECT id, payload_sha256, payload_pruned, payload_captured, first_seen_at
+                FROM geonerva.raw_source_records LIMIT 1`.execute(trx);
+    });
+    await expect(
+      db.transaction().execute(async (trx) => {
+        await sql`SET LOCAL ROLE geonerva_web`.execute(trx);
+        await sql`SELECT payload FROM geonerva.raw_source_records LIMIT 1`.execute(trx);
+      }),
+    ).rejects.toThrow(/permission denied/u);
+    await expect(
+      db.transaction().execute(async (trx) => {
+        await sql`SET LOCAL ROLE geonerva_web`.execute(trx);
+        await sql`SELECT * FROM geonerva.raw_source_records LIMIT 1`.execute(trx);
+      }),
+    ).rejects.toThrow(/permission denied/u);
   });
 
   it('gives the worker read/write on the facts it ingests', async () => {

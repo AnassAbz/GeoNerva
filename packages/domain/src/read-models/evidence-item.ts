@@ -58,6 +58,37 @@ export type EvidenceDetailPayload =
   | IngestionRunEvidenceDetail
   | CorrelationEvidenceDetail;
 
+/**
+ * What became of the provider's original bytes for one observation (ADR-038).
+ *
+ *  - `AVAILABLE` — a body was captured and, at the knowledge time, was still within retention.
+ *  - `PRUNED` — a body was captured, and retention had expired by the knowledge time. The digest
+ *    still proves what was ingested.
+ *  - `NOT_CAPTURED` — no body was ever stored: a backfilled record keeps only its digest from the
+ *    outset (ADR-033), and some versions have no raw row at all.
+ *  - `SOURCE_UNAVAILABLE` — a raw row is referenced but its metadata cannot be read by the serving
+ *    process. A defensive state: the endpoint degrades instead of failing.
+ *
+ * The body itself is never served by the public API; this is its lifecycle, not its content.
+ */
+export const RAW_PAYLOAD_STATES = [
+  'AVAILABLE',
+  'PRUNED',
+  'NOT_CAPTURED',
+  'SOURCE_UNAVAILABLE',
+] as const;
+export type RawPayloadState = (typeof RAW_PAYLOAD_STATES)[number];
+
+export interface RawPayloadView {
+  readonly state: RawPayloadState;
+  /** Hex SHA-256 of the payload as received, when a raw row is readable. Kept forever. */
+  readonly sha256: string | null;
+  /** When the body was first stored; `null` unless one was captured. */
+  readonly capturedAt: IsoTimestamp | null;
+  /** When retention removes (or removed) the body; `null` unless one was captured. */
+  readonly retentionExpiresAt: IsoTimestamp | null;
+}
+
 /** `EV:OBS:<id>` — one immutable observation version. */
 export interface ObservationEvidenceDetail {
   readonly kind: 'OBS';
@@ -76,12 +107,16 @@ export interface ObservationEvidenceDetail {
   /** Hash of the **normalized** content, which is the change detector. Hex. */
   readonly contentSha256: string;
   /**
-   * A bounded excerpt of the raw provider payload, for auditing. `null` once the retention window
-   * has pruned the payload body — the hash stays forever, the body does not (§4.5).
+   * Always `null` from the public API (ADR-038): provider bodies are an operator artifact, read from
+   * the database by someone who already has the credentials, never redistributed here.
    */
   readonly rawExcerpt: unknown;
+  /** Equal to `rawPayload.sha256`. */
   readonly rawPayloadSha256: string | null;
+  /** Equal to `rawPayload.state === 'PRUNED'`. */
   readonly rawPayloadPruned: boolean;
+  /** The raw payload's lifecycle and integrity metadata (ADR-038, schema version 2). */
+  readonly rawPayload: RawPayloadView;
   readonly sourceUrl: string | null;
 }
 

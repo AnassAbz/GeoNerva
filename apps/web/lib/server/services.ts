@@ -264,7 +264,9 @@ async function evidencePayload(
   switch (ref.kind) {
     case 'OBS': {
       const row = await observationEvidenceAsOf(db, { asOf, versionId: ref.versionId });
-      return row === null ? null : observationPayload(row);
+      return row === null
+        ? null
+        : observationPayload(row, { asOf, retentionProfile: RETENTION_PROFILE });
     }
     case 'FCV': {
       const row = await clusterEvidenceAsOf(db, {

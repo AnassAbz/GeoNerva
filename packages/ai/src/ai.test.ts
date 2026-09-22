@@ -12,6 +12,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { READ_MODEL_SCHEMA_VERSION } from '@geonerva/domain';
 import type { FamilyCard, HazardFamily, LocationBriefing, SubjectSummary } from '@geonerva/domain';
 
 import {
@@ -113,7 +114,7 @@ function briefingWith(
   });
 
   return {
-    schemaVersion: 1,
+    schemaVersion: READ_MODEL_SCHEMA_VERSION,
     location: {
       key: options.locationKey ?? 'p:2542997',
       label: 'Marrakech',

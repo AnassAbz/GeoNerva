@@ -19,7 +19,7 @@ import {
 } from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import { seedObservation, seedRun } from '@geonerva/db/testing/factories';
-import { parseEvidenceId, type LocationRef } from '@geonerva/domain';
+import { parseEvidenceId, type LocationRef, READ_MODEL_SCHEMA_VERSION } from '@geonerva/domain';
 
 import { EvidenceManifestError, buildBriefing } from './briefing.ts';
 import { scanLexicon } from './lexicon.ts';
@@ -170,7 +170,7 @@ describe('the assembled response', () => {
     expect(briefing.copy.templateVersion).toBe('tpl-1');
     expect(briefing.snapshot.families.EARTHQUAKES.items).toHaveLength(1);
     expect(briefing.attribution.map((entry) => entry.sourceId)).toContain('usgs');
-    expect(briefing.schemaVersion).toBe(1);
+    expect(briefing.schemaVersion).toBe(READ_MODEL_SCHEMA_VERSION);
   });
 
   it('reports the snapshot hash as the response hash', async () => {

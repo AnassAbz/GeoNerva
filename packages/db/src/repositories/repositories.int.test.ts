@@ -702,6 +702,14 @@ describe('record identity and the USGS merge (DOMAIN_MODEL §4.6)', () => {
 });
 
 describe('raw payload storage (DOMAIN_MODEL §4.5)', () => {
+  async function capturedOf(digest: Buffer): Promise<boolean | undefined> {
+    const result = await sql<{ captured: boolean }>`
+      SELECT payload_captured AS captured FROM geonerva.raw_source_records
+      WHERE payload_sha256 = ${digest}
+    `.execute(db);
+    return result.rows[0]?.captured;
+  }
+
   it('fills in a live body over a row a backfill stored pruned (ADR-033)', async () => {
     /*
      * A backfill and a live poll collide on the same digest whenever the feature has not changed,
@@ -720,6 +728,8 @@ describe('raw payload storage (DOMAIN_MODEL §4.5)', () => {
     const stored = await findRawPayload(db, ids.get(digest.toString('hex')) ?? '');
     expect(stored?.payload, 'the live body is filled in').toStrictEqual({ a: 1 });
     expect(stored?.pruned).toBe(false);
+    // ADR-038: a row that now holds a body was captured.
+    expect(await capturedOf(digest)).toBe(true);
   });
 
   it('does not un-prune when the later writer has no body either', async () => {
@@ -733,6 +743,8 @@ describe('raw payload storage (DOMAIN_MODEL §4.5)', () => {
     const stored = await findRawPayload(db, ids.get(digest.toString('hex')) ?? '');
     expect(stored?.payload).toBeNull();
     expect(stored?.pruned).toBe(true);
+    // ADR-038: no body ever stored, so never captured.
+    expect(await capturedOf(digest)).toBe(false);
   });
 
   it('never replaces a body that is already there', async () => {

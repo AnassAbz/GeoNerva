@@ -13,6 +13,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { READ_MODEL_SCHEMA_VERSION } from './common.ts';
 import { PROBLEM_CODES, PROBLEM_STATUS, problemTypeUri } from './problem.ts';
 import {
   aiBriefingViewSchema,
@@ -24,6 +25,7 @@ import {
   familyCardSchema,
   locationRefSchema,
   mapFeaturesResponseSchema,
+  observationEvidenceDetailSchema,
   problemDetailsSchema,
   relevanceAssessmentSchema,
   runSummaryViewSchema,
@@ -373,7 +375,7 @@ describe('evidence', () => {
   it('accepts a matching item and payload', () => {
     expect(
       evidenceDetailSchema.safeParse({
-        schemaVersion: 1,
+        schemaVersion: READ_MODEL_SCHEMA_VERSION,
         item: item(),
         detail: runDetail(),
         attribution: [],
@@ -384,7 +386,7 @@ describe('evidence', () => {
   /* A citation must resolve to what it says it is. */
   it('rejects a payload whose kind differs from the item', () => {
     const result = evidenceDetailSchema.safeParse({
-      schemaVersion: 1,
+      schemaVersion: READ_MODEL_SCHEMA_VERSION,
       item: item({ kind: 'OBS', id: 'EV:OBS:41' }),
       detail: runDetail(),
       attribution: [],
@@ -396,7 +398,7 @@ describe('evidence', () => {
   it('rejects a detail served for an item marked unresolvable', () => {
     expect(
       evidenceDetailSchema.safeParse({
-        schemaVersion: 1,
+        schemaVersion: READ_MODEL_SCHEMA_VERSION,
         item: item({ resolvable: false }),
         detail: runDetail(),
         attribution: [],
@@ -407,7 +409,7 @@ describe('evidence', () => {
   it('rejects an error message past the 1 KB the column allows', () => {
     expect(
       evidenceDetailSchema.safeParse({
-        schemaVersion: 1,
+        schemaVersion: READ_MODEL_SCHEMA_VERSION,
         item: item(),
         detail: runDetail({ errorMessage: 'x'.repeat(1025) }),
         attribution: [],
@@ -578,7 +580,7 @@ describe('the data-status entry', () => {
 describe('invariant I9 on the data-status response', () => {
   function status(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
-      schemaVersion: 1,
+      schemaVersion: READ_MODEL_SCHEMA_VERSION,
       asOfContext: {
         asOf: TS,
         isReplay: false,
@@ -710,7 +712,7 @@ describe('map features', () => {
   function response(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     const box = { west: -9, south: 31, east: -7, north: 32 };
     return {
-      schemaVersion: 1,
+      schemaVersion: READ_MODEL_SCHEMA_VERSION,
       asOfContext: {
         asOf: TS,
         isReplay: false,
@@ -837,5 +839,95 @@ describe('fact values', () => {
 
   it('rejects an unknown kind', () => {
     expect(factValueSchema.safeParse({ kind: 'percentage', value: 40 }).success).toBe(false);
+  });
+});
+
+describe('ObservationEvidenceDetail: the raw-payload lifecycle (ADR-038)', () => {
+  const SHA = 'c'.repeat(64);
+  function detail(overrides: Record<string, unknown> = {}) {
+    return {
+      kind: 'OBS',
+      versionId: '41',
+      versionSeq: 1,
+      sourceRecordPrimaryKey: 'us7000tikb',
+      hazardType: 'EARTHQUAKE',
+      lifecycleStatus: 'ACTIVE',
+      observedAt: '2026-09-21T11:58:00.000Z',
+      validFrom: null,
+      validTo: null,
+      sourceUpdatedAt: null,
+      ingestedAt: '2026-09-21T12:04:00.000Z',
+      contributor: 'us',
+      contentSha256: 'b'.repeat(64),
+      rawExcerpt: null,
+      rawPayloadSha256: SHA,
+      rawPayloadPruned: false,
+      rawPayload: {
+        state: 'AVAILABLE',
+        sha256: SHA,
+        capturedAt: '2026-09-21T12:04:00.000Z',
+        retentionExpiresAt: '2026-10-21T12:04:00.000Z',
+      },
+      sourceUrl: null,
+      ...overrides,
+    };
+  }
+  const parses = (value: unknown) => observationEvidenceDetailSchema.safeParse(value).success;
+
+  it('accepts a consistent detail', () => {
+    expect(parses(detail())).toBe(true);
+  });
+
+  it('refuses a served excerpt', () => {
+    expect(parses(detail({ rawExcerpt: { any: 'body' } }))).toBe(false);
+  });
+
+  it('refuses P8 fields that disagree with the lifecycle', () => {
+    expect(parses(detail({ rawPayloadSha256: null }))).toBe(false);
+    expect(parses(detail({ rawPayloadPruned: true }))).toBe(false);
+  });
+
+  it('refuses a captured state without its digest or times, and times without a capture', () => {
+    const view = detail().rawPayload;
+    expect(parses(detail({ rawPayload: { ...view, sha256: null }, rawPayloadSha256: null }))).toBe(
+      false,
+    );
+    expect(parses(detail({ rawPayload: { ...view, capturedAt: null } }))).toBe(false);
+    expect(parses(detail({ rawPayload: { ...view, retentionExpiresAt: null } }))).toBe(false);
+    expect(
+      parses(
+        detail({
+          rawPayload: { ...view, state: 'NOT_CAPTURED' },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it('refuses a digest for an unreadable row', () => {
+    expect(
+      parses(
+        detail({
+          rawPayload: {
+            state: 'SOURCE_UNAVAILABLE',
+            sha256: SHA,
+            capturedAt: null,
+            retentionExpiresAt: null,
+          },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      parses(
+        detail({
+          rawPayloadSha256: null,
+          rawPayload: {
+            state: 'SOURCE_UNAVAILABLE',
+            sha256: null,
+            capturedAt: null,
+            retentionExpiresAt: null,
+          },
+        }),
+      ),
+    ).toBe(true);
   });
 });
