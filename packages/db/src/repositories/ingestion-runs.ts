@@ -81,7 +81,17 @@ export async function acquireRunLease(
   db: Kysely<DB>,
   options: AcquireLeaseOptions,
 ): Promise<AcquireLeaseResult> {
-  const startedAt = options.startedAt ?? new Date();
+  /*
+   * The database's clock, not the worker's, like every other stamp on a run.
+   *
+   * `committed_at` and `finished_at` are the database's `clock_timestamp()`, and both are CHECKed
+   * `>= started_at`. With `started_at` from the worker's clock, a run finishing within a few
+   * milliseconds failed that CHECK whenever the database clock ran behind the worker's — measured
+   * on the WSL development VM at up to 7 ms behind, in 12 % of two minutes' samples. `finishRun`
+   * then threw, and the run was left RUNNING or recorded FAILED: the fire-ingest and EMSC
+   * intermittents, open since P4 and P8.
+   */
+  const startedAt = options.startedAt ?? (await batchTimestamp(db));
   const staleAfterMs = options.staleAfterMs ?? DEFAULT_LEASE_STALE_AFTER_MS;
 
   const runId = await tryInsertRunningRun(db, options, startedAt);
@@ -188,7 +198,9 @@ export async function finishRun(db: Kysely<DB>, input: FinishRunInput): Promise<
   const result = await sql<{ committed_at: Date }>`
     UPDATE geonerva.ingestion_runs
     SET status = ${input.status},
-        finished_at = ${input.finishedAt ?? new Date()},
+        -- The database's clock, for the reason acquireRunLease gives: the CHECK against
+        -- started_at compares stamps, and they must come from one clock.
+        finished_at = COALESCE(${input.finishedAt ?? null}::timestamptz, clock_timestamp()),
         -- DOMAIN_MODEL section 2: ingested_at is one stamp per batch, taken immediately before
         -- the commit, so finishRun must be the last statement of the ingestion transaction.
         -- clock_timestamp() rather than now() is what makes it the real end of the batch instead
