@@ -17,6 +17,7 @@
     "format:check": "prettier --check .",
     "depcruise": "depcruise apps packages --config .dependency-cruiser.cjs",
     "openapi": "node scripts/generate-openapi.ts",
+    "bench:api": "node scripts/bench-api.ts",
     "geonames:import": "node scripts/import-geonames.ts",
     "test": "pnpm test:unit",
     "test:unit": "vitest run --project unit",

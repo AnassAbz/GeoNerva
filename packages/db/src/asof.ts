@@ -112,10 +112,18 @@ export async function observationsAsOf(
 
   // Candidate narrowing. The spatial predicate here only reduces the set of *records* to look at,
   // using the GiST index; the authoritative test is re-applied to the latest version below.
+  //
+  // `= ANY(ARRAY(...))` rather than `IN (...)`, and the difference is measured, not stylistic. The
+  // planner estimates a geography `ST_DWithin` at one row whatever the radius, so with `IN` it chose
+  // a nested-loop semi-join that rescanned the materialized candidates once per version: on the
+  // benchmark dataset (scripts/bench-api.ts) the earthquake read for a 7-day briefing's earlier
+  // snapshot took 1,275 ms, 14M comparisons for 3,065 candidates. `ARRAY(...)` is an InitPlan —
+  // computed once, then an index condition on `source_record_id` — and the same read takes 14 ms.
+  // The semantics are identical because `source_record_id` is NOT NULL.
   const candidateFilter =
     options.near === undefined
       ? sql`TRUE`
-      : sql`v.source_record_id IN (
+      : sql`v.source_record_id = ANY(ARRAY(
             SELECT c.source_record_id
             FROM geonerva.observation_versions c
             WHERE c.ingested_at <= ${options.asOf}
@@ -123,7 +131,7 @@ export async function observationsAsOf(
                     c.centroid,
                     ST_SetSRID(ST_MakePoint(${options.near.point.lon}, ${options.near.point.lat}), 4326)::geography,
                     ${options.near.radiusM})
-          )`;
+          ))`;
 
   const hazardFilter =
     options.hazardTypes === undefined
