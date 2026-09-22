@@ -99,6 +99,16 @@ describe('routes', () => {
     expect(locationKeyFromSlug('@31.6312,-8')).toBeNull();
     expect(locationKeyFromSlug('%E0%A4%A')).toBeNull();
     expect(locationKeyFromSlug('marrakech')).toBeNull();
+
+    /*
+     * A key of a third kind is refused rather than written. The geocoder mints `n:<osm type><osm
+     * id>`, and an all-digit one would be written `paris-fr-12345` and read straight back as
+     * `p:12345` — a different place, with nothing at the call site to show for it.
+     */
+    expect(() => placeSlug({ key: 'n:12345', label: 'Paris', countryCode: 'FR' })).toThrow(
+      /not an addressable location key/u,
+    );
+    expect(() => placeSlug({ key: 'n:N12345', label: 'Paris', countryCode: 'FR' })).toThrow();
   });
 
   it('keeps the default window out of the URL and carries as_of', () => {

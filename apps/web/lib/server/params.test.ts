@@ -876,6 +876,37 @@ describe('containsPreciseCoordinate: the spellings a geocoder understands', () =
     expect(containsPreciseCoordinate(query)).toBe(true);
   });
 
+  /*
+   * A precise number beside a whole one is still a position: `31.6315, -8`. The pair scan cannot
+   * see it, because it needs two decimals — the rule that keeps "Av. Paulista 1.578, 01310-200"
+   * out. This is the case where the query is a position and nothing else (P9 landing search).
+   */
+  it.each([
+    '31.6315, -8',
+    '-8, 31.6315',
+    '31.6315,-8',
+    '31.6315 -8',
+    '48.856614, 2',
+    '31.6315 N 8 W',
+    '  31.6315 , -8  ',
+  ])('finds a position in %s, where only one number is precise', (query) => {
+    expect(containsPreciseCoordinate(query)).toBe(true);
+  });
+
+  it.each([
+    // Two decimals is the rounding everything else uses, so a pure pair at that precision passes.
+    '31.63, -8',
+    '31.63,-8.00',
+    '31, -8',
+    // A lone number is not a pair, whatever its precision.
+    '31.6315',
+    // Words mean it is a search, not a position — the case the pair scan protects.
+    'Rua Augusta 2.690, 3 andar',
+    '12.345,67 EUR',
+  ])('still lets %s through', (query) => {
+    expect(containsPreciseCoordinate(query)).toBe(false);
+  });
+
   it.each([
     'Av. Paulista 1.578, 01310-200 São Paulo',
     'Rua Augusta 2.690, 3 andar',

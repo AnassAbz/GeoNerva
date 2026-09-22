@@ -20,9 +20,25 @@ export function subjectHref(subjectRef: string, place?: string): string | null {
   return null;
 }
 
-/** `marrakech-ma-2542997` for a GeoNames place; `@31.63,-8.00` for coordinates. */
+/**
+ * `marrakech-ma-2542997` for a GeoNames place; `@31.63,-8.00` for coordinates.
+ *
+ * Only those two kinds of key, and a third is refused rather than written. The slug's trailing
+ * number is read back as a **GeoNames id** by `locationKeyFromSlug`, so a key of any other kind
+ * would either address a different place — an all-digit `n:12345` from the geocoder becoming
+ * `p:12345` — or produce a slug that resolves to nothing at all. Both are worse than a loud
+ * failure, and neither would be visible from the call site. The geocoder's results are addressed
+ * by their rounded coordinates instead (`lib/client/places.ts`), which is the one form that is
+ * both addressable and true.
+ */
 export function placeSlug(location: Pick<LocationRef, 'key' | 'label' | 'countryCode'>): string {
   if (location.key.startsWith('c:')) return `@${location.key.slice(2)}`;
+  if (!location.key.startsWith('p:')) {
+    throw new Error(
+      `placeSlug: ${location.key.slice(0, location.key.indexOf(':') + 1)} is not an addressable ` +
+        'location key; use the rounded coordinates instead',
+    );
+  }
   const name = (location.label.split(',')[0] ?? location.label)
     .normalize('NFD')
     .replace(/\p{M}/gu, '')

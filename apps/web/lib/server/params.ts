@@ -474,10 +474,33 @@ const SEXAGESIMAL: readonly RegExp[] = [
  * Both numbers must be decimals. An address like "Av. Paulista 1.578, 01310-200", where "1.578" is
  * a house number with a thousands separator, has one decimal number and passes.
  */
+/**
+ * Whether the whole query is a position and nothing else, to three or more decimals.
+ *
+ * The pair scan below needs **two** decimal numbers, which is what keeps an address like
+ * "Av. Paulista 1.578, 01310-200" out of it. That left a real gap: `31.6315, -8` — a precise
+ * latitude beside a whole-number longitude — is a position by any reading, and it reached
+ * Nominatim and the geocode cache key unrounded (found by the P9 landing-search work).
+ *
+ * Widening the pair scan to accept an integer partner would have caught it and also caught
+ * "Rua Augusta 2.690, 3 andar" and "12.345,67 EUR", which the tests deliberately let through. So
+ * the rule here is different in kind rather than looser: once the numbers, the separators a
+ * coordinate uses and the hemisphere letters are removed, **nothing is left**. Somebody typing
+ * their position types a position; somebody searching for a street types words too.
+ */
+function isOnlyAPosition(text: string): boolean {
+  const numbers = [...text.matchAll(/[-+]?\d{1,3}(?:[.,](\d+))?/gu)];
+  if (numbers.length < 2) return false;
+  const residue = text.replace(/[-+]?\d{1,3}(?:[.,]\d+)?/gu, '').replace(/[\s,;/°NSEW]/gu, '');
+  if (residue !== '') return false;
+  return numbers.some((match) => (match[1]?.length ?? 0) >= 3);
+}
+
 export function containsPreciseCoordinate(raw: string): boolean {
   // Degree marks are unified *before* NFKC, which would otherwise fold `º` into a plain `o`.
   const text = raw.replace(/[º˚]/gu, '°').normalize('NFKC');
   if (SEXAGESIMAL.some((pattern) => pattern.test(text))) return true;
+  if (isOnlyAPosition(text)) return true;
 
   // Not after a digit or a dot, so a match never starts inside another number; after a comma is
   // fine, since "48.856614,2.352222" separates its pair with one.
