@@ -153,3 +153,6 @@ export type {
   CreateCanonicalEventInput,
   LinkRecordInput,
 } from './canonical.ts';
+
+export { upsertPlaces } from './places.ts';
+export type { PlaceInput } from './places.ts';

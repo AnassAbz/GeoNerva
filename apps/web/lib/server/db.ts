@@ -71,6 +71,19 @@ export {
   workerHeartbeatAsOf,
 } from '@geonerva/db/asof';
 
+/*
+ * Reference data and the provider cache, which are not facts and take no knowledge time (see
+ * `packages/db/src/places.ts`). `storeGeocodeResult` is the web role's second granted write.
+ */
+export {
+  cachedGeocodeResult,
+  nearestPlaceTimezone,
+  placeByGeonameId,
+  storeGeocodeResult,
+  suggestPlaces,
+} from '@geonerva/db/places';
+export type { PlaceRow } from '@geonerva/db/places';
+
 export type {
   AttributionRow,
   ClusterEvidenceRow,

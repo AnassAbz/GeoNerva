@@ -17,6 +17,7 @@
     "@geonerva/config": "workspace:*",
     "@geonerva/db": "workspace:*",
     "@geonerva/domain": "workspace:*",
+    "@geonerva/geocoding": "workspace:*",
     "kysely": "0.29.6",
     "next": "16.3.5",
     "react": "19.3.0",

@@ -49,6 +49,7 @@ import {
   evidenceItemsAsOf,
   healthAsOf,
   observationEvidenceAsOf,
+  placeByGeonameId,
   runEvidenceAsOf,
   runSummariesAsOf,
   runTally24hAsOf,
@@ -399,9 +400,8 @@ export function getReplayHorizon(now: Date): ReplayHorizonResponse {
  * A coordinate pair is already rounded by the parser, so the key it produces is canonical and
  * `formatCoordinateKey` — which throws on an unrounded value — is the assertion that it was.
  *
- * A named place needs the `places` table, which the GeoNames import populates. That import is P8
- * task 2 and is not built, so a `p:` key currently resolves to `LOCATION_NOT_FOUND` rather than
- * to a guess. Returning a placeholder label with real coordinates would be worse than a 404: the
+ * A named place needs the `places` table, which `pnpm geonames:import` populates. A `p:` key
+ * that is not in it resolves to `LOCATION_NOT_FOUND` rather than to a guess. Returning a placeholder label with real coordinates would be worse than a 404: the
  * briefing would be correct about a location the user did not name.
  */
 async function resolveLocation(db: Kysely, location: LocationParam): Promise<LocationRef> {
@@ -439,7 +439,7 @@ async function resolveLocation(db: Kysely, location: LocationParam): Promise<Loc
     throw new ApiProblemError({
       code: 'LOCATION_NOT_FOUND',
       detail:
-        'GeoNerva does not hold that place. The place table is populated by the GeoNames import, which is not yet part of this deployment.',
+        'GeoNerva holds no place with that id. Place ids come from /api/v1/places/suggest, which reads the GeoNames table this deployment has loaded.',
     });
   }
   return place;
@@ -467,16 +467,8 @@ function parseCoordinateKey(key: string): LocationParam | null {
 async function lookupPlace(db: Kysely, key: string): Promise<LocationRef | null> {
   const parsed = /^p:(\d+)$/u.exec(key);
   if (parsed?.[1] === undefined) return null;
-  const rows = await db
-    .withSchema('geonerva')
-    .selectFrom('places')
-    .select(['geonameid', 'name', 'lat', 'lon', 'timezone', 'country_code', 'admin1'])
-    .where('geonameid', '=', Number(parsed[1]))
-    .limit(1)
-    .execute();
-
-  const row = rows[0];
-  if (row === undefined) return null;
+  const row = await placeByGeonameId(db, Number(parsed[1]));
+  if (row === null) return null;
   return {
     key,
     label: row.name,
@@ -484,9 +476,6 @@ async function lookupPlace(db: Kysely, key: string): Promise<LocationRef | null>
      * A named place is a public place, not personal data (ADR-015) — but its coordinates are still
      * rounded to the API's two decimals so that every `LocationRef` in a response satisfies I15
      * uniformly, and so that `buildPacket`'s rounding assertion holds for every location kind.
-     *
-     * Through `roundUserCoordinate`, not `Math.round(x * 100) / 100`. The inline form was a third
-     * spelling of the privacy rule, and a rule with three implementations has none.
      */
     lat: roundUserCoordinate(row.lat),
     lon: roundUserCoordinate(row.lon),

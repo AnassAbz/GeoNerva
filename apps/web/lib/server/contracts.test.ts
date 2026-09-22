@@ -77,6 +77,9 @@ describe('ENDPOINT_CONTRACTS', () => {
       '/api/v1/events/{publicId}',
       '/api/v1/evidence/{id}',
       '/api/v1/fire-clusters/{publicId}',
+      '/api/v1/places/reverse',
+      '/api/v1/places/search',
+      '/api/v1/places/suggest',
       '/api/v1/replay/horizon',
       '/api/v1/sources/status',
     ]);

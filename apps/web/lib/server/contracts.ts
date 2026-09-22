@@ -19,6 +19,8 @@ import {
   evidenceDetailSchema,
   fireClusterDetailSchema,
   locationBriefingSchema,
+  placeSearchResponseSchema,
+  placeSuggestResponseSchema,
   mapFeaturesResponseSchema,
   problemDetailsSchema,
   replayHorizonResponseSchema,
@@ -105,29 +107,29 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
   {
     path: '/api/v1/places/suggest',
     summary: 'Type-ahead from the local GeoNames table, so keystrokes never leave the server.',
-    response: null,
+    response: placeSuggestResponseSchema,
+
     rateLimit: 'default',
     cache: [CACHE_POLICIES.places],
-    implemented: false,
-    blockedBy: '`packages/geocoding` is an empty stub and the GeoNames import has not been built.',
+    implemented: true,
   },
   {
     path: '/api/v1/places/search',
     summary: 'Submit-time geocoding through Nominatim, server-side and cached.',
-    response: null,
+    response: placeSearchResponseSchema,
+
     rateLimit: 'placesSearch',
     cache: [CACHE_POLICIES.places],
-    implemented: false,
-    blockedBy: '`packages/geocoding` is an empty stub.',
+    implemented: true,
   },
   {
     path: '/api/v1/places/reverse',
     summary: 'A label for a rounded coordinate pair.',
-    response: null,
+    response: placeSearchResponseSchema,
+
     rateLimit: 'placesSearch',
     cache: [CACHE_POLICIES.places],
-    implemented: false,
-    blockedBy: '`packages/geocoding` is an empty stub.',
+    implemented: true,
   },
   {
     path: '/api/v1/evidence/{id}',

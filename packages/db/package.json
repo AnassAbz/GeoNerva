@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./asof": "./src/asof.ts",
     "./client": "./src/client.ts",
+    "./places": "./src/places.ts",
     "./rate-limit": "./src/rate-limit.ts",
     "./schema": "./src/generated/database.ts",
     "./viewport": "./src/spatial/viewport.ts",

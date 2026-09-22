@@ -143,7 +143,15 @@ import type {
   FireClusterVersionView,
   FireDetectionView,
 } from './fire-cluster-detail.ts';
-import type { MapFeature, MapFeaturesResponse, ReplayHorizonResponse } from './map-and-places.ts';
+import type {
+  MapFeature,
+  MapFeaturesResponse,
+  PlaceSearchResponse,
+  PlaceSearchResult,
+  PlaceSuggestResponse,
+  PlaceSuggestion,
+  ReplayHorizonResponse,
+} from './map-and-places.ts';
 import type {
   DataQualityCheckView,
   SourceStatus,
@@ -1521,4 +1529,67 @@ export const fireClusterDetailSchema = z
   });
 export type FireClusterDetailMatches = Expect<
   Exact<z.infer<typeof fireClusterDetailSchema>, FireClusterDetail>
+>;
+
+/*
+ * ── Places ─────────────────────────────────────────────────────────────────────
+ *
+ * A suggestion is a GeoNames populated place, public reference data, and its coordinates are the
+ * city's own. A search or reverse result is the answer to a question a *person* asked — often
+ * about where they are — so its coordinates are held to invariant I15, as the contract states.
+ */
+
+export const placeSuggestionSchema = z.object({
+  key: z.string().regex(/^p:[1-9][0-9]{0,9}$/u),
+  label: z.string().min(1),
+  countryCode: z.string().nullable(),
+  admin1: z.string().nullable(),
+  lat: z.number().min(-90).max(90),
+  lon: z.number().min(-180).max(180),
+  population: z.number().int().nonnegative().nullable(),
+  timezone: z.string().min(1),
+});
+export type PlaceSuggestionMatches = Expect<
+  Exact<z.infer<typeof placeSuggestionSchema>, PlaceSuggestion>
+>;
+
+/** `GET /api/v1/places/suggest`. At most ten suggestions (§13.1: `limit ≤ 10`). */
+export const placeSuggestResponseSchema = z.object({
+  schemaVersion,
+  query: z.string().min(2).max(64),
+  suggestions: z.array(placeSuggestionSchema).max(10),
+  attribution: z.array(attributionSchema),
+});
+export type PlaceSuggestResponseMatches = Expect<
+  Exact<z.infer<typeof placeSuggestResponseSchema>, PlaceSuggestResponse>
+>;
+
+export const placeSearchResultSchema = z.object({
+  key: z
+    .string()
+    .regex(
+      /^(?:p:[1-9][0-9]{0,9}|n:[NWR][1-9][0-9]{0,18}|c:-?[0-9]{1,2}\.[0-9]{2},-?[0-9]{1,3}\.[0-9]{2})$/u,
+    ),
+  label: z.string().min(1),
+  countryCode: z.string().nullable(),
+  admin1: z.string().nullable(),
+  lat: roundedCoordinate(-90, 90),
+  lon: roundedCoordinate(-180, 180),
+  timezone: z.string(),
+  kind: z.string().nullable(),
+});
+export type PlaceSearchResultMatches = Expect<
+  Exact<z.infer<typeof placeSearchResultSchema>, PlaceSearchResult>
+>;
+
+/** `GET /api/v1/places/search` and `GET /api/v1/places/reverse`. */
+export const placeSearchResponseSchema = z.object({
+  schemaVersion,
+  query: z.string().max(64),
+  results: z.array(placeSearchResultSchema),
+  fromCache: z.boolean(),
+  attribution: z.array(attributionSchema),
+});
+export type PlaceSearchResponseMatches = Expect<
+  Exact<z.infer<typeof placeSearchResponseSchema>, PlaceSearchResponse>
 >;
