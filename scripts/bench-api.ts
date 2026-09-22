@@ -199,6 +199,32 @@ async function seed(db: Kysely<DB>): Promise<Seeded> {
     }
   }
 
+  // Completed historical backfills up to the first live run, so /history reads its full reference
+  // rather than refusing: coverage, not the oldest record, is what a baseline trusts.
+  for (const [source, years] of [
+    ['usgs', 10],
+    ['gdacs', 5],
+  ] as const) {
+    const from = new Date(NOW.getTime() - (years * 365 + 30) * DAY);
+    const to = new Date(NOW.getTime() - 25 * HOUR);
+    await sql`
+      WITH plan AS (
+        INSERT INTO geonerva.backfill_plans
+          (id, source_id, mode, range_from, range_to, window_ms, min_window_ms, status, finished_at)
+        VALUES (gen_random_uuid(), ${source}, 'HISTORICAL', ${from}, ${to}, ${DAY}, ${DAY},
+                'COMPLETED', ${to})
+        RETURNING id
+      )
+      INSERT INTO geonerva.backfill_intervals
+        (plan_id, interval_from, interval_to, status, completed_at)
+      SELECT id, ${from}, ${to}, 'DONE', ${to} FROM plan
+    `.execute(db);
+  }
+  await sql`
+    INSERT INTO geonerva.analysis_runs (id, kind, engine_version, started_at, finished_at, status)
+    VALUES (gen_random_uuid(), 'SEED', 'geonerva-1', ${NOW}, ${NOW}, 'SUCCEEDED')
+  `.execute(db);
+
   // Earthquakes: ten years within 300 km, a busy last week, and a global background.
   let eventPublicId = '';
   for (let index = 0; index < 3_000; index += 1) {
@@ -444,6 +470,11 @@ async function main(): Promise<void> {
     const seeded = await seed(db);
     const at = `lat=${String(CENTER.lat)}&lon=${String(CENTER.lon)}`;
     const replayAt = new Date(NOW.getTime() - 3 * HOUR).toISOString();
+    // A history row that refuses is a fast path, not the measurement; say so rather than time it.
+    const probe = (await (
+      await history(request(`/api/v1/history?${at}&family=EARTHQUAKES`))
+    ).json()) as { metric: { status: string } };
+    console.log(`history EQ status on the bench dataset: ${probe.metric.status}`);
     const results = [
       await measure('briefing, live, 24h', briefing, `/api/v1/briefing?${at}&window=24h`),
       await measure('briefing, live, 7d', briefing, `/api/v1/briefing?${at}&window=7d`),
