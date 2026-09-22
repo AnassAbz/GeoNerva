@@ -273,6 +273,7 @@ describe('ADR-033: a backfill keeps the digest, not the body', () => {
           endpoint: 'earthquake.usgs.gov/feed',
           attempts: 1,
           durationMs: 1,
+          readWindow: null,
         }),
     });
 
@@ -714,6 +715,7 @@ describe('live and historical are the same earthquake', () => {
           endpoint: 'earthquake.usgs.gov/feed',
           attempts: 1,
           durationMs: 1,
+          readWindow: null,
         }),
     });
     expect(outcome.status).toBe('SUCCEEDED');

@@ -66,13 +66,13 @@ function finishFailures(): string {
   return failures.length === 0 ? 'no finish_failed event' : JSON.stringify(failures);
 }
 
-async function ingest(file: string, status = 200) {
+async function ingest(file: string, status = 200, trigger: 'MANUAL' | 'SCHEDULE' = 'MANUAL') {
   lastLogger = createMemoryLogger();
   return runFireIngestion({
     db,
     client: clientServing(readFixtureBytes('firms', file), status),
     sensor: 'VIIRS_NOAA20_NRT',
-    trigger: 'MANUAL',
+    trigger,
     logger: lastLogger,
   });
 }
@@ -347,5 +347,28 @@ describe('when the batch is not usable', () => {
     expect(message, finishFailures()).toMatch(/credential/);
     // The status still reaches the row, because *which* refusal it was is diagnosable and safe.
     expect(stored.rows[0]?.http_status).toBe(400);
+  });
+});
+
+describe('coverage (ADR-040, ADR-041)', () => {
+  async function coveredHours(): Promise<number> {
+    const result = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM geonerva.feed_coverage_hours h
+      JOIN geonerva.source_products p ON p.id = h.product_id
+      WHERE p.source_id = 'firms' AND p.code = 'VIIRS_NOAA20_NRT'
+    `.execute(db);
+    return Number(result.rows[0]?.n ?? 0);
+  }
+
+  it('records the hours a successful scheduled read covered', async () => {
+    // Keyless: the public file of the last 24 hours — 23 or 24 whole hours, by the minute.
+    expect((await ingest('j1-24h-slice.csv', 200, 'SCHEDULE')).status).toBe('SUCCEEDED');
+    expect(await coveredHours()).toBeGreaterThanOrEqual(23);
+  });
+
+  it('records nothing for a manual run, or a read that failed', async () => {
+    expect((await ingest('j1-24h-slice.csv')).status).toBe('SUCCEEDED');
+    expect((await ingest('drift-renamed-column.csv', 200, 'SCHEDULE')).status).toBe('FAILED');
+    expect(await coveredHours()).toBe(0);
   });
 });

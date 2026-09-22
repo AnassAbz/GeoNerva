@@ -479,6 +479,8 @@ async function ingestWindow<TRaw>(
         endpoint: options.historical.endpoint(),
         attempts: fetched.attempts,
         durationMs: fetched.durationMs,
+        // Coverage for a backfill is written by its interval checkpoint, not by the run (ADR-041).
+        readWindow: { from: interval.from, to: interval.to },
       } as const;
 
       /*

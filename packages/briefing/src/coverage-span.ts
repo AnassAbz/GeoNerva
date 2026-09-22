@@ -10,11 +10,24 @@
 import type { CatalogCoverage, CoverageSpan } from '@geonerva/db/asof';
 
 /**
- * The start of the contiguous covered span that reaches `asOf`, or `null` when nothing covered
- * reaches it — in which case the recent windows were not read either, and there is nothing honest
- * to compare.
+ * How close to the knowledge time coverage must reach (ADR-041). The ledger records whole hours
+ * only, so the hour containing `asOf` is never covered, and polls arrive every few minutes: a feed
+ * read continuously up to `asOf` shows coverage ending up to about an hour and a poll interval
+ * before it. Two hours tolerates that and nothing longer — a feed silent for longer is not "read
+ * up to now".
  */
-export function coveredSince(spans: readonly CoverageSpan[], asOf: Date): Date | null {
+export const COVERAGE_EDGE_TOLERANCE_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * The start of the contiguous covered span that reaches `asOf` — ends no earlier than
+ * `edgeToleranceMs` before it — or `null` when nothing covered reaches it, in which case the
+ * recent windows were not read either, and there is nothing honest to compare.
+ */
+export function coveredSince(
+  spans: readonly CoverageSpan[],
+  asOf: Date,
+  edgeToleranceMs = 0,
+): Date | null {
   const sorted = spans
     .filter((span) => span.from.getTime() < span.to.getTime())
     .sort((left, right) => left.from.getTime() - right.from.getTime());
@@ -31,7 +44,7 @@ export function coveredSince(spans: readonly CoverageSpan[], asOf: Date): Date |
     } else {
       end = Math.max(end, to);
     }
-    if (start <= asOf.getTime() && end >= asOf.getTime()) answer = start;
+    if (start <= asOf.getTime() && end >= asOf.getTime() - edgeToleranceMs) answer = start;
   }
   return answer === null ? null : new Date(answer);
 }
@@ -41,13 +54,18 @@ export function coveredSince(spans: readonly CoverageSpan[], asOf: Date): Date |
  * from more than one feed, say. The latest of the products' starts, or `null` if any product's
  * coverage does not reach `asOf`, or there is no product at all.
  */
-export function coveredSinceForEvery(coverage: CatalogCoverage, asOf: Date): Date | null {
+export function coveredSinceForEvery(
+  coverage: CatalogCoverage,
+  asOf: Date,
+  edgeToleranceMs = 0,
+): Date | null {
   if (coverage.productIds.length === 0) return null;
   let latest: number | null = null;
   for (const productId of coverage.productIds) {
     const start = coveredSince(
       coverage.spans.filter((span) => span.productId === productId),
       asOf,
+      edgeToleranceMs,
     );
     if (start === null) return null;
     latest = latest === null ? start.getTime() : Math.max(latest, start.getTime());

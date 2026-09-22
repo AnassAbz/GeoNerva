@@ -11,7 +11,13 @@ import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { loadWebConfig } from '@geonerva/config';
-import { createCanonicalEvent, createDb, linkRecord, type DB } from '@geonerva/db';
+import {
+  createCanonicalEvent,
+  createDb,
+  linkRecord,
+  recordIntervalCoverage,
+  type DB,
+} from '@geonerva/db';
 import type { DatabaseHandle } from '@geonerva/db/client';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import { seedObservation, seedRun } from '@geonerva/db/testing/factories';
@@ -70,17 +76,27 @@ beforeEach(async () => {
 
 async function earthquakesRead(): Promise<void> {
   // Coverage the baseline can trust: a completed backfill of the last 62 weeks, then live polling.
-  await sql`
+  const plan = await sql<{ id: string }>`
     WITH plan AS (
       INSERT INTO geonerva.backfill_plans
         (id, source_id, mode, range_from, range_to, window_ms, min_window_ms, status, finished_at)
       VALUES (gen_random_uuid(), 'usgs', 'HISTORICAL', ${daysAgo(62 * 7)}, ${daysAgo(0.01)},
               ${DAY}, ${DAY}, 'COMPLETED', ${daysAgo(0.01)})
       RETURNING id
+    ), interval AS (
+      INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
+      SELECT id, ${daysAgo(62 * 7)}, ${daysAgo(0.01)}, 'DONE', ${daysAgo(0.01)} FROM plan
     )
-    INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
-    SELECT id, ${daysAgo(62 * 7)}, ${daysAgo(0.01)}, 'DONE', ${daysAgo(0.01)} FROM plan
+    SELECT id::text AS id FROM plan
   `.execute(db);
+  // The ledger, as the interval checkpoint writes it (ADR-041).
+  await db.transaction().execute((trx) =>
+    recordIntervalCoverage(trx, {
+      planId: plan.rows[0]?.id ?? '',
+      from: daysAgo(62 * 7),
+      to: daysAgo(0.01),
+    }),
+  );
   await seedRun(db, { sourceId: 'usgs', status: 'SUCCEEDED', startedAt: daysAgo(0.01) });
   await sql`
     INSERT INTO geonerva.analysis_runs (id, kind, engine_version, started_at, finished_at, status)

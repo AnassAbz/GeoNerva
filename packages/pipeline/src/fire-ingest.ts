@@ -32,6 +32,7 @@ import {
   finishRun,
   findProductByCode,
   acquireRunLease,
+  recordLiveCoverage,
   recordReject,
   type DB,
   type FireDetectionInput,
@@ -365,7 +366,7 @@ export async function runFireIngestion(
      */
     const rejectedTotal = parsed.rejectedTotal + futureDetections;
     const status = rejectedTotal > 0 ? 'PARTIAL' : 'SUCCEEDED';
-    await finishRun(db, {
+    const committedAt = await finishRun(db, {
       runId,
       status,
       httpStatus: fetched.httpStatus,
@@ -384,6 +385,29 @@ export async function runFireIngestion(
         rejected: rejectedTotal,
       },
     });
+
+    /*
+     * A whole scheduled read vouches for its window (ADR-041) — the days FIRMS covers are what the
+     * fire trend may count (ADR-040). Recorded after the run is finished, so a failure here cannot
+     * undo the run; a missing hour only makes coverage smaller, never larger.
+     */
+    if (trigger === 'SCHEDULE' && status === 'SUCCEEDED') {
+      try {
+        await db.transaction().execute((trx) =>
+          recordLiveCoverage(trx, {
+            productId: product.id,
+            window: fetched.readWindow,
+            recordedAt: committedAt,
+          }),
+        );
+      } catch (error) {
+        logger.log('error', 'ingestion.coverage_failed', {
+          ...base,
+          runId,
+          detail: describeDatabaseFailure(error),
+        });
+      }
+    }
 
     logger.log('info', 'ingestion.run', {
       ...base,

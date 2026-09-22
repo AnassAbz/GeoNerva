@@ -13,7 +13,14 @@ import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AFTERSHOCK_CAVEAT, EARTHQUAKE_ELEVATED_CAVEAT } from '@geonerva/baselines';
-import { createCanonicalEvent, createDb, linkRecord, type DB } from '@geonerva/db';
+import {
+  createCanonicalEvent,
+  createDb,
+  linkRecord,
+  recordIntervalCoverage,
+  recordLiveCoverage,
+  type DB,
+} from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import { seedObservation, seedRun } from '@geonerva/db/testing/factories';
 import { historyResponseSchema, type HazardType, type LocationRef } from '@geonerva/domain';
@@ -119,7 +126,7 @@ async function backfilled(
 ): Promise<void> {
   // A window is read by the time its interval completes, and not before: default to its end.
   const completedAt = options.completedAt ?? to;
-  await sql`
+  const plan = await sql<{ id: string }>`
     WITH plan AS (
       INSERT INTO geonerva.backfill_plans
         (id, source_id, mode, range_from, range_to, min_magnitude, window_ms, min_window_ms,
@@ -127,10 +134,30 @@ async function backfilled(
       VALUES (gen_random_uuid(), ${sourceId}, 'HISTORICAL', ${from}, ${to},
               ${options.minMagnitude ?? null}, ${DAY}, ${DAY}, 'COMPLETED', ${completedAt})
       RETURNING id
+    ), interval AS (
+      INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
+      SELECT id, ${from}, ${to}, 'DONE', ${completedAt} FROM plan
     )
-    INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
-    SELECT id, ${from}, ${to}, 'DONE', ${completedAt} FROM plan
+    SELECT id::text AS id FROM plan
   `.execute(db);
+  // The ledger, as `markIntervalDone` writes it in production (ADR-041).
+  await db
+    .transaction()
+    .execute((trx) => recordIntervalCoverage(trx, { planId: plan.rows[0]?.id ?? '', from, to }));
+}
+
+/** One scheduled poll of a feed at `at`, reading `lookbackHours` back, recorded at its commit. */
+async function livePoll(source: string, code: string, at: Date, lookbackHours = 24): Promise<void> {
+  const product = await sql<{ id: number }>`
+    SELECT id FROM geonerva.source_products WHERE source_id = ${source} AND code = ${code}
+  `.execute(db);
+  await db.transaction().execute((trx) =>
+    recordLiveCoverage(trx, {
+      productId: product.rows[0]?.id ?? 0,
+      window: { from: new Date(at.getTime() - lookbackHours * 3_600_000), to: at },
+      recordedAt: at,
+    }),
+  );
 }
 
 /** The catalog GeoNerva had read: backfilled from `coveredFrom`, then polled live up to T. */
@@ -271,7 +298,9 @@ describe('EQ_COUNT_7D', () => {
 
     // Still polling two hours on, as a live deployment would be; USGS is stale after one hour.
     for (let minutes = 30; minutes <= 114; minutes += 28) {
-      await committedRun('usgs', new Date(AS_OF.getTime() + minutes * 60_000));
+      const at = new Date(AS_OF.getTime() + minutes * 60_000);
+      await committedRun('usgs', at);
+      await livePoll('usgs', 'comcat', at);
     }
     const later = await history({ asOf: new Date(AS_OF.getTime() + 2 * 3_600_000) });
     expect(later.metric.observedValue).toEqual({ kind: 'count', value: 3 });
@@ -536,49 +565,41 @@ describe('the reads each answer depends on', () => {
 
   it('counts only fetched historical windows as coverage', async () => {
     /*
-     * Three things that look like coverage and are not: a window that was SPLIT (finished, but
-     * only because its children carry the work, and they are still pending), a deletion sweep
-     * (planned like a backfill, but it asks which records disappeared, not what happened), and a
-     * run triggered by a backfill (which fetched one window, not everything since).
+     * Two things that look like coverage and are not: a window that was SPLIT (finished, but only
+     * because its children carry the work, and they are still pending) and a deletion sweep
+     * (planned like a backfill, but it asks which records disappeared, not what happened). Each is
+     * handed to the ledger writer the way a checkpoint would, and the writer declines them.
      */
     await earthquakesRead(new Date(CURRENT_START.getTime() - 29.5 * WEEK));
     const older = new Date(CURRENT_START.getTime() - 29.5 * WEEK);
-    await sql`
-      WITH plan AS (
-        INSERT INTO geonerva.backfill_plans
-          (id, source_id, mode, range_from, range_to, window_ms, min_window_ms, status)
-        VALUES (gen_random_uuid(), 'usgs', 'HISTORICAL', ${daysAgo(5 * 365)}, ${older},
-                ${DAY}, ${DAY}, 'RUNNING')
-        RETURNING id
-      )
-      INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
-      SELECT id, ${daysAgo(5 * 365)}::timestamptz, ${older}::timestamptz, 'SPLIT', ${daysAgo(2)}::timestamptz
-      FROM plan
-      UNION ALL
-      SELECT id, ${daysAgo(5 * 365)}::timestamptz, ${daysAgo(3 * 365)}::timestamptz, 'PENDING', NULL
-      FROM plan
-      UNION ALL
-      SELECT id, ${daysAgo(3 * 365)}::timestamptz, ${older}::timestamptz, 'PENDING', NULL FROM plan
-    `.execute(db);
-    await sql`
-      WITH plan AS (
-        INSERT INTO geonerva.backfill_plans
-          (id, source_id, mode, range_from, range_to, window_ms, min_window_ms, status, finished_at)
-        VALUES (gen_random_uuid(), 'usgs', 'DELETION_SWEEP', ${daysAgo(4 * 365)}, ${older},
-                ${DAY}, ${DAY}, 'COMPLETED', ${daysAgo(2)})
-        RETURNING id
-      )
-      INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
-      SELECT id, ${daysAgo(4 * 365)}, ${older}, 'DONE', ${daysAgo(2)} FROM plan
-    `.execute(db);
-    const { runId } = await seedRun(db, {
-      sourceId: 'usgs',
-      status: 'SUCCEEDED',
-      startedAt: daysAgo(3 * 365),
-    });
-    await sql`UPDATE geonerva.ingestion_runs SET trigger = 'BACKFILL' WHERE id = ${runId}::uuid`.execute(
-      db,
-    );
+    for (const [mode, status] of [
+      ['HISTORICAL', 'SPLIT'],
+      ['DELETION_SWEEP', 'DONE'],
+    ] as const) {
+      const plan = await sql<{ id: string }>`
+        WITH plan AS (
+          INSERT INTO geonerva.backfill_plans
+            (id, source_id, mode, range_from, range_to, window_ms, min_window_ms, status)
+          VALUES (gen_random_uuid(), 'usgs', ${mode}, ${daysAgo(5 * 365)}, ${older},
+                  ${DAY}, ${DAY}, 'RUNNING')
+          RETURNING id
+        ), interval AS (
+          INSERT INTO geonerva.backfill_intervals
+            (plan_id, interval_from, interval_to, status, completed_at)
+          SELECT id, ${daysAgo(5 * 365)}::timestamptz, ${older}::timestamptz, ${status},
+                 ${daysAgo(2)}::timestamptz
+          FROM plan
+        )
+        SELECT id::text AS id FROM plan
+      `.execute(db);
+      await db.transaction().execute((trx) =>
+        recordIntervalCoverage(trx, {
+          planId: plan.rows[0]?.id ?? '',
+          from: daysAgo(5 * 365),
+          to: older,
+        }),
+      );
+    }
     await referenceCatalog(30);
     for (let k = 0; k < 150; k += 1) await quake({ observedAt: daysAgo(3 * 365 - k * 7) });
 
@@ -721,37 +742,39 @@ describe('the reads each answer depends on', () => {
   });
 });
 
-describe('live coverage is unbroken, successful, scheduled polling (fix-verification review)', () => {
-  /** A committed run of the given trigger and status, at `at`. */
-  async function run(
-    at: Date,
-    options: {
-      readonly trigger?: string;
-      readonly status?: 'SUCCEEDED' | 'FAILED' | 'PARTIAL';
-    } = {},
-  ): Promise<void> {
-    const { runId } = await seedRun(db, {
-      sourceId: 'usgs',
-      status: options.status ?? 'SUCCEEDED',
-      startedAt: at,
-    });
-    if (options.trigger !== undefined) {
-      await sql`UPDATE geonerva.ingestion_runs SET trigger = ${options.trigger} WHERE id = ${runId}::uuid`.execute(
-        db,
-      );
-    }
+describe('live coverage comes from the ledger, by read window (ADR-041)', () => {
+  async function usgsProduct(): Promise<number> {
+    const result = await sql<{ id: number }>`
+      SELECT id FROM geonerva.source_products WHERE source_id = 'usgs' AND code = 'comcat'
+    `.execute(db);
+    return result.rows[0]?.id ?? 0;
   }
 
-  /** Scheduled polls every 30 minutes over `[from, to]`: an unbroken chain for USGS (stale at 1 h). */
-  async function polled(from: Date, to: Date): Promise<void> {
-    for (let at = from.getTime(); at <= to.getTime(); at += 30 * 60_000) await run(new Date(at));
+  /** One scheduled poll at `at` that read `lookbackHours` back, recorded at its commit. */
+  async function poll(at: Date, lookbackHours = 24): Promise<void> {
+    const productId = await usgsProduct();
+    await db.transaction().execute((trx) =>
+      recordLiveCoverage(trx, {
+        productId,
+        window: { from: new Date(at.getTime() - lookbackHours * 3_600_000), to: at },
+        recordedAt: at,
+      }),
+    );
+  }
+
+  /** Polls every 30 minutes over `[from, to]`. */
+  async function polled(from: Date, to: Date, lookbackHours = 24): Promise<void> {
+    for (let at = from.getTime(); at <= to.getTime(); at += 30 * 60_000) {
+      await poll(new Date(at), lookbackHours);
+    }
   }
 
   const backfillEnd = daysAgo(60);
 
   beforeEach(async () => {
-    // Sixty weeks backfilled up to sixty days ago, a catalog inside it, and correlation run.
+    // Sixty weeks backfilled up to sixty days ago, a catalog inside it, a live run, correlation.
     await backfilled('usgs', new Date(CURRENT_START.getTime() - 59.5 * WEEK), backfillEnd);
+    await committedRun('usgs', daysAgo(0.01));
     await correlationRun(daysAgo(0.01));
     await referenceCatalog(60);
   });
@@ -761,46 +784,43 @@ describe('live coverage is unbroken, successful, scheduled polling (fix-verifica
     expect((await history()).metric.status).toBe('OK');
   });
 
-  /** Polls every 30 minutes over a two-hour stretch forty days ago, of one kind only. */
-  async function onlyDuringGap(options: {
-    readonly trigger?: string;
-    readonly status?: 'SUCCEEDED' | 'FAILED' | 'PARTIAL';
-  }): Promise<void> {
-    const gapStart = daysAgo(40).getTime();
-    for (let minutes = 30; minutes < 120; minutes += 30) {
-      await run(new Date(gapStart + minutes * 60_000), options);
+  it('bridges a stop that the next poll read again, and nothing longer', async () => {
+    // Two hours without a poll, forty days ago: the next 24-hour window reads them again.
+    await polled(backfillEnd, daysAgo(40));
+    await polled(new Date(daysAgo(40).getTime() + 2 * 3_600_000), daysAgo(0.01));
+    expect((await history()).metric.status).toBe('OK');
+  });
+
+  it('breaks coverage where polling stopped for longer than a poll reads back', async () => {
+    // Thirty hours without a poll: the next 24-hour window starts after the gap.
+    await polled(backfillEnd, daysAgo(40));
+    await polled(new Date(daysAgo(40).getTime() + 30 * 3_600_000), daysAgo(0.01));
+    expect((await history()).metric.status).toBe('INSUFFICIENT_HISTORY');
+  });
+
+  it('does not bridge a forty-minute stop for a feed that reads fifteen minutes back', async () => {
+    /*
+     * Read in full up to half a day ago, then fifteen-minute windows every five minutes, as EMSC
+     * polls. With a forty-minute stop first, the new windows never meet the old coverage, and the
+     * current week is only half a day deep; without the stop they meet, and it is the whole week.
+     */
+    const resumeAt = daysAgo(0.5);
+    await backfilled('usgs', backfillEnd, resumeAt);
+    for (
+      let at = resumeAt.getTime() + 40 * 60_000;
+      at <= daysAgo(0.01).getTime();
+      at += 5 * 60_000
+    ) {
+      await poll(new Date(at), 0.25);
     }
-  }
+    expect((await history()).metric.status, 'across the stop').toBe('INSUFFICIENT_COVERAGE');
 
-  it('does not bridge a lapse with failed or partial polls', async () => {
-    // Scheduled throughout, but for two hours every poll failed or was partial: not a read.
-    await polled(backfillEnd, daysAgo(40));
-    await onlyDuringGap({ status: 'FAILED' });
-    await run(new Date(daysAgo(40).getTime() + 100 * 60_000), { status: 'PARTIAL' });
-    await polled(new Date(daysAgo(40).getTime() + 2 * 3_600_000), daysAgo(0.01));
-
-    expect((await history()).metric.status).toBe('INSUFFICIENT_HISTORY');
+    // One window across the stop — what a poll that did not skip would have read.
+    await poll(new Date(resumeAt.getTime() + 40 * 60_000), 45 / 60);
+    expect((await history()).metric.status, 'with the stop read').toBe('OK');
   });
 
-  it('does not bridge a lapse with manual or reconciling runs', async () => {
-    // Successful, but one-off and deletion-sweep runs: neither follows the feed.
-    await polled(backfillEnd, daysAgo(40));
-    await onlyDuringGap({ trigger: 'MANUAL' });
-    await run(new Date(daysAgo(40).getTime() + 100 * 60_000), { trigger: 'RECONCILE' });
-    await polled(new Date(daysAgo(40).getTime() + 2 * 3_600_000), daysAgo(0.01));
-
-    expect((await history()).metric.status).toBe('INSUFFICIENT_HISTORY');
-  });
-
-  it('breaks coverage where polling lapsed for longer than the source is stale after', async () => {
-    // Polled throughout, except for two hours forty days ago: USGS is stale after one hour.
-    await polled(backfillEnd, daysAgo(40));
-    await polled(new Date(daysAgo(40).getTime() + 2 * 3_600_000), daysAgo(0.01));
-
-    expect((await history()).metric.status).toBe('INSUFFICIENT_HISTORY');
-  });
-
-  it('does not reach the knowledge time from a poll older than the stale bound', async () => {
+  it('does not reach the knowledge time from polling that stopped a day ago', async () => {
     await polled(backfillEnd, daysAgo(1));
     const response = await history();
     expect(response.metric.status).toBe('INSUFFICIENT_COVERAGE');
@@ -808,7 +828,7 @@ describe('live coverage is unbroken, successful, scheduled polling (fix-verifica
   });
 
   it('refuses a count over a current window it read only part of', async () => {
-    // Polling began three days ago, after the backfill had long stopped.
+    // Polling began three days ago, long after the backfill stopped.
     await polled(daysAgo(3), daysAgo(0.01));
     const response = await history();
     expect(response.metric.status).toBe('INSUFFICIENT_COVERAGE');
@@ -816,16 +836,33 @@ describe('live coverage is unbroken, successful, scheduled polling (fix-verifica
   });
 
   it('does not let a backfill claim time past the moment it finished', async () => {
-    /*
-     * A plan whose `--to` lay a week in the future, completed sixty days ago: it read up to its
-     * completion and not a minute beyond. Taken at its word it would bridge the fifty-nine days
-     * before polling began.
-     */
+    // A `--to` a week in the future, completed sixty days ago: read up to its completion only.
     await backfilled('usgs', backfillEnd, new Date(AS_OF.getTime() + 7 * DAY), {
       completedAt: backfillEnd,
     });
     await polled(daysAgo(1), daysAgo(0.01));
     expect((await history()).metric.status).toBe('INSUFFICIENT_COVERAGE');
+  });
+
+  it('reads only the coverage recorded by the knowledge time', async () => {
+    // The whole stretch was read, but the ledger learned of the last 59 days only afterwards.
+    const productId = await usgsProduct();
+    await db.transaction().execute((trx) =>
+      recordLiveCoverage(trx, {
+        productId,
+        window: { from: backfillEnd, to: daysAgo(0.01) },
+        recordedAt: new Date(AS_OF.getTime() + 3_600_000),
+      }),
+    );
+    expect((await history()).metric.status).toBe('INSUFFICIENT_COVERAGE');
+  });
+
+  it('keeps working after run history older than ninety days is pruned (ADR-033, ADR-041)', async () => {
+    await polled(backfillEnd, daysAgo(0.01));
+    await sql`DELETE FROM geonerva.ingestion_runs WHERE started_at < ${daysAgo(90)}`.execute(db);
+    await sql`DELETE FROM geonerva.backfill_intervals`.execute(db);
+    await sql`DELETE FROM geonerva.backfill_plans`.execute(db);
+    expect((await history()).metric.status).toBe('OK');
   });
 });
 
@@ -842,7 +879,7 @@ describe('GDACS coverage is per feed (review round 3)', () => {
   /** GDACS read for six years through one product's feed only, then polled through it. */
   async function readOnly(code: string): Promise<void> {
     const productId = await gdacsProduct(code);
-    await sql`
+    const plan = await sql<{ id: string }>`
       WITH plan AS (
         INSERT INTO geonerva.backfill_plans
           (id, source_id, product_id, mode, range_from, range_to, window_ms, min_window_ms,
@@ -850,10 +887,22 @@ describe('GDACS coverage is per feed (review round 3)', () => {
         VALUES (gen_random_uuid(), 'gdacs', ${productId}, 'HISTORICAL', ${daysAgo(6 * 365)},
                 ${daysAgo(0.01)}, ${DAY}, ${DAY}, 'COMPLETED', ${daysAgo(0.01)})
         RETURNING id
+      ), interval AS (
+        INSERT INTO geonerva.backfill_intervals
+          (plan_id, interval_from, interval_to, status, completed_at)
+        SELECT id, ${daysAgo(6 * 365)}::timestamptz, ${daysAgo(0.01)}::timestamptz, 'DONE',
+               ${daysAgo(0.01)}::timestamptz
+        FROM plan
       )
-      INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
-      SELECT id, ${daysAgo(6 * 365)}, ${daysAgo(0.01)}, 'DONE', ${daysAgo(0.01)} FROM plan
+      SELECT id::text AS id FROM plan
     `.execute(db);
+    await db.transaction().execute((trx) =>
+      recordIntervalCoverage(trx, {
+        planId: plan.rows[0]?.id ?? '',
+        from: daysAgo(6 * 365),
+        to: daysAgo(0.01),
+      }),
+    );
     await seedRun(db, {
       sourceId: 'gdacs',
       productId,
@@ -893,9 +942,10 @@ describe('GDACS coverage is per feed (review round 3)', () => {
       status: 'SUCCEEDED',
       startedAt: daysAgo(0.01),
     });
+    await livePoll('gdacs', 'FL', daysAgo(0.01));
     const response = await history(floods);
     expect(response.metric.interpretation).toBe(
-      "0 GDACS flood events within 300 km since 21 September 2026, when GeoNerva's GDACS record begins.",
+      "0 GDACS flood events within 300 km since 20 September 2026, when GeoNerva's GDACS record begins.",
     );
   });
 

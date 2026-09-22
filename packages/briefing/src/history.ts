@@ -57,7 +57,7 @@ import type { Kysely } from 'kysely';
 
 import { resolveEvidenceManifest, toAttribution } from './briefing.ts';
 import { contentSha256 } from './content-hash.ts';
-import { coveredSince, coveredSinceForEvery } from './coverage-span.ts';
+import { COVERAGE_EDGE_TOLERANCE_MS, coveredSince, coveredSinceForEvery } from './coverage-span.ts';
 import { replayHorizonFor } from './replay-horizon.ts';
 import { asOfContextFor, memberSolutionsOf } from './snapshot.ts';
 
@@ -199,6 +199,7 @@ async function earthquakeHistory(base: Base, windowDays: number): Promise<Histor
       })
     ).spans,
     asOf,
+    COVERAGE_EDGE_TOLERANCE_MS,
   );
   /*
    * The current window must be read whole, as well as reached: a seven-day count over the three
@@ -389,6 +390,7 @@ async function gdacsHistory(base: Base): Promise<HistoryResponse> {
             maxMinMagnitude: null,
           }),
           options.asOf,
+          COVERAGE_EDGE_TOLERANCE_MS,
         );
   const seeded = (await derivationsAsOf(options.db, { asOf: options.asOf })).some(
     (entry) => entry.kind === 'SEED' && entry.lastSucceededAt !== null,

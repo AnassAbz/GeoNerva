@@ -88,6 +88,20 @@ interface FetchMeta {
   readonly endpoint: string;
   readonly attempts: number;
   readonly durationMs: number;
+  /**
+   * The span of provider data this request asked for, in observation time, or `null` when the
+   * adapter cannot state one (ADR-041). A live poll that commits successfully records this span in
+   * the coverage ledger: it is how GeoNerva knows that a quiet hour was *read* and not merely
+   * unobserved. Adapter knowledge — `all_day` is 24 hours, EMSC asks for `updatedafter` — carried
+   * on the result so nothing downstream branches on a source id.
+   */
+  readonly readWindow: ReadWindow | null;
+}
+
+/** A half-open span of observation time `[from, to)` that one request read. */
+export interface ReadWindow {
+  readonly from: Date;
+  readonly to: Date;
 }
 
 export type FetchResult =

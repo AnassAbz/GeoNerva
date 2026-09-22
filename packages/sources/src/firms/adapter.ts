@@ -100,6 +100,8 @@ export interface FirmsBody {
   readonly attempts: number;
   readonly durationMs: number;
   readonly keyless: boolean;
+  /** See `firmsReadWindow`. */
+  readonly readWindow: { readonly from: Date; readonly to: Date };
 }
 
 /**
@@ -115,6 +117,35 @@ export interface FirmsBody {
  * The same message covers an exhausted 5,000-per-10-minutes budget, because FIRMS does not
  * distinguish the two. The detail says so rather than guessing which it was.
  */
+const DAY_MS = 24 * 60 * 60 * 1_000;
+
+/**
+ * What one FIRMS request read (ADR-041).
+ *
+ *  - Keyless: the public file of the last 24 hours.
+ *  - Area API, live: `DAY_RANGE` UTC days ending today, up to the request.
+ *  - Area API with `date`: those whole days starting at `date`.
+ */
+export function firmsReadWindow(input: {
+  readonly keyless: boolean;
+  readonly dayRange: number;
+  readonly date?: string | undefined;
+  readonly requestedAt: Date;
+}): { from: Date; to: Date } {
+  if (input.keyless) {
+    return { from: new Date(input.requestedAt.getTime() - DAY_MS), to: input.requestedAt };
+  }
+  if (input.date !== undefined) {
+    const from = new Date(`${input.date}T00:00:00.000Z`);
+    const to = new Date(
+      Math.min(from.getTime() + input.dayRange * DAY_MS, input.requestedAt.getTime()),
+    );
+    return { from, to };
+  }
+  const today = Math.floor(input.requestedAt.getTime() / DAY_MS) * DAY_MS;
+  return { from: new Date(today - (input.dayRange - 1) * DAY_MS), to: input.requestedAt };
+}
+
 export async function fetchFirms(options: FirmsFetchOptions): Promise<FirmsBody> {
   const mapKey = options.mapKey;
   const keyless = mapKey === undefined || mapKey.length === 0;
@@ -127,6 +158,7 @@ export async function fetchFirms(options: FirmsFetchOptions): Promise<FirmsBody>
         ...(options.date === undefined ? {} : { date: options.date }),
       });
 
+  const requestedAt = new Date();
   let response;
   try {
     response = await options.client.get(url, {
@@ -174,6 +206,12 @@ export async function fetchFirms(options: FirmsFetchOptions): Promise<FirmsBody>
     attempts: response.attempts,
     durationMs: response.durationMs,
     keyless,
+    readWindow: firmsReadWindow({
+      keyless,
+      dayRange: options.dayRange ?? FIRMS_DAY_RANGE,
+      date: options.date,
+      requestedAt,
+    }),
   };
 }
 

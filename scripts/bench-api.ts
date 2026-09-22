@@ -38,6 +38,7 @@ import {
   generateFireClusterPublicId,
   insertClusterVersionIfChanged,
   linkRecord,
+  recordIntervalCoverage,
   upsertPlaces,
   type DB,
 } from '@geonerva/db';
@@ -213,6 +214,20 @@ async function seed(db: Kysely<DB>): Promise<Seeded> {
          ) AS t
     WHERE s.id IN ('usgs', 'emsc', 'gdacs', 'firms')
   `.execute(db);
+  // The hours those polls read, as the ledger records them (ADR-041): every whole hour of the
+  // ninety days, per feed, known five minutes after it ended.
+  await sql`
+    INSERT INTO geonerva.feed_coverage_hours (product_id, hour, min_magnitude, recorded_at)
+    SELECT p.id, h, NULL, h + interval '65 minutes'
+    FROM geonerva.source_products p,
+         generate_series(
+           date_trunc('hour', ${new Date(NOW.getTime() - 90 * DAY)}::timestamptz),
+           date_trunc('hour', ${new Date(NOW.getTime() - 10 * 60_000)}::timestamptz) - interval '1 hour',
+           interval '1 hour'
+         ) AS h
+    WHERE p.source_id IN ('usgs', 'emsc', 'gdacs', 'firms')
+    ON CONFLICT DO NOTHING
+  `.execute(db);
 
   // Completed historical backfills up to the first live run, so /history reads its full reference
   // rather than refusing: coverage, not the oldest record, is what a baseline trusts.
@@ -222,18 +237,24 @@ async function seed(db: Kysely<DB>): Promise<Seeded> {
   ] as const) {
     const from = new Date(NOW.getTime() - (years * 365 + 30) * DAY);
     const to = new Date(NOW.getTime() - 25 * HOUR);
-    await sql`
+    const plan = await sql<{ id: string }>`
       WITH plan AS (
         INSERT INTO geonerva.backfill_plans
           (id, source_id, mode, range_from, range_to, window_ms, min_window_ms, status, finished_at)
         VALUES (gen_random_uuid(), ${source}, 'HISTORICAL', ${from}, ${to}, ${DAY}, ${DAY},
                 'COMPLETED', ${to})
         RETURNING id
+      ), interval AS (
+        INSERT INTO geonerva.backfill_intervals
+          (plan_id, interval_from, interval_to, status, completed_at)
+        SELECT id, ${from}, ${to}, 'DONE', ${to} FROM plan
       )
-      INSERT INTO geonerva.backfill_intervals
-        (plan_id, interval_from, interval_to, status, completed_at)
-      SELECT id, ${from}, ${to}, 'DONE', ${to} FROM plan
+      SELECT id::text AS id FROM plan
     `.execute(db);
+    // The checkpoint writes the ledger in production; the bench does the same (ADR-041).
+    await db
+      .transaction()
+      .execute((trx) => recordIntervalCoverage(trx, { planId: plan.rows[0]?.id ?? '', from, to }));
   }
   await sql`
     INSERT INTO geonerva.analysis_runs (id, kind, engine_version, started_at, finished_at, status)

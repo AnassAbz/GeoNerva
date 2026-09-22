@@ -37,6 +37,25 @@ export type UsgsFeed = (typeof USGS_FEEDS)[number];
 
 export const DEFAULT_USGS_FEED: UsgsFeed = 'all_day';
 
+const USGS_FEED_SPAN_MS: Readonly<Record<UsgsFeed, number>> = {
+  all_hour: 60 * 60 * 1_000,
+  all_day: 24 * 60 * 60 * 1_000,
+  all_week: 7 * 24 * 60 * 60 * 1_000,
+};
+
+/**
+ * What one summary-feed request read (ADR-041): the feed's span, ending when it was requested.
+ *
+ * USGS regenerates the summary files about once a minute, so the file served may be a little older
+ * than the request. The start is pulled in by five minutes to claim less, never more.
+ */
+export function usgsReadWindow(feed: UsgsFeed, requestedAt: Date): { from: Date; to: Date } {
+  return {
+    from: new Date(requestedAt.getTime() - USGS_FEED_SPAN_MS[feed] + 5 * 60 * 1_000),
+    to: requestedAt,
+  };
+}
+
 export function usgsFeedUrl(feed: UsgsFeed): string {
   return `https://${USGS_HOST}/earthquakes/feed/v1.0/summary/${feed}.geojson`;
 }
@@ -223,6 +242,7 @@ async function fetchUsgs(ctx: FetchContext): Promise<FetchResult> {
   // The deadline and the size cap are not passed per request: the client is built from the
   // descriptor (see `createSourceClient`), so they are enforced in one place and an adapter
   // cannot quietly widen them.
+  const requestedAt = new Date();
   const response = await ctx.client.get(url, { signal: ctx.signal });
 
   /*
@@ -240,6 +260,7 @@ async function fetchUsgs(ctx: FetchContext): Promise<FetchResult> {
     endpoint: `${USGS_HOST}/earthquakes/feed/v1.0/summary/${feed}.geojson`,
     attempts: response.attempts,
     durationMs: response.durationMs,
+    readWindow: usgsReadWindow(feed, requestedAt),
   } as const;
 
   if (response.notModified) return { ...meta, kind: 'UNCHANGED' };

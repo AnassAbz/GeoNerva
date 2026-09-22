@@ -29,6 +29,7 @@ import {
   headContentHashes,
   insertVersionIfChanged,
   lastPayloadDigest,
+  recordLiveCoverage,
   recordReject,
   resolveSourceRecord,
   upsertRawRecords,
@@ -237,6 +238,33 @@ interface PersistOptions {
   readonly retainRawPayload: boolean;
   readonly beforeCommit:
     ((trx: Transaction<DB>, context: BatchCommitContext) => Promise<void>) | undefined;
+  /**
+   * The window a *scheduled* poll read, to be recorded as coverage if the batch commits whole
+   * (ADR-041). `undefined` for every other trigger and for an adapter that cannot state one.
+   */
+  readonly liveCoverage: LiveCoverage | undefined;
+}
+
+interface LiveCoverage {
+  readonly productId: number;
+  readonly window: { readonly from: Date; readonly to: Date };
+}
+
+/**
+ * The coverage a successful run may record, or `undefined`.
+ *
+ * Only a **scheduled** poll follows its feed: a manual one-off reads a look-back once, a backfill
+ * records its own coverage at its interval checkpoint, and a reconcile sweep asks which records were
+ * deleted rather than what happened (ADR-041). Callers add the second half of the rule — the run
+ * read everything it asked for — by recording only on `SUCCEEDED` or `SKIPPED`.
+ */
+function liveCoverageFor(
+  trigger: RunTrigger,
+  productId: number,
+  fetched: { readonly readWindow: { readonly from: Date; readonly to: Date } | null },
+): LiveCoverage | undefined {
+  if (trigger !== 'SCHEDULE' || fetched.readWindow === null) return undefined;
+  return { productId, window: fetched.readWindow };
 }
 
 async function persistBatch(
@@ -434,9 +462,10 @@ async function persistBatch(
   }
 
   // Last statement of the transaction, with the stamp the versions already carry.
+  const status = rejected > 0 ? 'PARTIAL' : 'SUCCEEDED';
   const committedAt = await finishRun(trx, {
     runId,
-    status: rejected > 0 ? 'PARTIAL' : 'SUCCEEDED',
+    status,
     httpStatus: fetched.httpStatus,
     bytesReceived: fetched.bytes,
     payloadSha256: fetched.payloadSha256,
@@ -450,6 +479,12 @@ async function persistBatch(
     newestObservedAt,
     committedAt: ingestedAt,
   });
+
+  // A whole batch vouches for its window, in the same transaction as its facts. A PARTIAL one read
+  // records it could not keep, so the window is not claimed (ADR-041).
+  if (status === 'SUCCEEDED' && persistOptions.liveCoverage !== undefined) {
+    await recordLiveCoverage(trx, { ...persistOptions.liveCoverage, recordedAt: committedAt });
+  }
 
   return { counts, newestObservedAt, committedAt };
 }
@@ -608,6 +643,31 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
     return finish('FAILED', runId, errorClass, sanitized, counts, null);
   };
 
+  /**
+   * Coverage for a run already committed outside a persist transaction (no-data and unchanged).
+   *
+   * The run is finished by now, so a failure here must not turn it into a failed run: it is logged,
+   * and a missing hour only ever makes coverage smaller — a baseline then refuses, it never counts
+   * time that was not recorded (ADR-041).
+   */
+  const recordCoverageAfterFinish = async (
+    coverage: LiveCoverage | undefined,
+    committedAt: Date,
+  ): Promise<void> => {
+    if (coverage === undefined) return;
+    try {
+      await db
+        .transaction()
+        .execute((trx) => recordLiveCoverage(trx, { ...coverage, recordedAt: committedAt }));
+    } catch (error) {
+      logger.log('error', 'ingestion.coverage_failed', {
+        ...base,
+        runId,
+        detail: describeDatabaseFailure(error),
+      });
+    }
+  };
+
   try {
     // ── 2. Fetch ──────────────────────────────────────────────────────────
     const previousDigest = await lastPayloadDigest(db, descriptor.sourceId, product.id);
@@ -697,6 +757,8 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
         payloadSha256: fetched.payloadSha256,
         counts: EMPTY_COUNTS,
       });
+      // "I looked and there is nothing" is a read: the quiet window is covered (ADR-041).
+      await recordCoverageAfterFinish(liveCoverageFor(trigger, product.id, fetched), committedAt);
       return finish('SUCCEEDED', runId, null, fetched.detail, EMPTY_COUNTS, committedAt);
     }
 
@@ -709,6 +771,8 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
         bytesReceived: fetched.bytes,
         payloadSha256: fetched.payloadSha256,
       });
+      // The same bytes as last time is still a read of this window (ADR-041).
+      await recordCoverageAfterFinish(liveCoverageFor(trigger, product.id, fetched), committedAt);
       return finish(
         'SKIPPED',
         runId,
@@ -841,6 +905,7 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
             descriptor: parseDescriptor,
             retainRawPayload: options.retainRawPayload ?? true,
             beforeCommit: options.beforeCommit,
+            liveCoverage: liveCoverageFor(trigger, product.id, fetched),
           },
         ),
       );

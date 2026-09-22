@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely, type Transaction } from 'kysely';
 
 import type { DB } from '../generated/database.ts';
+import { recordIntervalCoverage } from './coverage.ts';
 
 export type BackfillMode = 'HISTORICAL' | 'DELETION_SWEEP';
 export type BackfillPlanStatus = 'RUNNING' | 'COMPLETED' | 'FAILED' | 'ABANDONED';
@@ -280,6 +281,8 @@ export async function markIntervalDone(
       `could not checkpoint interval ${interval.from.toISOString()}–${interval.to.toISOString()} of plan ${planId}`,
     );
   }
+  // ADR-041: the hours this interval read become coverage in the same transaction as its facts.
+  await recordIntervalCoverage(trx, { planId, from: interval.from, to: interval.to });
 }
 
 /**

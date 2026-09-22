@@ -100,6 +100,7 @@ async function ingestTheDeletedEvents(): Promise<string[]> {
         endpoint: 'earthquake.usgs.gov/feed',
         attempts: 1,
         durationMs: 1,
+        readWindow: null,
       }),
   });
   expect(outcome.status).toBe('SUCCEEDED');

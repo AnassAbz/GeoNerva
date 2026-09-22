@@ -21,39 +21,20 @@ export interface CatalogCoverage {
 }
 
 /**
- * The spans of observation time a set of sources had been **read** for, as known at `asOf`.
+ * The spans of observation time a set of feeds had been **read** for, as known at `asOf` —
+ * from the coverage ledger (ADR-041), which outlives run retention.
  *
- * A reference period is a claim that every window in it was looked at. The earliest record held
- * is not evidence of that: a backfill that finished 2016–2017 and then failed leaves eight years
- * unread, and counting them as quiet weeks makes an ordinary week "above typical" (P8 review H1).
- * So coverage is what was actually fetched, in two kinds:
+ * A reference period is a claim that every window in it was looked at, and the earliest record
+ * held is not evidence of that (P8 review H1). The ledger holds the whole hours each feed's
+ * successful scheduled polls and completed backfill intervals read, each with the moment it became
+ * known; this read takes the hours recorded by `asOf` and joins consecutive ones into spans.
  *
- *  - **Backfill.** Every `DONE` interval of a `HISTORICAL` plan, checkpointed by `asOf` — marked
- *    `DONE` in the transaction that commits its facts (migration 0012). An interval claims no
- *    further than `completed_at`: a plan's `--to` can lie in the future, and a window cannot have
- *    been read past the moment its read finished.
- *  - **Live polling.** Chains of successful **scheduled** polls (`SUCCEEDED`, or `SKIPPED` — a
- *    not-modified answer is a read). A chain breaks wherever two consecutive polls are further
- *    apart than the source's own `fetchStaleAfterS`, the point at which GeoNerva itself calls the
- *    source stale; the hours inside such a gap were not being read. A chain reaches `asOf` only if
- *    its last poll is still within that bound of `asOf`. A failed poll, a `PARTIAL` one, a manual
- *    one-off and a deletion sweep (`RECONCILE`) establish nothing: none of them is evidence that
- *    the feed was being followed (P8 fix-verification review).
- *
- * `maxMinMagnitude` excludes plans that fetched only above a magnitude the caller will count
- * below: a plan for M5+ does not cover M4.5–5.0. `null` accepts every plan.
- *
- * **Per product.** One source can publish several feeds — GDACS has six, one per hazard — and
- * polling its earthquake feed is no evidence that its cyclone feed was read (fix-verification
- * review, round 3). So every span belongs to a product whose `hazard_types` meet `hazardTypes`,
- * chains are built per product, and the caller decides whether it needs any product or all of
- * them. A run or plan with no product is source-level and counts for each of its source's products.
- *
- * Every direction of error here is towards less coverage, which a caller turns into a refusal,
- * never a count. One such direction is structural and recorded as ADR-041: ADR-033 keeps
- * `ingestion_runs` for 90 days on the lean profile, so once pruning is scheduled the live chains
- * older than that disappear, and a baseline reaching past them will refuse until coverage is kept
- * somewhere that outlives the runs.
+ *  - **Per feed.** Only products whose `hazard_types` meet `hazardTypes` count, and each span says
+ *    which product it belongs to; the caller decides whether any feed or every feed must be read.
+ *  - **Magnitude floor.** `maxMinMagnitude` excludes hours read with a floor above it: an M5.5+
+ *    backfill does not cover M4.5 counts. `null` accepts every floor.
+ *  - **Edge.** The hour containing `asOf` is never whole, so a span ends at or before the last full
+ *    hour; callers state their own tolerance for how close to `asOf` coverage must reach.
  */
 export async function catalogCoverageAsOf(
   db: Kysely<DB>,
@@ -74,59 +55,34 @@ export async function catalogCoverageAsOf(
       AND p.hazard_types && ${sql.val(options.hazardTypes)}::text[]
     ORDER BY p.id
   `.execute(db);
-  const magnitudeFilter =
+  const productIds = products.rows.map((row) => row.id);
+  if (productIds.length === 0) return { productIds: [], spans: [] };
+
+  const floorFilter =
     options.maxMinMagnitude === null
       ? sql`TRUE`
-      : sql`(p.min_magnitude IS NULL OR p.min_magnitude <= ${options.maxMinMagnitude})`;
+      : sql`(h.min_magnitude IS NULL OR h.min_magnitude <= ${options.maxMinMagnitude})`;
   const result = await sql<{ product_id: number; from_at: Date; to_at: Date }>`
-    WITH wanted AS (
-      SELECT p.id AS product_id, p.source_id
-      FROM geonerva.source_products p
-      WHERE p.source_id = ANY(${sql.val(options.sourceIds)}::text[])
-        AND p.hazard_types && ${sql.val(options.hazardTypes)}::text[]
+    WITH known AS (
+      SELECT DISTINCT h.product_id, h.hour
+      FROM geonerva.feed_coverage_hours h
+      WHERE h.product_id = ANY(${sql.val(productIds)}::smallint[])
+        AND h.recorded_at <= ${options.asOf}
+        AND ${floorFilter}
     ),
-    polls AS (
-      SELECT w.product_id,
-             r.committed_at,
-             make_interval(secs => (s.policy -> 'freshness' ->> 'fetchStaleAfterS')::double precision)
-               AS max_gap,
-             lag(r.committed_at) OVER (PARTITION BY w.product_id ORDER BY r.committed_at) AS previous
-      FROM geonerva.ingestion_runs r
-      JOIN wanted w
-        ON w.source_id = r.source_id AND (r.product_id IS NULL OR r.product_id = w.product_id)
-      JOIN geonerva.sources s ON s.id = r.source_id
-      WHERE r.trigger = 'SCHEDULE'
-        AND r.status IN ('SUCCEEDED', 'SKIPPED')
-        AND r.committed_at IS NOT NULL
-        AND r.committed_at <= ${options.asOf}
-    ),
-    chained AS (
-      SELECT polls.*,
-             sum(CASE WHEN previous IS NULL OR committed_at - previous > max_gap THEN 1 ELSE 0 END)
-               OVER (PARTITION BY product_id ORDER BY committed_at) AS chain
-      FROM polls
+    islands AS (
+      SELECT product_id, hour,
+             hour - (row_number() OVER (PARTITION BY product_id ORDER BY hour)) * interval '1 hour'
+               AS island
+      FROM known
     )
-    SELECT w.product_id, i.interval_from AS from_at, LEAST(i.interval_to, i.completed_at) AS to_at
-    FROM geonerva.backfill_intervals i
-    JOIN geonerva.backfill_plans p ON p.id = i.plan_id
-    JOIN wanted w
-      ON w.source_id = p.source_id AND (p.product_id IS NULL OR p.product_id = w.product_id)
-    WHERE p.mode = 'HISTORICAL'
-      AND i.status = 'DONE'
-      AND i.completed_at <= ${options.asOf}
-      AND ${magnitudeFilter}
-    UNION ALL
-    SELECT product_id,
-           min(committed_at) AS from_at,
-           CASE WHEN ${options.asOf}::timestamptz - max(committed_at) <= max(max_gap)
-                THEN ${options.asOf}::timestamptz
-                ELSE max(committed_at)
-           END AS to_at
-    FROM chained
-    GROUP BY product_id, chain
+    SELECT product_id, min(hour) AS from_at, max(hour) + interval '1 hour' AS to_at
+    FROM islands
+    GROUP BY product_id, island
+    ORDER BY product_id, from_at
   `.execute(db);
   return {
-    productIds: products.rows.map((row) => row.id),
+    productIds,
     spans: result.rows.map((row) => ({
       productId: row.product_id,
       from: row.from_at,

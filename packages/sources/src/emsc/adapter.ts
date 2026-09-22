@@ -320,6 +320,8 @@ async function fetchEmsc(ctx: FetchContext): Promise<FetchResult> {
     endpoint: emscEndpoint('query'),
     attempts: response.attempts,
     durationMs: response.durationMs,
+    // Everything revised since `since` up to the request (ADR-041).
+    readWindow: { from: since, to: new Date(since.getTime() + lookbackMs) },
   } as const;
 
   /*

@@ -393,6 +393,7 @@ async function fetchGdacs(eventType: GdacsEventType, ctx: FetchContext): Promise
       endpoint,
       attempts: list.attempts,
       durationMs: list.durationMs,
+      readWindow: window,
     };
   }
 
@@ -510,6 +511,8 @@ async function fetchGdacs(eventType: GdacsEventType, ctx: FetchContext): Promise
     endpoint: `${endpoint} pages=${list.pagesRead} rows=${list.rows} overlap=${overlap}`,
     attempts,
     durationMs,
+    // The events whose range overlaps this window (ADR-041).
+    readWindow: window,
   } as const;
 
   /*

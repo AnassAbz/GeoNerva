@@ -60,6 +60,7 @@ export type {
 } from './backfill.ts';
 
 export { findRawPayload, prunePayloadsBefore, upsertRawRecords } from './raw-records.ts';
+export { recordIntervalCoverage, recordLiveCoverage } from './coverage.ts';
 export type { RawRecordInput } from './raw-records.ts';
 
 export {
