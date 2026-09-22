@@ -205,6 +205,18 @@ export async function buildSnapshot(options: BuildSnapshotOptions): Promise<Snap
     derivationsAsOf(db, { asOf }),
   ]);
 
+  /*
+   * The build's own clock, taken once.
+   *
+   * `generatedAt` is what the caller means by "now" — `apps/web` passes the request's single
+   * clock, which `serverNow()` may have frozen for an E2E run (docs/TESTING.md §5). Reading
+   * `Date.now()` further down for the retention comparison bypassed that: the horizon was decided
+   * by the wall clock while everything else in the response was decided by `generatedAt`, so a
+   * seeded scenario would silently start reporting `BEYOND_REPLAY_HORIZON` for fire activity
+   * three real days after the fixture instant, for no reason a reader of the fixture could see.
+   */
+  const buildNow = options.generatedAt ?? new Date();
+
   const coverage = resolveCoverage(coverageRows, asOf);
   const healthByKey = new Map<string, SourceHealthAsOf>();
   for (const entry of health.byProduct) {
@@ -234,7 +246,7 @@ export async function buildSnapshot(options: BuildSnapshotOptions): Promise<Snap
        * which is what the response should publish; whether the *data* still exists depends on how
        * long ago that knowledge time was in real terms. Retention has run since.
        */
-      beyondReplayHorizon: Date.now() - asOf.getTime() > FAMILY_RETENTION_MS[family],
+      beyondReplayHorizon: buildNow.getTime() - asOf.getTime() > FAMILY_RETENTION_MS[family],
     });
     families[family] = card.card;
     for (const id of card.evidenceIds) evidence.add(id);
@@ -269,7 +281,7 @@ export async function buildSnapshot(options: BuildSnapshotOptions): Promise<Snap
     if (entry.evidenceId !== null) evidence.add(entry.evidenceId);
   }
 
-  const generatedAt = (options.generatedAt ?? new Date()).toISOString();
+  const generatedAt = buildNow.toISOString();
 
   /*
    * The hash covers the snapshot's *content*, with `generatedAt` and the hash field itself left
