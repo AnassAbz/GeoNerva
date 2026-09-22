@@ -35,12 +35,16 @@ export function observationEvidence(): EvidenceDetail {
       ingestedAt: T.usgsV2Ingested,
       contributor: 'us',
       contentSha256: hex64('obs-90211-normalized'),
-      rawExcerpt: {
-        type: 'Feature',
-        properties: { mag: 4.7, magType: 'mww', place: '49 km S of Azilal, Morocco' },
-      },
+      // ADR-038: the body is never served; its lifecycle and digest are.
+      rawExcerpt: null,
       rawPayloadSha256: hex64('obs-90211-raw'),
       rawPayloadPruned: false,
+      rawPayload: {
+        state: 'AVAILABLE',
+        sha256: hex64('obs-90211-raw'),
+        capturedAt: T.usgsV2Ingested,
+        retentionExpiresAt: new Date(Date.parse(T.usgsV2Ingested) + 30 * 86_400_000).toISOString(),
+      },
       sourceUrl: 'https://earthquake.usgs.gov/earthquakes/eventpage/us7000tikb',
     },
     attribution: attributionFor('usgs'),
