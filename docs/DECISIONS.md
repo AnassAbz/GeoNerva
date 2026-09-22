@@ -43,7 +43,10 @@ Index:
 | 035 | Small-magnitude earthquake facts have a replay horizon; M >= 4.5 is kept forever | Accepted |
 | 036 | `packages/briefing` may depend on `packages/correlation` | Accepted |
 | 037 | A snapshot has a recency window, per family | Accepted |
-| 038 | The evidence endpoint sees a raw payload's metadata, never its body | **Proposed** |
+| 038 | The evidence endpoint sees a raw payload's metadata, never its body | Accepted (2026-09-22) |
+| 039 | A detection's cluster membership must be knowable as of a time | **Proposed** (not needed for G8) |
+| 040 | The fire trend reads an append-only daily aggregate over covered days only | Accepted (2026-09-22) |
+| 041 | Catalog coverage is an append-only per-feed ledger that outlives run retention | Accepted (2026-09-22) |
 
 > **2026-09-19, product-owner review:** Architecture approved (gate G0 passed). ADR-012 model/budget is resolved: `AI_MODE=disabled` in production for v1, and no paid AI at launch. ADR-018 is resolved: `lean` profile on free infrastructure. Licence is Apache-2.0. The deployment is non-commercial.
 
@@ -524,9 +527,17 @@ Turborepo is not adopted until build times justify it.
 - **Trade-offs:** an M7 that happened 31 days ago disappears from the card rather than fading. That is a visible, explainable edge, and it is the right direction for a product whose headline claims something needs your attention *now* — the alternative is a headline that is always alarmed and therefore means nothing. A future revision should consider decay rather than a cliff, which needs a product decision about how a month-old M7 should rank against a day-old M5.
 - **Related:** the same review found that the **replay horizon** (ADR-035) was published in `asOfContext` and never enforced, so a replay past it returned an empty result rather than "outside the indexed window". Both are now enforced in `resolveAvailability`, which is the one place that decides whether an absence may be shown as an absence.
 
-## ADR-038 — Proposed: the evidence endpoint sees a raw payload's *metadata*, never its body
+## ADR-038 — Accepted: the evidence endpoint sees a raw payload's *metadata*, never its body
 - **Date:** 2026-09-21 (P8, found while filling `EvidenceDetail`)
-- **Status:** **Proposed.** Awaiting product-owner input. The P8 code ships the interim behaviour described under *Until this is decided* and says so in the response and in its own doc comments.
+- **Status:** **Accepted** by the product owner, 2026-09-22, with the lifecycle state below. The *Until this is decided* section records the P8 interim behaviour this replaces.
+- **Decision (owner, 2026-09-22):** normalized evidence stays durable independently of raw-payload retention. `/evidence/{id}` exposes an explicit **raw-payload lifecycle state** and the integrity and retention metadata GeoNerva knows; raw-payload retrieval is **not** part of the stable public contract, and full provider payloads are never exposed by default.
+- **What is built:**
+  - A column-level grant, `GRANT SELECT (id, source_id, payload_sha256, payload_pruned, payload_captured, first_seen_at) ON geonerva.raw_source_records TO geonerva_web` — never `payload`.
+  - A new column `payload_captured` records whether a body was ever stored, because `payload_pruned = true` alone cannot tell "stored, then pruned" from "never stored" (a backfill writes the second from the outset, ADR-033).
+  - `ObservationEvidenceDetail` gains `rawPayload: { state, sha256, capturedAt, retentionExpiresAt }`, a compatible extension, with `READ_MODEL_SCHEMA_VERSION` bumped from 1 to 2 as the read-model policy requires for any change after the freeze.
+  - States: `AVAILABLE` (a body was captured and, at the knowledge time, was still within retention); `PRUNED` (captured, and retention had expired by the knowledge time); `NOT_CAPTURED` (no raw row, or a row whose body was never stored — backfills); `SOURCE_UNAVAILABLE` (a raw row is referenced but its metadata cannot be read by the serving role — a defensive state that makes the endpoint degrade rather than 500).
+  - `retentionExpiresAt` is `capturedAt` plus the profile's live-payload window (30 days lean, 90 standard, ADR-033). Pruning happens in place, so the state at a knowledge time is judged against that expiry rather than against the current `payload_pruned` — a replay before expiry does not show a pruning that happened after it.
+  - `rawExcerpt` stays permanently `null`; `rawPayloadSha256` carries the digest; `rawPayloadPruned` is `state === 'PRUNED'`.
 - **Context — two accepted decisions disagree, and P8 is where they meet.**
 
   `ObservationEvidenceDetail` (frozen at G2) declares three fields about the provider's original bytes:
@@ -611,9 +622,17 @@ Turborepo is not adopted until build times justify it.
   The recommended storage change above would make both exact, and would remove the withholding.
 - **Trade-offs of the recommendation:** one more column on the highest-volume table (8 bytes per row, about 1.2 MB per day at ≈146k detections), and a read that follows a merge chain rather than a single column. Against that: the map can draw what §7.5 asked for at every knowledge time, and the membership history of an area of thermal activity becomes auditable, which DOMAIN_MODEL §4.10 already claims it is.
 
-## ADR-040 — Proposed: the fire-trend aggregate needs a writer and a knowledge time before `FIRE_TREND` can be served
+## ADR-040 — Accepted: the fire trend reads an append-only daily aggregate over covered days only
 - **Date:** 2026-09-21 (P8, found while building `GET /api/v1/history`)
-- **Status:** **Proposed.** Awaiting product-owner input. `/history` serves `EQ_COUNT` and `GDACS_CONTEXT`; `FIRE_TREND` answers `INSUFFICIENT_COVERAGE` and says why.
+- **Status:** **Accepted** by the product owner, 2026-09-22. It depends on ADR-041's coverage ledger, which lands first.
+- **Decision (owner, 2026-09-22):** implement the daily aggregate an honest trend needs. It is derived only from periods FIRMS ingestion actually covered, it keeps sensor context, a missing ingestion is never zero activity, sensor lifecycle changes are respected, insufficient coverage is an explicit valid state, and the aggregate stays compact.
+- **What is built:**
+  - `fire_daily_counts`, append-only: `(cell_id, day, product_id, computed_at)` with `n`, `n_high_conf`, `frp_sum`, on the lat/lon grid of ADR-011. It is per **product**, not per product group, so sensor context survives.
+  - `fire_daily_coverage`, append-only: `(product_id, day, computed_at, state)`, where `state` is `COVERED`, `MISSING_DATA` (FIRMS reported no satellite data) or `NOT_COVERED` (GeoNerva did not read every hour of the day, by ADR-041's ledger). Only a `COVERED` day's absence of rows means zero detections.
+  - A worker step after each FIRMS ingestion writes, for every **final** UTC day (the day is over and the NRT latency window has passed), the day's coverage state and, when covered, its per-cell counts. Rewrites are new rows with a later `computed_at`, never updates.
+  - `FIRE_TREND` reads the latest rows with `computed_at <= T` and uses only products active across the whole 35-day window (ADR-009 lifecycle), so a sensor added or retired mid-window cannot manufacture a trend. A day counts only if every product in that set is `COVERED`, and fewer covered days than §8.2 needs is `INSUFFICIENT_COVERAGE`.
+  - Retention is 40 days lean and 400 standard: the trend needs 35.
+  - The unused `fire_daily_cells` table from migration 0005 is superseded and dropped; nothing ever wrote it.
 - **Context — §8.2 labels `FIRE_TREND` P0, and the data it reads does not exist.**
 
   `FIRE_TREND` compares the last 7 days of thermal detections within 100 km with the 28 before them, per covered day. That is 35 days of daily counts. On the lean profile (DOMAIN_MODEL §6.7) raw `fire_detections` are kept for **72 hours** and `fire_cluster_versions` for **30 days**, so neither can answer. The design's answer is `fire_daily_cells`, "a compact long-term aggregate for fire trends, surviving detection retention" (migration 0005), kept 400 days. Two things stand in the way:
@@ -636,9 +655,17 @@ Turborepo is not adopted until build times justify it.
 - **Until this is decided**, `/history?family=FIRE_ACTIVITY&metric=FIRE_TREND` answers `200` with `status: INSUFFICIENT_COVERAGE`, no series and no band, and an interpretation that states the data is not held — never a trend computed from nothing, and never "stable".
 - **Relation to ADR-039:** both are the same defect in the fire tables — a derived value keyed without the knowledge time it became true. Deciding them together would let one migration fix both.
 
-## ADR-041 — Proposed: catalog coverage needs a record that outlives the runs it is derived from
+## ADR-041 — Accepted: catalog coverage is an append-only per-feed ledger that outlives run retention
 - **Date:** 2026-09-22 (G8, found by the review of the fix for the P8 correctness review's H1)
-- **Status:** **Proposed.** Awaiting product-owner input. Nothing is blocked today: run pruning is not scheduled yet, and until it is the rule below answers correctly.
+- **Status:** **Accepted** by the product owner, 2026-09-22. **The 90-day `ingestion_runs` retention sweep must not be scheduled or enabled until this is implemented and verified**, and historical baselines must keep working after run history is pruned.
+- **Decision (owner, 2026-09-22):** durable coverage per actual feed. A provider is not observed merely because another of its feeds ran. The system must distinguish *zero events during known coverage* from *no evidence that this period was observed*.
+- **What is built — an hour ledger, because spans updated in place leak.** The recommendation below proposed spans extended in place. Working it through showed a replay leak: a poll after an outage whose look-back reaches back over the gap would extend the span across it, and a replay taken *during* the outage would then read the gap as covered. So the ledger is append-only at hour granularity:
+  - `feed_coverage_hours (product_id, hour, recorded_at)`, keeping the **first** `recorded_at` of each hour forever. An hour is covered when a read window GeoNerva completed contains all of it, and that fact became true when the poll that completed it committed.
+  - **Live polls:** each fetch reports the **read window** it asked the provider for (USGS `all_day` = 24 h, EMSC `updatedafter` = its look-back, GDACS its window, FIRMS `DAY_RANGE` days) — adapter knowledge, carried on the fetch result rather than keyed by source id elsewhere. A per-feed frontier, `feed_coverage_frontier`, which is operational state and never read as fact, joins consecutive successful scheduled read windows (`SUCCEEDED` or `SKIPPED`) into one contiguous run. The full hours inside the run that are not yet in the ledger are written with that poll's commit time. A window that does not meet the frontier starts a new run, so a gap is never bridged by assumption.
+  - **Backfill:** a completed interval writes the full hours of `[interval_from, least(interval_to, completed_at))`, with `recorded_at = completed_at`.
+  - **Readers** take the hours with `recorded_at <= T` per product and form contiguous spans. Earthquakes accept any earthquake feed; a GDACS family needs every feed it draws on (unchanged from 8ea8cc2).
+  - The partial hour at the edge of T is never covered, so the current-window rule tolerates a trailing gap under one hour and states it.
+  - Size is about 24 rows per feed per day, around 3 MB a year for ten feeds, kept as long as the facts they vouch for.
 - **Context — a baseline is a claim that every window in its reference was read.**
 
   After the P8 review, `/history` stopped trusting the oldest record held and started trusting *coverage* (`catalogCoverageAsOf`): completed historical backfill intervals, plus chains of successful scheduled polls that never lapse for longer than the source's own `fetchStaleAfterS`. That is the right evidence, and it is derived from `ingestion_runs`.
