@@ -18,7 +18,7 @@ env:
 # Third-party actions are pinned to full commit SHAs (supply-chain hardening, docs/SECURITY.md M8).
 jobs:
   static:
-    name: Typecheck · lint · format · architecture · unit
+    name: Typecheck · lint · format · architecture · unit · components
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -36,6 +36,7 @@ jobs:
       - run: pnpm format:check
       - run: pnpm depcruise
       - run: pnpm test:unit
+      - run: pnpm test:components
       # Fixture integrity: re-hashes every captured provider payload (no dependencies).
       - run: node scripts/capture-fixtures/verify-manifests.mjs
 

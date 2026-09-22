@@ -21,12 +21,13 @@
     "geonames:import": "node scripts/import-geonames.ts",
     "test": "pnpm test:unit",
     "test:unit": "vitest run --project unit",
+    "test:components": "vitest run --project components",
     "test:integration": "vitest run --project integration",
     "test:e2e": "pnpm --filter @geonerva/web test:e2e",
     "db:up": "docker compose -f infra/docker-compose.yml up -d --wait db",
     "db:down": "docker compose -f infra/docker-compose.yml down",
     "db:check": "node scripts/db-check.ts",
-    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm depcruise && pnpm test:unit",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm depcruise && pnpm test:unit && pnpm test:components",
     "build:canary": "node scripts/check-bundle-secrets.ts"
   },
   "devDependencies": {
