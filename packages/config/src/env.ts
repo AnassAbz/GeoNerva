@@ -57,11 +57,71 @@ const optionalNonEmpty = z
   .transform((value) => (value === '' ? undefined : value))
   .optional();
 
+/**
+ * The fixed clock of docs/TESTING.md §5, parsed into the instant it names.
+ *
+ * Strict on purpose. An unparseable value **fails the process**; it must never fall back to the
+ * wall clock, because the whole point of the variable is that the reader can trust what "now"
+ * means. A silent fallback would turn a typo in a Playwright config into an E2E suite that passes
+ * against a clock nobody chose, and the failures it would then produce — a relative time drifting
+ * between two assertions in one spec — are the most expensive kind to diagnose.
+ *
+ * `Date.parse` is not enough on its own: it accepts `2026-09-22` (midnight UTC, which is probably
+ * not what the author meant) and, worse, is implementation-defined for anything non-ISO. So the
+ * shape is required to be a full ISO 8601 instant with an explicit offset.
+ */
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/u;
+
+const fakeNow = z
+  .string()
+  .trim()
+  .transform((value) => (value === '' ? undefined : value))
+  .optional()
+  .refine((value) => value === undefined || ISO_INSTANT.test(value), {
+    message:
+      'must be a full ISO 8601 instant with an offset, e.g. 2026-09-22T13:06:00.000Z (a date alone is not accepted)',
+    abort: true,
+  })
+  .refine((value) => value === undefined || Number.isFinite(Date.parse(value)), {
+    message: 'is not a real instant',
+  })
+  .transform((value) => (value === undefined ? undefined : new Date(Date.parse(value))));
+
 const common = {
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   RETENTION_PROFILE: z.enum(RETENTION_PROFILES).default('lean'),
+  /**
+   * Freezes the clock every process reads through `nowFrom` (docs/TESTING.md §5).
+   *
+   * Declared on both processes so that neither can be started with a fake clock in production —
+   * a deployed worker stamping `ingested_at` from a frozen clock would corrupt the bitemporal
+   * record, and a deployed web process would publish stale data as current. The refusal is in
+   * each schema's `superRefine` below, not here, because a cross-field rule needs both fields.
+   */
+  GEONERVA_FAKE_NOW: fakeNow,
 };
+
+/**
+ * Refuses a fixed clock in a deployed environment.
+ *
+ * `NODE_ENV=production` is the only signal the config layer has, and it is the right one: it is
+ * what `createPool` already uses to require TLS. The refusal is a `ConfigError`, so the process
+ * does not start — not a warning and not a silent ignore. A deployment that has this variable set
+ * has something badly wrong with it, and the loudest possible failure is the cheapest one.
+ */
+function refuseFakeClockInProduction(
+  env: { readonly NODE_ENV: string; readonly GEONERVA_FAKE_NOW?: Date | undefined },
+  ctx: z.RefinementCtx,
+): void {
+  if (env.NODE_ENV !== 'production' || env.GEONERVA_FAKE_NOW === undefined) return;
+  ctx.addIssue({
+    code: 'custom',
+    path: ['GEONERVA_FAKE_NOW'],
+    message:
+      'must not be set when NODE_ENV=production: a fixed clock in a deployed environment would publish stale data as current',
+  });
+}
 
 /**
  * Variables that must never reach a browser, used by `pnpm build:canary`
@@ -80,7 +140,7 @@ export const SECRET_ENV_VARS = [
 /** Variables whose names look sensitive but are deliberately public. */
 export const PUBLIC_ENV_VARS = ['MAP_STYLE_URL'] as const;
 
-const webSchema = z.object({
+const webObject = z.object({
   ...common,
   DATABASE_URL: postgresUrl,
   RATE_LIMIT_SECRET: secret,
@@ -96,6 +156,8 @@ const webSchema = z.object({
     .default(DEFAULT_MAP_STYLE_URL),
 });
 
+const webSchema = webObject.superRefine(refuseFakeClockInProduction);
+
 const workerObject = z
   .object({
     ...common,
@@ -108,6 +170,7 @@ const workerObject = z
     AI_DAILY_BUDGET_USD: z.coerce.number().min(0).max(1000).default(1),
   })
   .superRefine((env, ctx) => {
+    refuseFakeClockInProduction(env, ctx);
     if (env.AI_MODE === 'anthropic' && env.ANTHROPIC_API_KEY === undefined) {
       ctx.addIssue({
         code: 'custom',
@@ -128,7 +191,7 @@ const workerSchema = workerObject;
 
 /** Every declared variable name, so tests can check the secret inventory (R-3). */
 export const ENV_VAR_NAMES: readonly string[] = [
-  ...new Set([...Object.keys(webSchema.shape), ...Object.keys(workerObject.shape)]),
+  ...new Set([...Object.keys(webObject.shape), ...Object.keys(workerObject.shape)]),
 ];
 
 export type WebConfig = Readonly<z.infer<typeof webSchema>>;
@@ -167,4 +230,26 @@ export function loadWebConfig(env: Env = process.env): WebConfig {
 /** Validates the environment of the ingestion worker process. */
 export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
   return parse('worker', workerSchema, env);
+}
+
+/**
+ * "Now", from a validated configuration. **The single source of the clock.**
+ *
+ * Every process should reach its wall clock through this function rather than calling `new Date()`
+ * itself, so that a fixed clock is a configuration change and not a code change. It is a plain
+ * function of the config rather than a memoized singleton: the caller decides the lifetime, and a
+ * request handler that captures one instant and passes it down (which is what `apiRoute` does)
+ * already has the property that matters — one clock per request.
+ *
+ * With `GEONERVA_FAKE_NOW` set, every call returns that instant; a **new** `Date` each time, so a
+ * caller that mutates its result cannot move the frozen clock for everyone else.
+ */
+export function nowFrom(config: { readonly GEONERVA_FAKE_NOW?: Date | undefined }): Date {
+  const fixed = config.GEONERVA_FAKE_NOW;
+  return fixed === undefined ? new Date() : new Date(fixed.getTime());
+}
+
+/** True when this configuration freezes the clock. For a banner, a log line or a test. */
+export function hasFixedClock(config: { readonly GEONERVA_FAKE_NOW?: Date | undefined }): boolean {
+  return config.GEONERVA_FAKE_NOW !== undefined;
 }

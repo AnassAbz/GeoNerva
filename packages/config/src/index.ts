@@ -13,8 +13,10 @@ export {
   PUBLIC_ENV_VARS,
   RETENTION_PROFILES,
   SECRET_ENV_VARS,
+  hasFixedClock,
   isPostgresUrl,
   loadWebConfig,
   loadWorkerConfig,
+  nowFrom,
 } from './env.ts';
 export type { AiMode, RetentionProfile, WebConfig, WorkerConfig } from './env.ts';

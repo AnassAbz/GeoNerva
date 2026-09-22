@@ -77,7 +77,12 @@ Core flows:
 
 ## 5. End-to-end (Playwright)
 
-Runs against a production build with a seeded scenario database (`test-fixtures/scenarios/*.sql`), a fixed clock (`GEONERVA_FAKE_NOW`), and the map rendered in a WebGL2-capable browser plus one run with WebGL disabled.
+Runs against a production build with a seeded scenario database (`packages/test-fixtures/scenarios/`), a fixed clock (`GEONERVA_FAKE_NOW`), and the map rendered in a WebGL2-capable browser plus one run with WebGL disabled.
+
+Two clarifications from building it (P9, 2026-09-22), both of which this section originally got wrong:
+
+- **The scenarios are TypeScript, not `*.sql`.** They write every row through the production repositories — content hashing, head pointers, alias resolution, ADR-041's coverage frontier — because raw SQL would need a second implementation of all of it, and a seeded row no ingestion run could have produced proves nothing about the read paths. `pnpm db:seed:scenario <name>` loads one; it truncates first, so it refuses any database whose name does not end in `_test`.
+- **"FIRMS stale" means every fire source stale.** The outage flow below reads "FIRMS stale → the card shows unavailable", but `FIRE_ACTIVITY` covers `THERMAL_ACTIVITY` *and* `WILDFIRE_EVENT`, and `resolveAvailability` returns `ALL_SOURCES_UNUSABLE` only when **every** source of a family is unusable — correctly, because a fresh GDACS wildfire feed means GeoNerva can still say something. Staling FIRMS alone leaves the card `AVAILABLE`, so the scenario stales GDACS's `WF` feed with it. The flow is the availability rule, not FIRMS specifically.
 
 | Flow | Viewports |
 |---|---|
@@ -86,7 +91,7 @@ Runs against a production build with a seeded scenario database (`test-fixtures/
 | Open event from What Changed → per-source values, agreement, timeline, evidence | desktop, mobile |
 | Toggle map layers; keyboard-only operation of toggles | desktop |
 | Evidence drawer / bottom sheet opens, links resolve | desktop, mobile |
-| Source outage scenario: FIRMS stale → card shows "unavailable", never "0" | desktop, mobile |
+| Source outage scenario: every fire source stale → card shows "unavailable", never "0" | desktop, mobile |
 | Not-covered state (weather) and insufficient-history state | desktop |
 | Window selector 6 h / 24 h / 7 d changes the diff | desktop |
 | `as_of` URL shows replay banner and hides later data | desktop |

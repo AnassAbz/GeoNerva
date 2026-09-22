@@ -34,7 +34,7 @@
  * so the headers are accurate for exactly the caller they describe.
  */
 
-import { webConfig } from './config.ts';
+import { serverNow, webConfig } from './config.ts';
 import { database } from './db.ts';
 import { describeError, logRequest } from './log.ts';
 import { toProblemResponse, problemResponse } from './problem.ts';
@@ -97,7 +97,15 @@ export function apiRoute(
       return refused;
     }
 
-    const now = new Date();
+    /*
+     * The request's one clock, from the config layer rather than from `new Date()` directly.
+     *
+     * `serverNow` is the process's single source of "now" (docs/TESTING.md §5): with
+     * `GEONERVA_FAKE_NOW` set it returns a frozen instant, so an E2E run against a seeded
+     * scenario database sees a world that is not ageing under it. `packages/config` refuses that
+     * variable in production, so this is the wall clock in every deployed environment.
+     */
+    const now = serverNow();
     try {
       /*
        * Called for its refusal, and its verdict deliberately discarded.

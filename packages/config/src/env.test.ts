@@ -6,8 +6,10 @@ import {
   ENV_VAR_NAMES,
   PUBLIC_ENV_VARS,
   SECRET_ENV_VARS,
+  hasFixedClock,
   loadWebConfig,
   loadWorkerConfig,
+  nowFrom,
 } from './env.ts';
 
 // Deterministic test value with the shape of `openssl rand -hex 32`.
@@ -153,6 +155,104 @@ describe('loadWorkerConfig', () => {
     expect(
       issuesOf(() => loadWorkerConfig({ ...validWorker, WORKER_TRIGGER_SECRET: 'short' })),
     ).toEqual(['WORKER_TRIGGER_SECRET: must be at least 32 characters']);
+  });
+});
+
+/**
+ * The fixed clock of docs/TESTING.md §5.
+ *
+ * Two properties are worth more than the rest: an unparseable value **fails** rather than falling
+ * back to the wall clock, and a deployed environment refuses the variable outright. A silent
+ * fallback would make an E2E suite pass against a clock nobody chose; a fake clock in production
+ * would publish stale data as current.
+ */
+describe('GEONERVA_FAKE_NOW', () => {
+  const ANCHOR = '2026-09-22T13:06:00.000Z';
+
+  it('is absent by default, and then "now" is the wall clock', () => {
+    const config = loadWebConfig(validWeb);
+    expect(config.GEONERVA_FAKE_NOW).toBeUndefined();
+    expect(hasFixedClock(config)).toBe(false);
+    const before = Date.now();
+    const now = nowFrom(config).getTime();
+    expect(now).toBeGreaterThanOrEqual(before);
+    expect(now).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('parses an ISO instant into the instant it names, for both processes', () => {
+    for (const config of [
+      loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: ANCHOR }),
+      loadWorkerConfig({ ...validWorker, GEONERVA_FAKE_NOW: ANCHOR }),
+    ]) {
+      expect(hasFixedClock(config)).toBe(true);
+      expect(nowFrom(config).toISOString()).toBe(ANCHOR);
+    }
+  });
+
+  it('freezes the clock: two reads a moment apart are the same instant', () => {
+    const config = loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: ANCHOR });
+    expect(nowFrom(config).getTime()).toBe(nowFrom(config).getTime());
+  });
+
+  it('hands out a fresh Date, so a caller cannot move the clock for everyone else', () => {
+    const config = loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: ANCHOR });
+    const first = nowFrom(config);
+    first.setUTCFullYear(1999);
+    expect(nowFrom(config).toISOString()).toBe(ANCHOR);
+  });
+
+  it('treats an empty value as absent, like every other optional variable', () => {
+    expect(loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: '' }).GEONERVA_FAKE_NOW).toBeUndefined();
+    expect(
+      loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: '   ' }).GEONERVA_FAKE_NOW,
+    ).toBeUndefined();
+  });
+
+  it.each([
+    ['a bare date with no time', '2026-09-22'],
+    ['an instant with no offset', '2026-09-22T13:06:00'],
+    ['a human date', '22 September 2026 13:06 UTC'],
+    ['nonsense', 'yesterday'],
+    ['an empty-looking token', 'now'],
+    ['a millisecond epoch', '1790161560000'],
+  ])('refuses %s rather than falling back to the wall clock', (_label, value) => {
+    expect(issuesOf(() => loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: value }))).toEqual([
+      'GEONERVA_FAKE_NOW: must be a full ISO 8601 instant with an offset, e.g. 2026-09-22T13:06:00.000Z (a date alone is not accepted)',
+    ]);
+  });
+
+  it('refuses a well-shaped instant that is not a real one', () => {
+    expect(
+      issuesOf(() => loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: '2026-13-45T99:99:99Z' })),
+    ).toEqual(['GEONERVA_FAKE_NOW: is not a real instant']);
+  });
+
+  it('is refused in production, in both processes', () => {
+    const message =
+      'GEONERVA_FAKE_NOW: must not be set when NODE_ENV=production: a fixed clock in a deployed environment would publish stale data as current';
+    expect(
+      issuesOf(() =>
+        loadWebConfig({ ...validWeb, NODE_ENV: 'production', GEONERVA_FAKE_NOW: ANCHOR }),
+      ),
+    ).toEqual([message]);
+    expect(
+      issuesOf(() =>
+        loadWorkerConfig({ ...validWorker, NODE_ENV: 'production', GEONERVA_FAKE_NOW: ANCHOR }),
+      ),
+    ).toEqual([message]);
+  });
+
+  it('is allowed in development and in test', () => {
+    for (const nodeEnv of ['development', 'test'] as const) {
+      const config = loadWebConfig({ ...validWeb, NODE_ENV: nodeEnv, GEONERVA_FAKE_NOW: ANCHOR });
+      expect(config.GEONERVA_FAKE_NOW?.toISOString()).toBe(ANCHOR);
+    }
+  });
+
+  it('does not make a production process fail merely for being production', () => {
+    expect(
+      loadWebConfig({ ...validWeb, NODE_ENV: 'production' }).GEONERVA_FAKE_NOW,
+    ).toBeUndefined();
   });
 });
 

@@ -51,6 +51,18 @@ Two rulings, mine as orchestrator, recorded here rather than left implicit:
   must reject absolute URLs and anything outside `/api/v1`, with a test) is **not satisfied
   vacuously**. P8 removed the need on the server side, but deliverable 4 adds a browser type-ahead,
   so the module is written and tested as §3a specifies. §3a stands unamended.
+- **F-5 is closed with a per-request nonce and `'strict-dynamic'`, and three routes lose static
+  prerendering** (`/`, `/methodology`, `/_not-found`). F-5 asks for "hashes or `strict-dynamic`",
+  and hashes were shown to be impossible here rather than merely inconvenient: the second inline
+  script Next emits is the RSC flight payload, whose bytes *are* the page's rendered data, so its
+  hash differs per route and changes with any content edit, and `next.config.ts`'s `headers()` is
+  evaluated before any HTML exists. A nonce cannot reach prerendered HTML — measured: with the
+  proxy in place, `/` still built as static and served two nonce-less inline scripts against a
+  fresh nonce, i.e. a blank page — so `app/layout.tsx` declares `force-dynamic`. This contradicts
+  no frozen document: ARCHITECTURE §13.3's CDN layer keys `/api/v1` responses, not HTML, and the
+  four routes that render provider text were already dynamic. The cost is one request-time hop on
+  three data-free routes, which is the cheaper side of the trade against a script policy that
+  cannot hold. Revisiting it means reopening F-5, so it is recorded here and in SECURITY.md §6.
 - **ADR-039 is binding while Proposed**: no `fire_detection` map feature at any zoom. PRODUCT §6.5's
   "detections at zoom ≥ 8" is stale pending the owner's decision and is **not** built. The
   fire-cluster page instead renders the withheld state ADR-039 describes.

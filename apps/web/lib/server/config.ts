@@ -11,7 +11,7 @@
  * That difference is information about the deployment.
  */
 
-import { loadWebConfig, type WebConfig } from '@geonerva/config';
+import { hasFixedClock, loadWebConfig, nowFrom, type WebConfig } from '@geonerva/config';
 
 let cached: WebConfig | null = null;
 
@@ -23,4 +23,26 @@ export function webConfig(): WebConfig {
 /** Replaces the configuration. Tests only. */
 export function setWebConfigForTesting(replacement: WebConfig | null): void {
   cached = replacement;
+}
+
+/**
+ * **The web process's clock.** Every server-side read of "now" goes through here.
+ *
+ * It is a function of the validated configuration, so `GEONERVA_FAKE_NOW` freezes it for the whole
+ * process — which is what lets a Playwright run assert on a relative time ("22 minutes ago")
+ * instead of on whatever the wall clock happened to say. `packages/config` refuses that variable
+ * when `NODE_ENV=production`, so a deployment cannot acquire a frozen clock by accident.
+ *
+ * It reads the configuration at call time rather than capturing an instant at module load,
+ * because a Next.js server module is loaded once and served for the life of the process: a
+ * captured instant would freeze the clock in *every* environment, which is the opposite of the
+ * intent.
+ */
+export function serverNow(): Date {
+  return nowFrom(webConfig());
+}
+
+/** True when this process is running on a fixed clock. Never true in production. */
+export function serverClockIsFixed(): boolean {
+  return hasFixedClock(webConfig());
 }
