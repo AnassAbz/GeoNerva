@@ -109,8 +109,8 @@ test('no script is blocked and no CSP violation is reported in the main flows (F
   await page.goto('/');
   // Hydration ran: the combobox is a client component that only filters once React has taken over.
   await page.getByRole('combobox', { name: 'Search for a place' }).fill('Marr');
-  await page.getByRole('option', { name: /Marrakech/u }).click();
-  await expect(page.getByRole('heading', { level: 1, name: 'Marrakech, Morocco' })).toBeVisible();
+  await page.getByRole('option', { name: /Marrak/u }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Marrakesh' })).toBeVisible();
 
   // An interactive control on a page that renders provider text.
   await page

@@ -10,24 +10,15 @@ import { HealthFacts } from '../../components/source-health.tsx';
 import { RunStrip } from '../../components/run-strip.tsx';
 import { StatusChip } from '../../components/ui/badges.tsx';
 import { COPY } from '../../lib/view/copy.ts';
-import { getNow, getSourceStatus, parseScenario } from '../../lib/view/data.ts';
+import { getNow, getSourceStatus } from '../../lib/view/data.ts';
 import { HAZARD_LABEL, formatAgo, formatDateTime } from '../../lib/view/format.ts';
-import { first, type SearchParams } from '../../lib/view/query.ts';
 
 export const metadata: Metadata = { title: 'Data status — GeoNerva' };
 
 const TIME_ZONE = 'UTC';
 
-export default async function DataStatusPage({
-  searchParams,
-}: {
-  readonly searchParams: Promise<SearchParams>;
-}) {
-  const search = await searchParams;
-  const [status, now] = await Promise.all([
-    getSourceStatus(parseScenario(first(search['scenario']))),
-    getNow(),
-  ]);
+export default async function DataStatusPage() {
+  const [status, now] = await Promise.all([getSourceStatus(), getNow()]);
 
   return (
     <EvidenceProvider manifest={status.evidenceManifest} timeZone={TIME_ZONE}>

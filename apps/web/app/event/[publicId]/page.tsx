@@ -14,7 +14,7 @@ import { DerivedTag, RelevanceBadge, SourceBadge } from '../../../components/ui/
 import { WhyPopover } from '../../../components/why-popover.tsx';
 import { parseMapStyleUrl } from '../../../lib/map-style.ts';
 import { COPY } from '../../../lib/view/copy.ts';
-import { getEventDetail } from '../../../lib/view/data.ts';
+import { getEventDetail, getEvidenceDetails } from '../../../lib/view/data.ts';
 import { eventMapFeatures } from '../../../lib/view/detail-map.ts';
 import {
   HAZARD_LABEL,
@@ -50,6 +50,9 @@ export default async function EventPage({ params, searchParams }: PageProps) {
   );
   if (detail === null) notFound();
 
+  /* ADR-038's "Raw record", for the observations this response cites (bounded in `data.ts`). */
+  const evidenceDetails = await getEvidenceDetails(detail.evidenceManifest.map((item) => item.id));
+
   const { headline, agreement } = detail;
   /* Columns: every source that contributed a compared value, with its credited agency. */
   const columns = [
@@ -63,7 +66,11 @@ export default async function EventPage({ params, searchParams }: PageProps) {
   const tsunami = headline.facts.find((fact) => fact.code === 'tsunami_flag');
 
   return (
-    <EvidenceProvider manifest={detail.evidenceManifest} timeZone={TIME_ZONE}>
+    <EvidenceProvider
+      manifest={detail.evidenceManifest}
+      details={evidenceDetails}
+      timeZone={TIME_ZONE}
+    >
       <main id="main" className="mx-auto max-w-4xl px-4 pb-8">
         <header className="border-b border-line py-4">
           {placeSlug === undefined ? null : (

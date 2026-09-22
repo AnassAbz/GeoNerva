@@ -5,10 +5,14 @@
 
 import { PLACE, expect, horizontalOverflow, seriousViolations, test } from './offline.ts';
 
+/*
+ * The outage state is scanned in `outage.spec.ts`: it needs the other seeded scenario, which
+ * cannot share this one's database, so it runs in its own project rather than behind the
+ * `?scenario` parameter P9b deleted.
+ */
 const PAGES = [
   ['home', '/'],
   ['dashboard', PLACE],
-  ['dashboard, FIRMS stale', `${PLACE}?scenario=firms-stale`],
   ['dashboard, replay', `${PLACE}?as_of=2026-09-22T10:10:00Z`],
   ['event', '/event/EQ-26-7K3F9Q?place=marrakech-ma-2542997'],
   ['flood event', '/event/FL-26-9QW3TD'],

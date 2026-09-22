@@ -37,7 +37,7 @@ import { DerivedTag, RelevanceBadge, SourceBadge } from '../../../components/ui/
 import { WhyPopover } from '../../../components/why-popover.tsx';
 import { parseMapStyleUrl } from '../../../lib/map-style.ts';
 import { COPY } from '../../../lib/view/copy.ts';
-import { getFireCluster } from '../../../lib/view/data.ts';
+import { getEvidenceDetails, getFireCluster } from '../../../lib/view/data.ts';
 import { fireMapFeatures, pointOf } from '../../../lib/view/detail-map.ts';
 import { formatDateTime, formatDistanceKm, formatNumber } from '../../../lib/view/format.ts';
 import { first, type SearchParams } from '../../../lib/view/query.ts';
@@ -68,13 +68,20 @@ export default async function FirePage({ params, searchParams }: PageProps) {
   );
   if (detail === null) notFound();
 
+  /* ADR-038's "Raw record", for the observations this response cites (bounded in `data.ts`). */
+  const evidenceDetails = await getEvidenceDetails(detail.evidenceManifest.map((item) => item.id));
+
   const { summary } = detail;
   const center = pointOf(detail.centroid) ?? { lat: 0, lon: 0 };
   const mapStyle = parseMapStyleUrl(process.env['MAP_STYLE_URL']);
   const withheld = detectionsWithheld(detail.detections);
 
   return (
-    <EvidenceProvider manifest={detail.evidenceManifest} timeZone={TIME_ZONE}>
+    <EvidenceProvider
+      manifest={detail.evidenceManifest}
+      details={evidenceDetails}
+      timeZone={TIME_ZONE}
+    >
       <main id="main" className="mx-auto max-w-4xl px-4 pb-8">
         <header className="border-b border-line py-4">
           {placeSlug === undefined ? null : (

@@ -23,16 +23,15 @@ import { parseMapStyleUrl } from '../../../lib/map-style.ts';
 import { COPY } from '../../../lib/view/copy.ts';
 import {
   getBriefing,
+  getEvidenceDetails,
   getHistories,
   getMapFeatures,
   getNow,
-  parseScenario,
 } from '../../../lib/view/data.ts';
 import { FAMILY_ORDER } from '../../../lib/view/families.ts';
 import { WINDOW_LABEL, formatAgo, formatClock } from '../../../lib/view/format.ts';
 import {
   PAGE_WINDOWS,
-  first,
   parseAsOfParam,
   parseWindowParam,
   type SearchParams,
@@ -60,17 +59,27 @@ export default async function PlacePage({ params, searchParams }: PageProps) {
   const now = await getNow();
   const window = parseWindowParam(search['window']);
   const asOf = parseAsOfParam(search['as_of'], now);
-  const scenario = parseScenario(first(search['scenario']));
-  const query = { window, scenario, ...(asOf === undefined ? {} : { asOf }) };
+  const query = { window, ...(asOf === undefined ? {} : { asOf }) };
 
-  const [briefing, histories, mapFeatures] = await Promise.all([
+  const [briefing, histories] = await Promise.all([
     getBriefing(slug, query),
     getHistories(slug, query),
-    getMapFeatures(slug, { scenario }),
   ]);
   if (briefing === null) notFound();
 
   const { location, snapshot, changes } = briefing;
+  /*
+   * After the briefing rather than beside it: a viewport needs the location's coordinates, and
+   * only the briefing has resolved them (`lib/view/data.ts`, note 3). The evidence details are
+   * bounded there too, and keyed off the manifest this response carried.
+   */
+  const [mapFeatures, evidenceDetails] = await Promise.all([
+    getMapFeatures(location, asOf === undefined ? {} : { asOf }),
+    getEvidenceDetails(
+      briefing.evidenceManifest.map((item) => item.id),
+      asOf === undefined ? {} : { asOf },
+    ),
+  ]);
   const timeZone = location.timezone;
   const families = snapshot.families;
   const mapStyle = parseMapStyleUrl(process.env['MAP_STYLE_URL']);
@@ -111,7 +120,11 @@ export default async function PlacePage({ params, searchParams }: PageProps) {
   const exitHref = placeHref(slug, { window });
 
   return (
-    <EvidenceProvider manifest={briefing.evidenceManifest} timeZone={timeZone}>
+    <EvidenceProvider
+      manifest={briefing.evidenceManifest}
+      details={evidenceDetails}
+      timeZone={timeZone}
+    >
       {briefing.asOfContext.isReplay ? (
         <ReplayBanner asOf={briefing.asOfContext.asOf} exitHref={exitHref} />
       ) : null}
