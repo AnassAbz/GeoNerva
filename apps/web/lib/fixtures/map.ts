@@ -34,7 +34,7 @@ export function mapFeaturesFixture(scenario: FixtureScenario = 'all-fresh'): Map
       clusterStatus: null,
       confidence: null,
       label: 'M4.7 · 49 km S of Azilal, Morocco',
-      href: `/events/${EQ_PUBLIC_ID}`,
+      href: `/event/${EQ_PUBLIC_ID}`,
       evidenceIds: [EV.usgsV2],
     },
     {
@@ -68,7 +68,7 @@ export function mapFeaturesFixture(scenario: FixtureScenario = 'all-fresh'): Map
       clusterStatus: null,
       confidence: null,
       label: 'GDACS flood-event area (modelled) · Souss-Massa',
-      href: `/events/${FLOOD_PUBLIC_ID}`,
+      href: `/event/${FLOOD_PUBLIC_ID}`,
       evidenceIds: [EV.gdacsFlood],
     },
   ];
@@ -90,7 +90,7 @@ export function mapFeaturesFixture(scenario: FixtureScenario = 'all-fresh'): Map
       clusterStatus: 'ACTIVE',
       confidence: { class: 'NOMINAL', raw: 'n' },
       label: 'Fire activity cluster · 14 thermal detections',
-      href: `/fires/${FIRE_PUBLIC_ID}`,
+      href: `/fire/${FIRE_PUBLIC_ID}`,
       evidenceIds: [EV.fcv3],
     });
   }

@@ -430,7 +430,7 @@ export function relatedView(
     hazardType,
     relation: row.relation,
     label: RELATED_LABELS[hazardType],
-    href: isCluster ? `/fires/${publicId}` : `/events/${publicId}`,
+    href: isCluster ? `/fire/${publicId}` : `/event/${publicId}`,
     reasons: reasonsOf(row.reasons, []),
   };
 }

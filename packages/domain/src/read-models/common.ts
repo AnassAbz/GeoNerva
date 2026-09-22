@@ -297,7 +297,10 @@ export interface SubjectSummary {
   readonly relevance: RelevanceAssessment;
   readonly agreement: Agreement | null;
   readonly evidenceIds: readonly EvidenceId[];
-  /** Deep link target within the app, e.g. `/events/EQ-26-7K3F9Q`. */
+  /**
+   * Deep link target within the app — a PRODUCT §6.1 route: `/event/EQ-26-7K3F9Q` or
+   * `/fire/FR-26-2B8K4M`. (The G2 example said `/events/…`, a route that never existed.)
+   */
   readonly href: string;
 }
 

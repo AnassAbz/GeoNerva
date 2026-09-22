@@ -52,7 +52,7 @@ function subject(overrides: Record<string, unknown> = {}): Record<string, unknow
     relevance: relevance(),
     agreement: null,
     evidenceIds: ['EV:OBS:41'],
-    href: '/events/EQ-26-7K3F9Q',
+    href: '/event/EQ-26-7K3F9Q',
     ...overrides,
   };
 }
@@ -929,5 +929,28 @@ describe('ObservationEvidenceDetail: the raw-payload lifecycle (ADR-038)', () =>
         }),
       ),
     ).toBe(true);
+  });
+});
+
+describe('subject links follow the product routes (PRODUCT §6.1)', () => {
+  const parses = (href: string): boolean =>
+    familyCardSchema.safeParse(card({ items: [subject({ href })], itemsTotal: 1 })).success;
+
+  it('accepts /event/<publicId> and /fire/<publicId>', () => {
+    expect(parses('/event/EQ-26-7K3F9Q')).toBe(true);
+    expect(parses('/fire/FR-26-2B8K4M')).toBe(true);
+  });
+
+  it('refuses the plural API-shaped paths the briefing used to emit, and anything else', () => {
+    for (const href of [
+      '/events/EQ-26-7K3F9Q',
+      '/fires/FR-26-2B8K4M',
+      '/api/v1/events/EQ-26-7K3F9Q',
+      'https://example.org/event/EQ-26-7K3F9Q',
+      '/event/EQ-26-7K3F9Q?x=1',
+      '/event/',
+    ]) {
+      expect(parses(href), href).toBe(false);
+    }
   });
 });

@@ -416,7 +416,7 @@ describe('buildEventDetail: near-misses, relations and geometry', () => {
         hazardType: 'EARTHQUAKE',
         relation: 'AFTERSHOCK_OF',
         label: 'Earthquake',
-        href: `/events/${neighbour.publicId}`,
+        href: `/event/${neighbour.publicId}`,
         reasons: [],
       },
     ]);

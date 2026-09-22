@@ -334,7 +334,7 @@ function describeEvent(
     clusterStatus: null,
     confidence: null,
     label: titleOf(hazardType, anchor, magnitude),
-    href: `/events/${link.canonical_public_id}`,
+    href: `/event/${link.canonical_public_id}`,
     evidenceIds,
   };
 }
@@ -389,7 +389,7 @@ function describeCluster(cluster: ClusterVersionRow, asOf: Date): Ranked {
           ? { class: cluster.max_confidence, raw: null }
           : null,
       label: 'Fire activity',
-      href: `/fires/${cluster.public_id}`,
+      href: `/fire/${cluster.public_id}`,
       evidenceIds,
     },
   };

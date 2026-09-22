@@ -158,7 +158,7 @@ describe('buildMapFeatures: a canonical event', () => {
     expect(feature?.kind).toBe('canonical_event');
     expect(feature?.subjectRef).toBe(`CE:${quake.publicId}`);
     expect(feature?.publicId).toBe(quake.publicId);
-    expect(feature?.href).toBe(`/events/${quake.publicId}`);
+    expect(feature?.href).toBe(`/event/${quake.publicId}`);
     expect(feature?.hazardType).toBe('EARTHQUAKE');
     expect(feature?.family).toBe('EARTHQUAKES');
     expect(feature?.label).toBe('M5.4 earthquake');
@@ -300,7 +300,7 @@ describe('buildMapFeatures: a fire cluster', () => {
     const feature = fresh.features[0];
     expect(feature?.kind).toBe('fire_cluster');
     expect(feature?.subjectRef).toBe(`FC:${seeded.publicId}`);
-    expect(feature?.href).toBe(`/fires/${seeded.publicId}`);
+    expect(feature?.href).toBe(`/fire/${seeded.publicId}`);
     expect(feature?.hazardType).toBe('THERMAL_ACTIVITY');
     expect(feature?.family).toBe('FIRE_ACTIVITY');
     expect(feature?.label).toBe('Fire activity');

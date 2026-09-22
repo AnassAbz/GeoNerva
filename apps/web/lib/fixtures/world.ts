@@ -575,7 +575,7 @@ export const EQ_SUMMARY: SubjectSummary = {
   relevance: EQ_RELEVANCE,
   agreement: EQ_AGREEMENT,
   evidenceIds: [EV.usgsV2, EV.emscV1, EV.gdacsEq, EV.relEq],
-  href: `/events/${EQ_PUBLIC_ID}`,
+  href: `/event/${EQ_PUBLIC_ID}`,
 };
 
 export const OLDER_EQ_SUMMARY: SubjectSummary = {
@@ -620,7 +620,7 @@ export const OLDER_EQ_SUMMARY: SubjectSummary = {
     comparisons: [],
   },
   evidenceIds: [EV.usgsOlder],
-  href: '/events/EQ-26-3MZ8QA',
+  href: '/event/EQ-26-3MZ8QA',
 };
 
 export const FIRE_SUMMARY: SubjectSummary = {
@@ -657,7 +657,7 @@ export const FIRE_SUMMARY: SubjectSummary = {
   relevance: FIRE_RELEVANCE,
   agreement: null,
   evidenceIds: [EV.fcv3, EV.fds3, EV.relFire],
-  href: `/fires/${FIRE_PUBLIC_ID}`,
+  href: `/fire/${FIRE_PUBLIC_ID}`,
 };
 
 export const FLOOD_SUMMARY: SubjectSummary = {
@@ -695,7 +695,7 @@ export const FLOOD_SUMMARY: SubjectSummary = {
     comparisons: [],
   },
   evidenceIds: [EV.gdacsFlood, EV.relFlood],
-  href: `/events/${FLOOD_PUBLIC_ID}`,
+  href: `/event/${FLOOD_PUBLIC_ID}`,
 };
 
 /** The epicentre, the cluster centroid and the flood area, for the map and the detail pages. */

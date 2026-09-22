@@ -216,6 +216,14 @@ const subjectRef = z.string().regex(/^(?:CE|FC|SRC|MET):\S+$/u);
 const schemaVersion = z.literal(READ_MODEL_SCHEMA_VERSION);
 
 /**
+ * A subject's deep link: a PRODUCT §6.1 route, `/event/<publicId>` or `/fire/<publicId>`.
+ *
+ * Checked here because the briefing emitted `/events/…` and `/fires/…` — pages that do not exist —
+ * from five places for three phases, and nothing noticed until a UI tried to follow one (P9).
+ */
+const subjectHref = z.string().regex(/^\/(?:event|fire)\/[A-Z]{2}-\d{2}-[0-9A-Z]{4,12}$/u);
+
+/**
  * A GeoJSON geometry, annotated rather than inferred.
  *
  * `GeoJsonGeometry` is self-referential (`geometries?: readonly GeoJsonGeometry[]`) and has an
@@ -514,7 +522,7 @@ export const subjectSummarySchema = z.object({
   relevance: relevanceAssessmentSchema,
   agreement: agreementSchema.nullable(),
   evidenceIds: z.array(evidenceId),
-  href: z.string(),
+  href: subjectHref,
 });
 export type SubjectSummaryMatches = Expect<
   Exact<z.infer<typeof subjectSummarySchema>, SubjectSummary>
@@ -1187,7 +1195,7 @@ export const mapFeatureSchema = z.object({
   clusterStatus: z.enum(FIRE_CLUSTER_STATUSES).nullable(),
   confidence: confidenceViewSchema.nullable(),
   label: z.string(),
-  href: z.string(),
+  href: subjectHref,
   evidenceIds: z.array(evidenceId),
 });
 export type MapFeatureMatches = Expect<Exact<z.infer<typeof mapFeatureSchema>, MapFeature>>;
@@ -1374,7 +1382,7 @@ export const relatedEventRefSchema = z.object({
   hazardType: z.enum(HAZARD_TYPES),
   relation: z.string().min(1),
   label: z.string().min(1),
-  href: z.string().min(1),
+  href: subjectHref,
   reasons: z.array(reasonSchema),
 });
 export type RelatedEventRefMatches = Expect<

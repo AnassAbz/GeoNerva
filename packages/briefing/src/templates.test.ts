@@ -87,7 +87,7 @@ function subject(overrides: Partial<SubjectSummary> = {}): SubjectSummary {
     },
     agreement: null,
     evidenceIds: ['EV:OBS:1'],
-    href: '/events/EQ-26-AAAAAA',
+    href: '/event/EQ-26-AAAAAA',
     ...overrides,
   };
 }

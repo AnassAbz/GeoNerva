@@ -854,7 +854,7 @@ function buildFireSubject(
     relevance,
     agreement: null,
     evidenceIds,
-    href: `/fires/${cluster.public_id}`,
+    href: `/fire/${cluster.public_id}`,
   };
 }
 
@@ -1086,7 +1086,7 @@ function buildSubject(
     relevance,
     agreement: toAgreementView(assessment, members, linkByRecord, evidenceIds),
     evidenceIds,
-    href: `/events/${link.canonical_public_id}`,
+    href: `/event/${link.canonical_public_id}`,
   };
 }
 
