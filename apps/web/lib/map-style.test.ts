@@ -19,6 +19,7 @@ describe('parseMapStyleUrl (F-16)', () => {
 
   it.each([
     ['a directive injection', 'https://tiles.example.org/s.json;script-src *'],
+    ['a semicolon, even without whitespace', 'https://tiles.example.org/s.json;script-src'],
     ['a list separator', 'https://a.example.org,https://b.example.org'],
     ['whitespace', 'https://tiles.example.org/s.json script-src'],
     ['a quote', "https://tiles.example.org/'unsafe-inline'"],

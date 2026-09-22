@@ -15,7 +15,7 @@ import { COPY } from '../lib/view/copy.ts';
 import { placeSlug } from '../lib/view/routes.ts';
 
 function fold(text: string): string {
-  return text.normalize('NFD').replace(/[̀-ͯ]/gu, '').toLowerCase();
+  return text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 }
 
 export function PlaceSearch({

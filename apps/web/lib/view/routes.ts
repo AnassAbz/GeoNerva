@@ -25,7 +25,7 @@ export function placeSlug(location: Pick<LocationRef, 'key' | 'label' | 'country
   if (location.key.startsWith('c:')) return `@${location.key.slice(2)}`;
   const name = (location.label.split(',')[0] ?? location.label)
     .normalize('NFD')
-    .replace(/[̀-ͯ]/gu, '')
+    .replace(/\p{M}/gu, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/gu, '-')
     .replace(/^-|-$/gu, '');
