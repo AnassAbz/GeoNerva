@@ -48,6 +48,7 @@ import {
 } from '@geonerva/sources';
 
 import { createJsonLogger, sanitizeDetail, type Logger } from './logging.ts';
+import { describeDatabaseFailure } from './run.ts';
 
 export interface RunFireIngestionOptions {
   readonly db: Kysely<DB>;
@@ -201,12 +202,22 @@ export async function runFireIngestion(
           ? {}
           : { counts: { received: seen.received, rejected: seen.rejected } }),
       });
-    } catch {
+    } catch (error) {
+      /*
+       * Named, not assumed. This used to say "its lease was taken over" whatever had happened,
+       * and a run left RUNNING with no status or message — an intermittent in this file's own
+       * tests, seen three times and never explained — could not be told apart from a lease loss.
+       * `finishRun` throws a plain error when the row is no longer RUNNING; anything else is the
+       * database refusing the update, reported by SQLSTATE so no value from the row leaks.
+       */
+      const notRunning = error instanceof Error && error.message.includes('is not RUNNING');
       logger.log('error', 'ingestion.finish_failed', {
         ...base,
         runId,
-        errorClass: 'LEASE_EXPIRED',
-        detail: 'the run could not be finished; its lease was taken over',
+        errorClass: notRunning ? 'LEASE_EXPIRED' : 'DB_ERROR',
+        detail: notRunning
+          ? 'the run could not be finished; it was no longer RUNNING (its lease was taken over)'
+          : describeDatabaseFailure(error),
       });
     }
     return finish('FAILED', runId, errorClass, sanitized, {

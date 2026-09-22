@@ -54,13 +54,26 @@ function clientServing(body: Uint8Array, status = 200): HttpClient {
   });
 }
 
+/**
+ * The logger of the last `ingest`, so an assertion about the stored run can say *why* the run row
+ * was not finished if it was not. Two tests below failed intermittently (three occurrences, P8 and
+ * P9) with a run left RUNNING and nothing to explain it; the next occurrence will print the cause.
+ */
+let lastLogger = createMemoryLogger();
+
+function finishFailures(): string {
+  const failures = lastLogger.entries.filter((entry) => entry.event === 'ingestion.finish_failed');
+  return failures.length === 0 ? 'no finish_failed event' : JSON.stringify(failures);
+}
+
 async function ingest(file: string, status = 200) {
+  lastLogger = createMemoryLogger();
   return runFireIngestion({
     db,
     client: clientServing(readFixtureBytes('firms', file), status),
     sensor: 'VIIRS_NOAA20_NRT',
     trigger: 'MANUAL',
-    logger: createMemoryLogger(),
+    logger: lastLogger,
   });
 }
 
@@ -274,7 +287,7 @@ describe('when the batch is not usable', () => {
     expect(await detectionCount()).toBe(0);
 
     const runs = await listRecentRuns(db, { sourceId: 'firms', limit: 1 });
-    expect(runs[0]?.status).toBe('FAILED');
+    expect(runs[0]?.status, finishFailures()).toBe('FAILED');
     expect(runs[0]?.errorClass).toBe('SCHEMA_DRIFT');
   });
 
@@ -313,13 +326,14 @@ describe('when the batch is not usable', () => {
      * `ingestion_runs.error_message`, where it would sit until someone read the table.
      */
     const key = 'abcdef0123456789abcdef0123456789';
+    lastLogger = createMemoryLogger();
     await runFireIngestion({
       db,
       client: clientServing(readFixtureBytes('firms', 'area-invalid-mapkey.txt'), 400),
       sensor: 'VIIRS_NOAA20_NRT',
       mapKey: key,
       trigger: 'MANUAL',
-      logger: createMemoryLogger(),
+      logger: lastLogger,
     });
 
     const stored = await sql<{ error_message: string | null; http_status: number | null }>`
@@ -330,7 +344,7 @@ describe('when the batch is not usable', () => {
     expect(message).not.toContain(key);
     // Not a prefix either: a partial key is a slow leak.
     expect(message).not.toContain(key.slice(0, 8));
-    expect(message).toMatch(/credential/);
+    expect(message, finishFailures()).toMatch(/credential/);
     // The status still reaches the row, because *which* refusal it was is diagnosable and safe.
     expect(stored.rows[0]?.http_status).toBe(400);
   });
