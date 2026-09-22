@@ -19,6 +19,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   createCanonicalEvent,
   createDb,
+  assignDetectionsToCluster,
+  bulkInsertDetections,
   generateFireClusterPublicId,
   linkRecord,
   type DB,
@@ -974,5 +976,242 @@ describe('the P6 review findings, as regressions', () => {
     await healthySource('usgs', 'comcat');
     const { snapshot } = await build();
     expect(snapshot.sourceHealth.map((entry) => entry.sourceId)).not.toContain('eccc');
+  });
+});
+
+describe('fire proximity is to the nearest detection, not to the centroid (P7 defect)', () => {
+  /*
+   * `assessFire`'s own contract: "Distance to the **nearest detection** in the cluster, in km. Not
+   * to the centroid." The snapshot passed the centroid distance, so a large cluster reaching to
+   * within 3 km of a place was assessed — and shown — as 12 km away, on the far side of the 10 km
+   * band that makes fire activity `HIGH`-eligible.
+   */
+  const SPAN_LON = 0.05;
+
+  /**
+   * A cluster stretched north–south: centroid `centreKm` north of Marrakech, a hull from
+   * `nearKm` to `farKm`, and optionally its member detections at both ends and the middle.
+   */
+  async function stretchedCluster(options: {
+    readonly nearKm: number;
+    /** Where the hull's near edge is. Defaults to the nearest detection; set it closer to tell the two apart. */
+    readonly hullNearKm?: number;
+    readonly centreKm: number;
+    readonly farKm: number;
+    readonly withDetections: boolean;
+    /** The version's own count; set it wrong to make the reconstruction unverifiable. */
+    readonly nTotal: number;
+  }): Promise<void> {
+    const product = await sql<{ id: number }>`
+      SELECT id FROM geonerva.source_products
+      WHERE source_id = 'firms' AND code = 'VIIRS_NOAA20_NRT'
+    `.execute(db);
+    const productId = product.rows[0]?.id ?? 0;
+    const last = new Date(AS_OF.getTime() - 60 * 60 * 1000);
+    const first = new Date(last.getTime() - 60 * 60 * 1000);
+    const near = north(options.nearKm);
+    const hullNear = north(options.hullNearKm ?? options.nearKm);
+    const centre = north(options.centreKm);
+    const far = north(options.farKm);
+    const hull =
+      `POLYGON((${String(hullNear.lon - SPAN_LON)} ${String(hullNear.lat)}, ${String(hullNear.lon + SPAN_LON)} ${String(hullNear.lat)}, ` +
+      `${String(far.lon + SPAN_LON)} ${String(far.lat)}, ${String(far.lon - SPAN_LON)} ${String(far.lat)}, ` +
+      `${String(hullNear.lon - SPAN_LON)} ${String(hullNear.lat)}))`;
+
+    const cluster = await sql<{ id: string }>`
+      INSERT INTO geonerva.fire_clusters (id, public_id, created_at, status)
+      VALUES (gen_random_uuid(), ${generateFireClusterPublicId(INGEST)}, ${INGEST}, 'ACTIVE')
+      RETURNING id::text AS id
+    `.execute(db);
+    const clusterId = cluster.rows[0]?.id ?? '';
+
+    await sql`
+      INSERT INTO geonerva.fire_cluster_versions
+        (cluster_id, as_of, n_total, n_24h, overpasses_24h, first_detected_at, last_detected_at,
+         frp_sum_24h, frp_max, max_confidence, product_ids, centroid, hull, content_sha256)
+      VALUES (${clusterId}::uuid, ${INGEST}, ${options.nTotal}, ${options.nTotal}, 2,
+              ${first}, ${last}, 40.0, 12.0, 'NOMINAL', ARRAY[${productId}]::smallint[],
+              ST_SetSRID(ST_MakePoint(${centre.lon}, ${centre.lat}), 4326)::geography,
+              ST_GeomFromText(${hull}, 4326)::geography,
+              sha256(${clusterId}::text::bytea))
+    `.execute(db);
+
+    if (!options.withDetections) return;
+    const at = [near, centre, far];
+    await bulkInsertDetections(
+      db,
+      at.map((point, index) => ({
+        productId,
+        acquiredAt: new Date(first.getTime() + index * 60_000),
+        lat: point.lat,
+        lon: point.lon,
+        confidenceClass: 'NOMINAL' as const,
+        confidenceRaw: 'n',
+        frp: 5,
+        brightTi4: 330,
+        brightTi5: 290,
+        scan: 0.4,
+        track: 0.4,
+        daynight: 'D' as const,
+        providerVersion: '2.0NRT',
+        ingestedAt: INGEST,
+      })),
+    );
+    const ids = await sql<{ id: string }>`
+      SELECT id::text AS id FROM geonerva.fire_detections WHERE cluster_id IS NULL
+    `.execute(db);
+    await assignDetectionsToCluster(
+      db,
+      clusterId,
+      ids.rows.map((row) => row.id),
+    );
+  }
+
+  async function fireItem() {
+    const { snapshot } = await build();
+    return snapshot.families.FIRE_ACTIVITY.items[0];
+  }
+
+  beforeEach(async () => {
+    await healthySource('firms', 'VIIRS_NOAA20_NRT');
+    await derivationRan('CLUSTERING', new Date(INGEST.getTime() + 60_000));
+  });
+
+  it('measures to the nearest verified detection', async () => {
+    // The hull reaches to 1 km; the nearest member is at 3 km; the centroid is at 12 km. Verified
+    // members make the distance exact: 3, neither the hull's bound nor the centroid.
+    await stretchedCluster({
+      nearKm: 3,
+      hullNearKm: 1,
+      centreKm: 12,
+      farKm: 21,
+      withDetections: true,
+      nTotal: 3,
+    });
+    const item = await fireItem();
+    expect(item?.distanceKm).toBeCloseTo(3, 0);
+  });
+
+  it('falls back to the hull, never the centroid, when the members cannot be verified', async () => {
+    // The version counts five detections; none can be reconstructed, so the set is unverifiable.
+    await stretchedCluster({
+      nearKm: 3,
+      centreKm: 12,
+      farKm: 21,
+      withDetections: false,
+      nTotal: 5,
+    });
+    const item = await fireItem();
+    expect(item?.distanceKm).toBeLessThan(3.5);
+    expect(item?.distanceKm).toBeGreaterThanOrEqual(2.5);
+  });
+
+  it('does not trust a reconstruction whose count disagrees with the version', async () => {
+    // Three detections exist, but the version says it summarized four: the set is not the one it
+    // counted, so the nearest *member* is not known and the hull bound is used instead.
+    await stretchedCluster({
+      nearKm: 3,
+      hullNearKm: 1,
+      centreKm: 12,
+      farKm: 21,
+      withDetections: true,
+      nTotal: 4,
+    });
+    const item = await fireItem();
+    // The hull's bound (about 1 km), not the unverified member's 3.
+    expect(item?.distanceKm).toBeLessThan(1.5);
+  });
+
+  /**
+   * One more detection assigned to the cluster *after* the version was computed. The hull reaches
+   * to 0.5 km, so if the reconstruction wrongly counts the extra detection, the count stops
+   * matching and the card falls back to the hull — a visibly different distance.
+   */
+  async function lateMember(options: {
+    readonly acquiredAt: Date;
+    readonly ingestedAt: Date;
+  }): Promise<void> {
+    const product = await sql<{ id: number }>`
+      SELECT id FROM geonerva.source_products WHERE source_id = 'firms' AND code = 'VIIRS_NOAA20_NRT'
+    `.execute(db);
+    const cluster = await sql<{
+      id: string;
+    }>`SELECT id::text AS id FROM geonerva.fire_clusters`.execute(db);
+    const at = north(1);
+    await bulkInsertDetections(db, [
+      {
+        productId: product.rows[0]?.id ?? 0,
+        acquiredAt: options.acquiredAt,
+        lat: at.lat,
+        lon: at.lon,
+        confidenceClass: 'NOMINAL',
+        confidenceRaw: 'n',
+        frp: 5,
+        brightTi4: 330,
+        brightTi5: 290,
+        scan: 0.4,
+        track: 0.4,
+        daynight: 'D',
+        providerVersion: '2.0NRT',
+        ingestedAt: options.ingestedAt,
+      },
+    ]);
+    const unassigned = await sql<{ id: string }>`
+      SELECT id::text AS id FROM geonerva.fire_detections WHERE cluster_id IS NULL
+    `.execute(db);
+    await assignDetectionsToCluster(
+      db,
+      cluster.rows[0]?.id ?? '',
+      unassigned.rows.map((row) => row.id),
+    );
+  }
+
+  it('does not count a detection ingested after the version it would belong to', async () => {
+    // At the version's knowledge time (INGEST) this detection did not exist: invariant I2.
+    await stretchedCluster({
+      nearKm: 3,
+      hullNearKm: 0.5,
+      centreKm: 12,
+      farKm: 21,
+      withDetections: true,
+      nTotal: 3,
+    });
+    await lateMember({
+      acquiredAt: new Date(AS_OF.getTime() - 90 * 60 * 1000),
+      ingestedAt: new Date(INGEST.getTime() + 60 * 60 * 1000),
+    });
+    expect((await fireItem())?.distanceKm).toBeCloseTo(3, 0);
+  });
+
+  it('does not count a detection acquired after the version’s newest detection', async () => {
+    // Known by INGEST, acquired three minutes after the version's last detection: not one the
+    // version summarized, so the members still verify at three.
+    await stretchedCluster({
+      nearKm: 3,
+      hullNearKm: 0.5,
+      centreKm: 12,
+      farKm: 21,
+      withDetections: true,
+      nTotal: 3,
+    });
+    await lateMember({
+      acquiredAt: new Date(AS_OF.getTime() - 60 * 60 * 1000 + 3 * 60_000),
+      ingestedAt: INGEST,
+    });
+    expect((await fireItem())?.distanceKm).toBeCloseTo(3, 0);
+  });
+
+  it('keeps a cluster whose area reaches inside the radius while its centroid is outside it', async () => {
+    // FIRE_OUTER_KM is 150: the centroid at 160 km is outside, the near end at 140 km inside.
+    await stretchedCluster({
+      nearKm: 140,
+      centreKm: 160,
+      farKm: 180,
+      withDetections: true,
+      nTotal: 3,
+    });
+    const item = await fireItem();
+    expect(item).toBeDefined();
+    expect(item?.distanceKm).toBeCloseTo(140, 0);
   });
 });

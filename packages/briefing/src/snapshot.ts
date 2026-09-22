@@ -44,6 +44,7 @@ import {
   derivationsAsOf,
   healthAsOf,
   linksAsOf,
+  nearestClusterDetections,
   newestDetectionIngestAt,
   observationsAsOf,
   productCoverageFor,
@@ -626,10 +627,32 @@ async function readFireSubjects(input: FamilyCardInput): Promise<FoundSubjects> 
     newestDetectionIngestAt(input.db, { asOf: input.asOf, near }),
   ]);
 
+  /*
+   * The distance `assessFire` asks for is to the **nearest detection**, not to the centroid. It is
+   * exact when the cluster's members can be reconstructed and verified against the version's own
+   * count; otherwise it is the distance to the buffered hull, which is never larger than the true
+   * value, so a card errs towards "closer" rather than away.
+   */
+  const nearest = await nearestClusterDetections(input.db, {
+    clusters: clusters.map((cluster) => ({
+      clusterId: cluster.cluster_id,
+      knownAt: cluster.as_of,
+      firstDetectedAt: cluster.first_detected_at,
+      lastDetectedAt: cluster.last_detected_at,
+    })),
+    point: near.point,
+  });
+  const nearestByCluster = new Map(nearest.map((row) => [row.cluster_id, row]));
+
   let unassessed = 0;
   const items: SubjectSummary[] = [];
   for (const cluster of clusters) {
-    const item = buildFireSubject(input, cluster);
+    const members = nearestByCluster.get(cluster.cluster_id);
+    const nearestM =
+      members?.count === cluster.n_total && members.nearest_m !== null
+        ? members.nearest_m
+        : (cluster.area_distance_m ?? null);
+    const item = buildFireSubject(input, cluster, nearestM);
     if (item === null) {
       /*
        * A `DORMANT` cluster is not an *unassessed* subject. `assessFire` declines it because it is
@@ -755,8 +778,10 @@ function sortItems(items: SubjectSummary[]): void {
 function buildFireSubject(
   input: FamilyCardInput,
   cluster: ClusterVersionRow,
+  nearestM: number | null,
 ): SubjectSummary | null {
-  const nearestDetectionKm = (cluster.distance_m ?? Number.NaN) / 1000;
+  // Unknown is `NaN`, which `assessFire` declines: never a distance of zero.
+  const nearestDetectionKm = (nearestM ?? Number.NaN) / 1000;
   const hoursSinceLastDetection = hoursSince(cluster.last_detected_at, input.asOf);
   const state = fireClusterState(hoursSinceLastDetection);
 

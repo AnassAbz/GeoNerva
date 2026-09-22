@@ -416,6 +416,54 @@ describe('clusterVersionsAsOf', () => {
     expect(viaHeads).toStrictEqual(viaAsOf);
   });
 
+  it('selects by the cluster area on both paths, and they still agree', async () => {
+    // A cluster whose centroid is ~160 km north of Marrakech but whose hull reaches to ~140 km.
+    const stretched = stableUuid('asof-stretched-cluster');
+    await createCluster(db, {
+      id: stretched,
+      publicId: 'FR-26-CCCCCC',
+      createdAt: T0,
+      status: 'ACTIVE',
+    });
+    const lat = (km: number): number => PLACES.marrakech.lat + km / 111.2;
+    await insertClusterVersionIfChanged(db, {
+      clusterId: stretched,
+      asOf: minutes(30),
+      nTotal: 3,
+      n24h: 3,
+      overpasses24h: 1,
+      firstDetectedAt: T0,
+      lastDetectedAt: minutes(20),
+      frpSum24h: 5,
+      frpMax: 2,
+      maxConfidence: 'NOMINAL',
+      productIds: [1],
+      hullGeoJson: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [-8.05, lat(140)],
+            [-7.95, lat(140)],
+            [-7.95, lat(180)],
+            [-8.05, lat(180)],
+            [-8.05, lat(140)],
+          ],
+        ],
+      },
+      centroid: { lat: lat(160), lon: -8.0 },
+      status: 'ACTIVE',
+      contentSha256: contentHash('asof-stretched-cluster'),
+    });
+    const near = { point: PLACES.marrakech, radiusM: 150_000 };
+    const viaAsOf = await clusterVersionsAsOf(db, { asOf: hours(24), near });
+    const viaHeads = await clusterVersionsNow(db, { near });
+    expect(viaAsOf.map((row) => row.public_id)).toContain('FR-26-CCCCCC');
+    expect(viaHeads).toStrictEqual(viaAsOf);
+    const row = viaAsOf.find((entry) => entry.public_id === 'FR-26-CCCCCC');
+    expect((row?.area_distance_m ?? 0) / 1000).toBeCloseTo(140, 0);
+    expect((row?.distance_m ?? 0) / 1000).toBeCloseTo(160, 0);
+  });
+
   it('filters by radius', async () => {
     expect(
       await clusterVersionsAsOf(db, {

@@ -405,7 +405,14 @@ export interface ClusterVersionRow {
   readonly centroid_lat: number;
   readonly centroid_lon: number;
   readonly hull_geojson: string | null;
+  /** Distance to the centroid, when the query supplied a point. */
   readonly distance_m?: number | null;
+  /**
+   * Distance to the cluster's **area** — its buffered hull, or its centroid when it has none —
+   * when the query supplied a point. Every detection pixel lies inside the buffered hull, so this
+   * is never larger than the distance to the nearest detection: the safe bound for relevance.
+   */
+  readonly area_distance_m?: number | null;
 }
 
 /**
@@ -428,14 +435,23 @@ export async function clusterVersionsAsOf(
     options.clusterIds === undefined
       ? sql`TRUE`
       : sql`v.cluster_id = ANY(${sql.val(options.clusterIds)}::uuid[])`;
+  /*
+   * Selected by the cluster's **area**, not its centroid. A family radius is a question about the
+   * nearest detection (§9.2), and a large cluster can reach well inside the radius while its
+   * centroid sits outside it.
+   */
   const radiusFilter =
     options.near === undefined
       ? sql`TRUE`
-      : sql`ST_DWithin(latest.centroid, ST_SetSRID(ST_MakePoint(${options.near.point.lon}, ${options.near.point.lat}), 4326)::geography, ${options.near.radiusM})`;
+      : sql`ST_DWithin(COALESCE(latest.hull, latest.centroid), ST_SetSRID(ST_MakePoint(${options.near.point.lon}, ${options.near.point.lat}), 4326)::geography, ${options.near.radiusM})`;
   const distanceExpression =
     options.near === undefined
       ? sql`NULL::double precision`
       : sql`ST_Distance(latest.centroid, ST_SetSRID(ST_MakePoint(${options.near.point.lon}, ${options.near.point.lat}), 4326)::geography)::double precision`;
+  const areaDistanceExpression =
+    options.near === undefined
+      ? sql`NULL::double precision`
+      : sql`ST_Distance(COALESCE(latest.hull, latest.centroid), ST_SetSRID(ST_MakePoint(${options.near.point.lon}, ${options.near.point.lat}), 4326)::geography)::double precision`;
 
   const result = await sql<ClusterVersionRow>`
     WITH latest AS (
@@ -464,13 +480,69 @@ export async function clusterVersionsAsOf(
            ST_Y(latest.centroid::geometry) AS centroid_lat,
            ST_X(latest.centroid::geometry) AS centroid_lon,
            ST_AsGeoJSON(latest.hull::geometry, 6) AS hull_geojson,
-           ${distanceExpression} AS distance_m
+           ${distanceExpression} AS distance_m,
+           ${areaDistanceExpression} AS area_distance_m
     FROM latest
     JOIN geonerva.fire_clusters c ON c.id = latest.cluster_id
     WHERE (c.merged_at IS NULL OR c.merged_at > ${options.asOf})
       AND ${radiusFilter}
     ORDER BY latest.last_detected_at DESC, latest.id DESC
     LIMIT ${options.limit ?? 500}
+  `.execute(db);
+  return [...result.rows];
+}
+
+export interface ClusterNearestDetectionRow {
+  readonly cluster_id: string;
+  /** How many members the reconstruction found. Trust `nearest_m` only if this is the version's `n_total`. */
+  readonly count: number;
+  readonly nearest_m: number | null;
+}
+
+/**
+ * For each cluster, the members reconstructed as known at its summary version's `as_of`, and the
+ * distance from a point to the nearest of them — batched, one query for a whole card.
+ *
+ * The reconstruction and its caveat are `reconstructClusterDetections`': membership is written in
+ * place (ADR-039), so the caller must compare `count` with the version's `n_total` and use
+ * `nearest_m` only when they agree. `first_detected_at` bounds the scan to the partitions the
+ * cluster can have members in.
+ */
+export async function nearestClusterDetections(
+  db: Kysely<DB>,
+  options: {
+    readonly clusters: readonly {
+      readonly clusterId: string;
+      readonly knownAt: Date;
+      readonly firstDetectedAt: Date;
+      readonly lastDetectedAt: Date;
+    }[];
+    readonly point: LatLon;
+  },
+): Promise<ClusterNearestDetectionRow[]> {
+  if (options.clusters.length === 0) return [];
+  const result = await sql<ClusterNearestDetectionRow>`
+    WITH wanted AS (
+      SELECT *
+      FROM unnest(
+        ${sql.val(options.clusters.map((entry) => entry.clusterId))}::uuid[],
+        ${sql.val(options.clusters.map((entry) => entry.knownAt))}::timestamptz[],
+        ${sql.val(options.clusters.map((entry) => entry.firstDetectedAt))}::timestamptz[],
+        ${sql.val(options.clusters.map((entry) => entry.lastDetectedAt))}::timestamptz[]
+      ) AS w(cluster_id, known_at, first_detected_at, last_detected_at)
+    )
+    SELECT w.cluster_id::text AS cluster_id,
+           count(d.id)::integer AS count,
+           min(ST_Distance(d.geog, ST_SetSRID(ST_MakePoint(${options.point.lon}, ${options.point.lat}), 4326)::geography))::double precision
+             AS nearest_m
+    FROM wanted w
+    LEFT JOIN geonerva.fire_detections d
+      ON d.cluster_id = w.cluster_id
+     AND d.ingested_at <= w.known_at
+     AND d.acquired_at >= w.first_detected_at
+     AND d.acquired_at <= w.last_detected_at
+    GROUP BY w.cluster_id
+    ORDER BY w.cluster_id
   `.execute(db);
   return [...result.rows];
 }
@@ -491,11 +563,15 @@ export async function clusterVersionsNow(
   const radiusFilter =
     options.near === undefined
       ? sql`TRUE`
-      : sql`ST_DWithin(v.centroid, ST_SetSRID(ST_MakePoint(${options.near.point.lon}, ${options.near.point.lat}), 4326)::geography, ${options.near.radiusM})`;
+      : sql`ST_DWithin(COALESCE(v.hull, v.centroid), ST_SetSRID(ST_MakePoint(${options.near.point.lon}, ${options.near.point.lat}), 4326)::geography, ${options.near.radiusM})`;
   const distanceExpression =
     options.near === undefined
       ? sql`NULL::double precision`
       : sql`ST_Distance(v.centroid, ST_SetSRID(ST_MakePoint(${options.near.point.lon}, ${options.near.point.lat}), 4326)::geography)::double precision`;
+  const areaDistanceExpression =
+    options.near === undefined
+      ? sql`NULL::double precision`
+      : sql`ST_Distance(COALESCE(v.hull, v.centroid), ST_SetSRID(ST_MakePoint(${options.near.point.lon}, ${options.near.point.lat}), 4326)::geography)::double precision`;
 
   const result = await sql<ClusterVersionRow>`
     SELECT v.id::text         AS cluster_version_id,
@@ -514,7 +590,8 @@ export async function clusterVersionsNow(
            ST_Y(v.centroid::geometry) AS centroid_lat,
            ST_X(v.centroid::geometry) AS centroid_lon,
            ST_AsGeoJSON(v.hull::geometry, 6) AS hull_geojson,
-           ${distanceExpression} AS distance_m
+           ${distanceExpression} AS distance_m,
+           ${areaDistanceExpression} AS area_distance_m
     FROM geonerva.fire_cluster_heads h
     JOIN geonerva.fire_cluster_versions v ON v.id = h.latest_version_id
     JOIN geonerva.fire_clusters c ON c.id = h.cluster_id
