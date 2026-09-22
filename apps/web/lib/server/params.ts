@@ -416,9 +416,22 @@ export function parseQuery(search: URLSearchParams, name = 'q'): string {
   if (/[\p{Cc}\p{Cf}]/u.test(value)) {
     collector.fail(name, 'must not contain control characters');
   }
+  /*
+   * A coordinate pair typed into the search box is a position, and ADR-015 applies to it exactly as
+   * it does to `lat`/`lon`: "48.856614,2.352222" would otherwise reach Nominatim, the CDN key and
+   * the access log unrounded (P8 review). Refused, not rounded, for the reason S-1 gave: the URL
+   * has already reached the edge by the time this runs. Two decimals pass, as they do everywhere.
+   */
+  if (PRECISE_COORDINATE_PAIR.test(value)) {
+    collector.fail(name, 'must not contain a coordinate with more than 2 decimals');
+  }
   collector.assertValid();
   return value;
 }
+
+/** Two numbers that read as a latitude/longitude pair, either with 3 or more decimals. */
+const PRECISE_COORDINATE_PAIR =
+  /[-+]?\d{1,3}\.\d{3,}\s*[,;\s]\s*[-+]?\d{1,3}(?:\.\d+)?|[-+]?\d{1,3}(?:\.\d+)?\s*[,;\s]\s*[-+]?\d{1,3}\.\d{3,}/u;
 
 /**
  * A public id, checked against the format GeoNerva mints — and against the kind of subject the

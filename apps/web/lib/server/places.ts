@@ -180,6 +180,16 @@ async function throughCache(
     if (parsed.success) return { results: parsed.data, fromCache: true };
   }
 
+  // The caller's own budget first, so one key cannot spend everyone's share of the global one.
+  await enforceRateLimit({
+    db: () => db,
+    headers: request.headers,
+    now: request.now,
+    name: 'placesProviderMiss',
+    secret: webConfig().RATE_LIMIT_SECRET,
+    failClosed: true,
+  });
+
   await enforceRateLimit({
     db: () => db,
     headers: request.headers,

@@ -866,6 +866,7 @@ Postgres-backed fixed windows (`rate_limit_buckets`, key = HMAC of IP /24 or /48
 | Endpoint | Limit |
 |---|---|
 | `places/search` | 10/min/key, **1/s global** (protects our Nominatim standing) |
+| Nominatim cache misses (`places/search`, `places/reverse`) | 10/min/key, charged before the 1/s global (added at G8: `reverse` at the default 120/min could hold the global ceiling alone) |
 | `briefing` | 60/min/key |
 | everything else | 120/min/key |
 

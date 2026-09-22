@@ -324,6 +324,34 @@ describe('GET /api/v1/places/reverse', () => {
     expect(again).toMatchObject({ results: [], fromCache: true });
     expect(fake.reverses).toHaveLength(1);
   });
+
+  it('holds one caller to ten provider calls a minute, so it cannot hold the global ceiling alone', async () => {
+    /*
+     * Reverse is metered at the 120/min default, but every miss spends the deployment's single
+     * Nominatim call per second. Eleven fresh cells from one caller, a second apart so the global
+     * ceiling is never what refuses: the eleventh is refused by the caller's own miss budget, and
+     * the provider saw ten.
+     */
+    const caller = '192.0.2.150';
+    const statuses: number[] = [];
+    for (let index = 0; index < 11; index += 1) {
+      if (index > 0) await new Promise((resolve) => setTimeout(resolve, 1_050));
+      const lat = (10 + index).toFixed(2);
+      statuses.push(
+        (await reverse(request(`/api/v1/places/reverse?lat=${lat}&lon=20`, caller))).status,
+      );
+    }
+    expect(statuses.slice(0, 10).every((status) => status === 200)).toBe(true);
+    expect(statuses[10]).toBe(429);
+    expect(fake.reverses).toHaveLength(10);
+
+    // A cached cell costs the caller nothing, and another caller is unaffected.
+    expect((await reverse(request('/api/v1/places/reverse?lat=10.00&lon=20', caller))).status).toBe(
+      200,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 1_050));
+    expect((await reverse(request('/api/v1/places/reverse?lat=40.00&lon=20'))).status).toBe(200);
+  }, 30_000);
 });
 
 describe('a p: key in a briefing', () => {

@@ -72,6 +72,7 @@ describe('magnitude of completeness', () => {
       threshold: 3.2,
       method: 'MAXIMUM_CURVATURE',
       eventsAboveCandidate: 50,
+      referenceBeyondRetention: false,
     });
     const fortyNine = catalog({ 3.0: 60, 3.2: 49 });
     expect(estimateCompleteness(fortyNine, { referenceBeyondRetention: false })).toMatchObject({
@@ -92,6 +93,8 @@ describe('magnitude of completeness', () => {
     expect(estimateCompleteness(deep, { referenceBeyondRetention: true })).toMatchObject({
       threshold: 4.8,
       method: 'MAXIMUM_CURVATURE',
+      // Carried even though the method no longer shows it: largest-recent needs to know.
+      referenceBeyondRetention: true,
     });
   });
 
@@ -138,7 +141,12 @@ function baseline(
     radiusKm: 150,
     windowDays: 7,
     referenceFrom: new Date(AS_OF.getTime() - 7 * DAY - perWindow.length * 7 * DAY),
-    completeness: { threshold: 4.5, method: 'FALLBACK', eventsAboveCandidate: null },
+    completeness: {
+      threshold: 4.5,
+      method: 'FALLBACK',
+      eventsAboveCandidate: null,
+      referenceBeyondRetention: false,
+    },
     events: [...quakes(perWindow, observed), ...extra],
   });
 }
@@ -403,5 +411,63 @@ describe('GDACS_CONTEXT: a record shorter than five years', () => {
     ).toBe(
       "2 GDACS flood events within 300 km since June 2026, when GeoNerva's GDACS record begins.",
     );
+  });
+});
+
+describe('P8 review fixes', () => {
+  it('counts an event at exactly the start of the current window, once', () => {
+    const edge: QuakeRecord = {
+      observedAt: new Date(AS_OF.getTime() - 7 * DAY),
+      magnitude: 5,
+      distanceKm: 20,
+      publicId: 'EQ-26-EDGE01',
+    };
+    const without = baseline(windows(52, 20), 0);
+    const withEdge = baseline(windows(52, 20), 0, [edge]);
+    expect(withEdge.observed).toBe(without.observed + 1);
+    expect(withEdge.nEvents).toBe(without.nEvents);
+  });
+
+  it('refuses "the largest since" below M4.5 whenever the reference reaches past retention', () => {
+    // FALLBACK at M4.5, not RETENTION_FLOOR — the method no longer hides the pruned record.
+    const older: QuakeRecord = {
+      observedAt: new Date(AS_OF.getTime() - 60 * DAY),
+      magnitude: 4.6,
+      distanceKm: 20,
+      publicId: 'EQ-26-OLDER1',
+    };
+    const recent: QuakeRecord = {
+      observedAt: new Date(AS_OF.getTime() - 2 * DAY),
+      magnitude: 3.9,
+      distanceKm: 20,
+      publicId: 'EQ-26-RECNT1',
+    };
+    const input = {
+      asOf: AS_OF,
+      radiusKm: 150,
+      windowDays: 7,
+      referenceFrom: new Date(AS_OF.getTime() - 60 * 7 * DAY),
+      events: [older, recent],
+    };
+    const beyond = earthquakeCountBaseline({
+      ...input,
+      completeness: {
+        threshold: 4.5,
+        method: 'FALLBACK',
+        eventsAboveCandidate: null,
+        referenceBeyondRetention: true,
+      },
+    });
+    expect(beyond.largestRecent).toBeNull();
+    const within = earthquakeCountBaseline({
+      ...input,
+      completeness: {
+        threshold: 4.5,
+        method: 'FALLBACK',
+        eventsAboveCandidate: null,
+        referenceBeyondRetention: false,
+      },
+    });
+    expect(within.largestRecent?.magnitude).toBe(3.9);
   });
 });

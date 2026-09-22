@@ -25,6 +25,12 @@ export interface Completeness {
   readonly method: CompletenessMethod;
   /** Events at or above the maximum-curvature candidate, when one was estimated. */
   readonly eventsAboveCandidate: number | null;
+  /**
+   * The reference reaches past the 30 days small earthquakes are kept for. Carried here rather
+   * than inferred from `method`, because a FALLBACK or MAXIMUM_CURVATURE threshold at or above
+   * M4.5 hides it, and a claim about smaller events older than 30 days is still unsupported.
+   */
+  readonly referenceBeyondRetention: boolean;
 }
 
 /** Magnitudes below this are retained for 30 days only (ADR-035). */
@@ -52,7 +58,12 @@ export function estimateCompleteness(
     method = 'RETENTION_FLOOR';
   }
 
-  return { threshold, method, eventsAboveCandidate: estimate?.eventsAbove ?? null };
+  return {
+    threshold,
+    method,
+    eventsAboveCandidate: estimate?.eventsAbove ?? null,
+    referenceBeyondRetention: options.referenceBeyondRetention,
+  };
 }
 
 /**

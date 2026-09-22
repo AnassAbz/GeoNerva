@@ -816,3 +816,28 @@ describe('parseHistory', () => {
     expect(JSON.stringify(invalidParamOf('family=xyzzy'))).not.toContain('xyzzy');
   });
 });
+
+describe('parseQuery: a coordinate is a position (ADR-015)', () => {
+  function reasonFor(q: string): string | undefined {
+    try {
+      parseQuery(params(`q=${encodeURIComponent(q)}`));
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiProblemError);
+      return (error as ApiProblemError).problem.invalidParams?.[0]?.reason;
+    }
+    return undefined;
+  }
+
+  it('refuses a coordinate pair with more than two decimals, without echoing it', () => {
+    for (const q of ['48.856614,2.352222', '48.85 2.352', '-33.868;151.21', '+48.8566, 2.35']) {
+      expect(reasonFor(q), q).toBe('must not contain a coordinate with more than 2 decimals');
+    }
+    expect(reasonFor('48.856614,2.352222')).not.toContain('856614');
+  });
+
+  it('accepts a rounded pair, and ordinary text with numbers in it', () => {
+    for (const q of ['48.86,2.35', 'Marrakech', 'Route 66', 'Apt 12, 3.5 km', 'Paris 75001']) {
+      expect(reasonFor(q), q).toBeUndefined();
+    }
+  });
+});

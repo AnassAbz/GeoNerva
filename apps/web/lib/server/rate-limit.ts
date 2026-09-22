@@ -69,6 +69,16 @@ export const RATE_LIMITS = {
   placesSearch: { limit: 10, windowS: 60 },
   /** The global ceiling that protects the Nominatim standing. Not per key. */
   placesSearchGlobal: { limit: 1, windowS: 1 },
+  /**
+   * Provider calls per key, charged only on a cache miss, before the global ceiling.
+   *
+   * Not in §13.4's table, and added because the table left a gap both P8 reviews found:
+   * `/places/reverse` is metered at the 120/min default, yet every miss spends the deployment's
+   * single Nominatim call per second, so one caller walking fresh cells kept the global bucket full
+   * and every other user's search refused. The same 10/min §13.4 gives `places/search`, now held
+   * against whichever endpoint reaches the provider.
+   */
+  placesProviderMiss: { limit: 10, windowS: 60 },
   default: { limit: 120, windowS: 60 },
 } as const;
 

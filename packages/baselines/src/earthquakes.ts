@@ -23,7 +23,7 @@ import {
   EARTHQUAKE_BASELINE,
   EARTHQUAKE_ELEVATED_CAVEAT,
 } from './config.ts';
-import type { Completeness } from './completeness.ts';
+import { RETENTION_FLOOR_MAGNITUDE, type Completeness } from './completeness.ts';
 import { countPerWindow, mean, midRankPercentile, quantile } from './statistics.ts';
 
 export type BaselineStatus = 'OK' | 'RARE_ACTIVITY' | 'INSUFFICIENT_HISTORY';
@@ -117,7 +117,10 @@ export function earthquakeCountBaseline(input: EarthquakeCountInput): Earthquake
   );
   const times = counted.map((event) => event.observedAt);
 
-  const observed = times.filter((time) => time.getTime() > currentStart.getTime()).length;
+  // `[currentStart, asOf]`: reference windows are half-open `[start, end)`, so the instant that
+  // ends window 0 begins the current one. With `>` an event at exactly that instant was counted in
+  // neither (P8 review).
+  const observed = times.filter((time) => time.getTime() >= currentStart.getTime()).length;
   const nWindows = Math.max(
     0,
     Math.floor((currentStart.getTime() - input.referenceFrom.getTime()) / windowMs),
@@ -234,10 +237,12 @@ function largestRecent(input: EarthquakeCountInput): EarthquakeCountResult['larg
         left.observedAt.getTime() - right.observedAt.getTime(),
     )[0];
   if (recent?.magnitude === undefined || recent.magnitude === null) return null;
-  if (
-    input.completeness.method === 'RETENTION_FLOOR' &&
-    recent.magnitude < input.completeness.threshold
-  ) {
+  /*
+   * Whenever the comparison reaches past retention, not only under the RETENTION_FLOOR method: a
+   * FALLBACK at M4.5 compares an M3.9 with a record from which every older M3.9 was pruned, and
+   * "the largest since" would then be a claim about events GeoNerva has forgotten (P8 review).
+   */
+  if (input.completeness.referenceBeyondRetention && recent.magnitude < RETENTION_FLOOR_MAGNITUDE) {
     return null;
   }
   const magnitude = recent.magnitude;

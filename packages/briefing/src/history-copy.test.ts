@@ -81,18 +81,30 @@ const ones = (n: number, events: number): number[] =>
 describe('baseline copy', () => {
   it('is clean for every earthquake status, band and completeness method', () => {
     const all = [
-      ...texts(ones(52, 20), 0, { threshold: 4.5, method: 'FALLBACK', eventsAboveCandidate: null }),
+      ...texts(ones(52, 20), 0, {
+        threshold: 4.5,
+        method: 'FALLBACK',
+        eventsAboveCandidate: null,
+        referenceBeyondRetention: true,
+      }),
       ...texts(ones(52, 20), 3, {
         threshold: 3.1,
         method: 'MAXIMUM_CURVATURE',
         eventsAboveCandidate: 80,
+        referenceBeyondRetention: false,
       }),
       ...texts(ones(52, 19), 1, {
         threshold: 4.5,
         method: 'RETENTION_FLOOR',
         eventsAboveCandidate: null,
+        referenceBeyondRetention: true,
       }),
-      ...texts(ones(51, 0), 0, { threshold: 4.5, method: 'FALLBACK', eventsAboveCandidate: null }),
+      ...texts(ones(51, 0), 0, {
+        threshold: 4.5,
+        method: 'FALLBACK',
+        eventsAboveCandidate: null,
+        referenceBeyondRetention: true,
+      }),
     ];
     // The mandated caveats are among them, so the exemption is exercised, not assumed.
     expect(all).toContain(EARTHQUAKE_ELEVATED_CAVEAT);

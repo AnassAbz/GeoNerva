@@ -41,6 +41,7 @@ describe('RATE_LIMITS', () => {
       briefing: { limit: 60, windowS: 60 },
       placesSearch: { limit: 10, windowS: 60 },
       placesSearchGlobal: { limit: 1, windowS: 1 },
+      placesProviderMiss: { limit: 10, windowS: 60 },
       default: { limit: 120, windowS: 60 },
     });
   });
