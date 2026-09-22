@@ -895,7 +895,7 @@ describe('GDACS coverage is per feed (review round 3)', () => {
     });
     const response = await history(floods);
     expect(response.metric.interpretation).toBe(
-      "0 GDACS flood events within 300 km since 20 September 2026, when GeoNerva's GDACS record begins.",
+      "0 GDACS flood events within 300 km since 21 September 2026, when GeoNerva's GDACS record begins.",
     );
   });
 

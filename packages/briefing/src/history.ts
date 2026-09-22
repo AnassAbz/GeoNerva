@@ -413,7 +413,12 @@ async function gdacsHistory(base: Base): Promise<HistoryResponse> {
       options.asOf.getUTCDate(),
     ),
   );
-  const recordStart = coverageStart > fiveYears ? coverageStart : null;
+  /*
+   * From the first *whole* UTC day covered: a record that began at 23:45 on the 20th is stated as
+   * beginning on the 21st, so the sentence never presents the unread part of a day (review round 4).
+   */
+  const firstWholeDay = new Date(Math.ceil(coverageStart.getTime() / DAY_MS) * DAY_MS);
+  const recordStart = coverageStart > fiveYears ? firstWholeDay : null;
   const since = recordStart ?? fiveYears;
   const rows = await observationsAsOf(options.db, {
     asOf: options.asOf,

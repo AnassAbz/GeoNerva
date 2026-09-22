@@ -430,6 +430,33 @@ export function parseQuery(search: URLSearchParams, name = 'q'): string {
   return value;
 }
 
+/*
+ * Sexagesimal forms precise on their own (reviews rounds 3 and 4). Before matching, every degree
+ * mark a keyboard produces — `°`, the ring above `˚`, and `º`, which NFKC folds to `o` — becomes
+ * `°`, and after NFKC the typographic double prime (″) is two primes (′′).
+ *
+ *  - degrees, minutes and seconds, however the seconds are marked, or colon-separated;
+ *  - degrees and decimal minutes to two or more places (about 20 m);
+ *  - spaced degrees and minutes (decimal, or with seconds) with an upper-case hemisphere letter
+ *    after them or before them. Minutes are two digits and under 60, seconds under 60, and the
+ *    letter must stand alone, so "Room 1 2 3 N" and "Flight 12 34 Newark" are not positions.
+ *    "size 10 12 14 S" still is — it is a valid position, and a 400 is the cheaper mistake.
+ */
+const MINUTES = String.raw`[0-5]?\d`;
+const SEXAGESIMAL: readonly RegExp[] = [
+  new RegExp(String.raw`\d{1,3}\s*°\s*${MINUTES}\s*['′:]\s*${MINUTES}(?:[.,]\d+)?`, 'u'),
+  new RegExp(String.raw`\d{1,3}\s*°\s*${MINUTES}[.,]\d{2,}`, 'u'),
+  new RegExp(String.raw`(?<![\d.])\d{1,3}:${MINUTES}:${MINUTES}(?:[.,]\d+)?\s*[NSEW]\b`, 'u'),
+  new RegExp(
+    String.raw`(?<![\d.])\d{1,3}\s+[0-5]\d(?:[.,]\d{2,}|\s+${MINUTES}(?:[.,]\d+)?)\s*[NSEW](?![A-Za-z])`,
+    'u',
+  ),
+  new RegExp(
+    String.raw`(?<![A-Za-z])[NSEW]\s*\d{1,3}\s+[0-5]\d(?:[.,]\d{2,}|\s+${MINUTES}(?:[.,]\d+)?)(?![\d.])`,
+    'u',
+  ),
+];
+
 /**
  * Whether a search term carries a position finer than two decimals.
  *
@@ -447,22 +474,9 @@ export function parseQuery(search: URLSearchParams, name = 'q'): string {
  * Both numbers must be decimals. An address like "Av. Paulista 1.578, 01310-200", where "1.578" is
  * a house number with a thousands separator, has one decimal number and passes.
  */
-/*
- * Sexagesimal forms precise on their own. After NFKC the typographic double prime (″) is two
- * primes (′′), which the first version of this list did not match (review round 3).
- *
- *  - degrees, minutes and seconds, whatever marks the seconds (or nothing does);
- *  - degrees and decimal minutes to two or more places (about 20 m);
- *  - the same written with spaces and a hemisphere letter instead of symbols.
- */
-const SEXAGESIMAL: readonly RegExp[] = [
-  /\d{1,3}\s*°\s*\d{1,2}\s*['′]\s*\d{1,2}(?:[.,]\d+)?/u,
-  /\d{1,3}\s*°\s*\d{1,2}[.,]\d{2,}/u,
-  /(?<![\d.])\d{1,3}\s+\d{1,2}(?:[.,]\d{2,}|\s+\d{1,2}(?:[.,]\d+)?)\s*[NSEW](?![a-z])/iu,
-];
-
 export function containsPreciseCoordinate(raw: string): boolean {
-  const text = raw.normalize('NFKC');
+  // Degree marks are unified *before* NFKC, which would otherwise fold `º` into a plain `o`.
+  const text = raw.replace(/[º˚]/gu, '°').normalize('NFKC');
   if (SEXAGESIMAL.some((pattern) => pattern.test(text))) return true;
 
   // Not after a digit or a dot, so a match never starts inside another number; after a comma is

@@ -864,6 +864,14 @@ describe('containsPreciseCoordinate: the spellings a geocoder understands', () =
     '48 51.3969N 2 21.1134E',
     `48°51'24N 2°21'08E`,
     '48 51 24 N 2 21 08 E',
+    // Round 4: hemisphere first, other degree marks, colons.
+    'N 48 51.3969, E 2 21.1134',
+    'N48 51.397, E2 21.113',
+    'N 48 51 24, E 2 21 8',
+    'paris N 48 51.3969',
+    `48º51'24''N`,
+    '48˚51′24″N',
+    '48:51:24N 2:21:08E',
   ])('finds a precise position in %s', (query) => {
     expect(containsPreciseCoordinate(query)).toBe(true);
   });
@@ -883,6 +891,14 @@ describe('containsPreciseCoordinate: the spellings a geocoder understands', () =
     'Terminal 2 Gate 14 North',
     'Flight 12 34 Newark',
     '12.345,67 EUR',
+    'Room 1 2 3 N',
+    'Gate 1 2 3 e',
+    'Dec 12 10 30 w/ friends',
+    'Top 10 12.50 e',
+    'Building 12 5 E',
+    'Bus 12 30 45 West',
+    'Calle 10 20 30 Norte',
+    'Oslo 2 Norway',
   ])('lets %s through', (query) => {
     expect(containsPreciseCoordinate(query)).toBe(false);
   });
