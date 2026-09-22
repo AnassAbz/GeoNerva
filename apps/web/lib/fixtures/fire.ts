@@ -1,4 +1,16 @@
-/** `FireClusterDetail` for FR-26-4HX2MB: 14 VIIRS thermal detections 39 km south-west. */
+/**
+ * `FireClusterDetail` for FR-26-4HX2MB: 14 VIIRS thermal detections 39 km south-west.
+ *
+ * Two shapes, because the endpoint serves two (ADR-039):
+ *
+ *  - `detections: 'verified'` (the default) — the member set rebuilt from the present matched the
+ *    version's `n_total`, so the sample and the daily counts are the set the summary counted.
+ *  - `detections: 'withheld'` — it did not match, so the builder publishes `truncated: true` with
+ *    an empty sample and no daily counts, and `total` stays the version's own count. The place is
+ *    dropped in that variant too: with no verified detections the builder measures to the buffered
+ *    hull instead, and `FIRE_RELEVANCE`'s reason text names a nearest *detection*, which is
+ *    exactly the claim this state cannot make.
+ */
 
 import type { FireClusterDetail, FireDetectionView } from '@geonerva/domain';
 
@@ -66,8 +78,11 @@ const SAMPLE: readonly FireDetectionView[] = [
   },
 ];
 
-export function fireClusterDetail(options: { withPlace?: boolean } = {}): FireClusterDetail {
-  const withPlace = options.withPlace ?? true;
+export function fireClusterDetail(
+  options: { withPlace?: boolean; detections?: 'verified' | 'withheld' } = {},
+): FireClusterDetail {
+  const verified = (options.detections ?? 'verified') === 'verified';
+  const withPlace = verified && (options.withPlace ?? true);
   const asOf = FIXTURE_NOW;
   const detail: FireClusterDetail = {
     schemaVersion: SCHEMA_VERSION,
@@ -153,15 +168,18 @@ export function fireClusterDetail(options: { withPlace?: boolean } = {}): FireCl
       },
     ],
     detections: {
+      /* The version's own count either way: it is the one number that is a fact at `asOf`. */
       total: 14,
       truncated: true,
       cap: 3,
-      sample: SAMPLE,
-      byDay: [
-        { day: '2026-09-20', count: 0, frpSum: null, hasSatelliteCoverage: true },
-        { day: '2026-09-21', count: 9, frpSum: 27.9, hasSatelliteCoverage: true },
-        { day: '2026-09-22', count: 5, frpSum: 19.6, hasSatelliteCoverage: true },
-      ],
+      sample: verified ? SAMPLE : [],
+      byDay: verified
+        ? [
+            { day: '2026-09-20', count: 0, frpSum: null, hasSatelliteCoverage: true },
+            { day: '2026-09-21', count: 9, frpSum: 27.9, hasSatelliteCoverage: true },
+            { day: '2026-09-22', count: 5, frpSum: 19.6, hasSatelliteCoverage: true },
+          ]
+        : [],
       evidenceId: EV.fds3,
     },
     mergedIntoPublicId: null,
