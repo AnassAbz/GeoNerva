@@ -985,7 +985,8 @@
                             }
                           },
                           "href": {
-                            "type": "string"
+                            "type": "string",
+                            "pattern": "^\\/(?:event|fire)\\/[A-Z]{2}-\\d{2}-[0-9A-Z]{4,12}$"
                           }
                         },
                         "required": [
@@ -2562,7 +2563,8 @@
                             "type": "string"
                           },
                           "href": {
-                            "type": "string"
+                            "type": "string",
+                            "pattern": "^\\/(?:event|fire)\\/[A-Z]{2}-\\d{2}-[0-9A-Z]{4,12}$"
                           },
                           "evidenceIds": {
                             "type": "array",
@@ -4281,7 +4283,7 @@
                           },
                           "href": {
                             "type": "string",
-                            "minLength": 1
+                            "pattern": "^\\/(?:event|fire)\\/[A-Z]{2}-\\d{2}-[0-9A-Z]{4,12}$"
                           },
                           "reasons": {
                             "type": "array",
@@ -5656,7 +5658,7 @@
                           },
                           "href": {
                             "type": "string",
-                            "minLength": 1
+                            "pattern": "^\\/(?:event|fire)\\/[A-Z]{2}-\\d{2}-[0-9A-Z]{4,12}$"
                           },
                           "reasons": {
                             "type": "array",
