@@ -782,28 +782,23 @@ function buildFireSubject(
 ): SubjectSummary | null {
   // Unknown is `NaN`, which `assessFire` declines: never a distance of zero.
   const nearestDetectionKm = (nearestM ?? Number.NaN) / 1000;
-  const hoursSinceLastDetection = hoursSince(cluster.last_detected_at, input.asOf);
-  const state = fireClusterState(hoursSinceLastDetection);
 
   const evidenceIds: EvidenceId[] = [
     evidenceId.fireClusterVersion(cluster.cluster_version_id),
     evidenceId.detectionSet(cluster.cluster_version_id, cluster.n_total),
   ].sort(compare);
 
-  const assessment = assessFire({
+  const relevance = assessFireCluster({
+    asOf: input.asOf,
+    lastDetectedAt: cluster.last_detected_at,
     nearestDetectionKm,
-    state,
     n24h: cluster.n_24h,
     nTotal: cluster.n_total,
     overpasses24h: cluster.overpasses_24h,
-    nPrevious24h: cluster.n_24h,
     frpSum24h: cluster.frp_sum_24h,
-    hoursSinceLastDetection,
-    officialAlertNearby: false,
-    relatedGdacsEventId: null,
-    persistentHeatSource: false,
+    evidenceIds,
   });
-  if (assessment === null) return null;
+  if (relevance === null) return null;
 
   return {
     subjectRef: formatSubjectRef({ kind: 'fire_cluster', publicId: cluster.public_id }),
@@ -851,29 +846,70 @@ function buildFireSubject(
         evidenceIds,
       },
     ],
-    relevance: {
-      level: assessment.requiresAuthoritativeBasis ? 'HIGH' : assessment.level,
-      reasons: assessment.reasons.map((reason) => ({
-        code: reason.code,
-        text: reason.text,
-        params: reason.params,
-        evidenceIds,
-      })),
-      authoritativeBasis: null,
-      /*
-       * §9.2's caveat is mandatory, and it is asserted here as well as inside the model: a thermal
-       * detection is not a confirmed wildfire, and this is the one sentence that must survive
-       * every refactor of the card.
-       */
-      caveats: assessment.caveats.includes(THERMAL_DETECTION_CAVEAT)
-        ? assessment.caveats
-        : [...assessment.caveats, THERMAL_DETECTION_CAVEAT],
-      evidenceIds,
-      modelVersion: assessment.modelVersion,
-    },
+    relevance,
     agreement: null,
     evidenceIds,
     href: `/fires/${cluster.public_id}`,
+  };
+}
+
+export interface FireClusterAssessmentInput {
+  readonly asOf: Date;
+  readonly lastDetectedAt: Date;
+  /** Distance to the nearest detection, or a bound that is never larger than it. */
+  readonly nearestDetectionKm: number;
+  readonly n24h: number;
+  readonly nTotal: number;
+  readonly overpasses24h: number;
+  readonly frpSum24h: number | null;
+  readonly evidenceIds: readonly EvidenceId[];
+}
+
+/**
+ * A fire cluster's relevance to a place, through `assessFire`, shaped for the read model.
+ *
+ * One function for the briefing card and the cluster page, so the two cannot disagree about the
+ * same cluster. The growth signal is deliberately not claimed — the previous 24-hour count is not
+ * held, so it is passed as equal to the current one, which states no growth rather than a growth
+ * nobody measured — and `persistentHeatSource` is `false` because nothing sets the flag yet (P1).
+ */
+export function assessFireCluster(input: FireClusterAssessmentInput): RelevanceAssessment | null {
+  const hoursSinceLastDetection = hoursSince(input.lastDetectedAt, input.asOf);
+  const assessment = assessFire({
+    nearestDetectionKm: input.nearestDetectionKm,
+    state: fireClusterState(hoursSinceLastDetection),
+    n24h: input.n24h,
+    nTotal: input.nTotal,
+    overpasses24h: input.overpasses24h,
+    nPrevious24h: input.n24h,
+    frpSum24h: input.frpSum24h,
+    hoursSinceLastDetection,
+    officialAlertNearby: false,
+    relatedGdacsEventId: null,
+    persistentHeatSource: false,
+  });
+  if (assessment === null) return null;
+
+  const evidenceIds = [...input.evidenceIds];
+  return {
+    level: assessment.requiresAuthoritativeBasis ? 'HIGH' : assessment.level,
+    reasons: assessment.reasons.map((reason) => ({
+      code: reason.code,
+      text: reason.text,
+      params: reason.params,
+      evidenceIds,
+    })),
+    authoritativeBasis: null,
+    /*
+     * §9.2's caveat is mandatory, and it is asserted here as well as inside the model: a thermal
+     * detection is not a confirmed wildfire, and this is the one sentence that must survive
+     * every refactor of the card.
+     */
+    caveats: assessment.caveats.includes(THERMAL_DETECTION_CAVEAT)
+      ? assessment.caveats
+      : [...assessment.caveats, THERMAL_DETECTION_CAVEAT],
+    evidenceIds,
+    modelVersion: assessment.modelVersion,
   };
 }
 
@@ -896,6 +932,33 @@ export function hazardTypesOf(family: HazardFamily): readonly HazardType[] {
   }
 }
 
+/**
+ * The members of an event as the correlation package describes them.
+ *
+ * Shared by the briefing card, the map and the event page, because the headline magnitude and the
+ * agreement are computed from exactly this, and three copies of the mapping would be three
+ * chances for a derived copy to be counted as a second opinion (ADR-006).
+ */
+export function memberSolutionsOf(
+  rows: readonly ObservationRow[],
+  linkByRecord: ReadonlyMap<string, LinkRow>,
+): MemberSolution[] {
+  return rows.map((row) => ({
+    sourceId: row.source_id,
+    sourceRecordId: row.source_record_id,
+    relation:
+      linkByRecord.get(row.source_record_id)?.relation === 'DERIVED_COPY'
+        ? 'DERIVED_COPY'
+        : 'SAME_EVENT',
+    epicentre: { lat: row.lat, lon: row.lon },
+    magnitude: numberOf(row.magnitude),
+    magnitudeType: row.magnitude_type,
+    depthKm: numberOf(row.depth_km),
+    providerStatus: row.provider_status,
+    contributor: row.contributor,
+  }));
+}
+
 /** Assembles one subject from the members of its canonical event. */
 function buildSubject(
   input: FamilyCardInput,
@@ -912,20 +975,7 @@ function buildSubject(
   const link = linkByRecord.get(first.source_record_id);
   if (link === undefined) return null;
 
-  const solutions: MemberSolution[] = members.map((row) => ({
-    sourceId: row.source_id,
-    sourceRecordId: row.source_record_id,
-    relation:
-      linkByRecord.get(row.source_record_id)?.relation === 'DERIVED_COPY'
-        ? 'DERIVED_COPY'
-        : 'SAME_EVENT',
-    epicentre: { lat: row.lat, lon: row.lon },
-    magnitude: numberOf(row.magnitude),
-    magnitudeType: row.magnitude_type,
-    depthKm: numberOf(row.depth_km),
-    providerStatus: row.provider_status,
-    contributor: row.contributor,
-  }));
+  const solutions = memberSolutionsOf(members, linkByRecord);
 
   const assessment = assessAgreement(solutions);
   const headline = chooseHeadlineMagnitude(solutions);
@@ -1002,7 +1052,7 @@ function buildSubject(
   };
 }
 
-interface SubjectAssessmentInput {
+export interface SubjectAssessmentInput {
   readonly family: HazardFamily;
   readonly location: LocationRef;
   readonly anchor: ObservationRow;
@@ -1021,7 +1071,7 @@ interface SubjectAssessmentInput {
  * `requiresAuthoritativeBasis` and this is where invariant I10 is enforced, by demoting rather
  * than by trusting the caller to attach one. Nothing here re-scores or overrides a level.
  */
-function assessSubject(input: SubjectAssessmentInput): RelevanceAssessment | null {
+export function assessSubject(input: SubjectAssessmentInput): RelevanceAssessment | null {
   const location = { lat: input.location.lat, lon: input.location.lon };
   const severityValue = input.anchor.severity_value;
 
@@ -1145,7 +1195,9 @@ function assessSubject(input: SubjectAssessmentInput): RelevanceAssessment | nul
  * so that a value is never compared across scales, and a scheme string nobody has defined an
  * ordering for would let one be.
  */
-export function providerSeverityOf(anchor: ObservationRow): ProviderSeverity | null {
+export function providerSeverityOf(
+  anchor: Pick<ObservationRow, 'severity_scheme' | 'severity_value'>,
+): ProviderSeverity | null {
   const scheme = anchor.severity_scheme;
   const value = anchor.severity_value;
   if (scheme === null || value === null) return null;
@@ -1208,7 +1260,7 @@ export function titleOf(
   return titles[hazardType];
 }
 
-function factsOf(
+export function factsOf(
   anchor: ObservationRow,
   magnitude: number | null,
   depthKm: number | null,
@@ -1265,7 +1317,7 @@ function factsOf(
  * Only **independent** members are compared. A derived copy restating a stale magnitude is not a
  * source disagreeing; including it would manufacture a conflict out of a republication.
  */
-function toAgreementView(
+export function toAgreementView(
   assessment: ReturnType<typeof assessAgreement>,
   members: readonly ObservationRow[],
   linkByRecord: ReadonlyMap<string, LinkRow>,

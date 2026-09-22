@@ -600,4 +600,13 @@ Turborepo is not adopted until build times justify it.
     This is one additive migration, a change to two repository functions, and a backfill that can set `cluster_assigned_at` from the cluster version that first counted each detection — or, more honestly, leave it `NULL` for detections assigned before the migration and treat those as unknowable before the migration date.
 
 - **Until this is decided**, `/events` returns canonical events and fire-cluster centroids at every zoom, one cap of 2,000 applies throughout, and no `fire_detection` feature is ever produced. Nothing is silently missing: the map never claimed to show detections, and `total` counts only the subjects it draws.
+- **The same gap reaches two other places, which ship a verify-or-withhold interim** rather than a
+  guess. `GET /api/v1/fire-clusters/{publicId}` must list a cluster's detections, and the briefing
+  must measure fire relevance to the *nearest detection*. Both rebuild the member set from the
+  present — assigned to this cluster now, ingested by the summary version's own `as_of`, acquired
+  within its first and last detection — and accept it **only when its size equals the version's
+  `n_total`**, the one count that is a fact at that knowledge time. Otherwise the cluster page
+  withholds the sample and the daily counts (`truncated: true`, `total` still the version's count),
+  and the briefing measures to the buffered hull, which is never farther than the nearest detection.
+  The recommended storage change above would make both exact, and would remove the withholding.
 - **Trade-offs of the recommendation:** one more column on the highest-volume table (8 bytes per row, about 1.2 MB per day at ≈146k detections), and a read that follows a merge chain rather than a single column. Against that: the map can draw what §7.5 asked for at every knowledge time, and the membership history of an area of thermal activity becomes auditable, which DOMAIN_MODEL §4.10 already claims it is.

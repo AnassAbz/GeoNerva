@@ -1122,3 +1122,45 @@ describe('canonical events and links (DOMAIN_MODEL §4.8)', () => {
     expect(ids.size).toBe(20);
   });
 });
+
+describe('aliases carry the knowledge time of the poll that reported them', () => {
+  /*
+   * `first_seen_at` defaulted to the database's `now()`, a different clock from every other fact
+   * the record carries: a backfill stamped historical aliases with the day it ran, and a replay at
+   * a record's own ingestion time could show the record without the id it arrived under.
+   */
+  async function seenAt(alias: string): Promise<Date | undefined> {
+    const result = await sql<{ first_seen_at: Date }>`
+      SELECT first_seen_at FROM geonerva.source_record_aliases WHERE alias = ${alias}
+    `.execute(db);
+    return result.rows[0]?.first_seen_at;
+  }
+
+  it('stamps a new record’s aliases with its ingestion time', async () => {
+    await seedObservation(db, {
+      primaryKey: 'us-clock',
+      aliases: ['us-clock', 'ci-clock'],
+      ingestedAt: minutes(15),
+      centroid: PLACES.marrakech,
+    });
+    expect(await seenAt('us-clock')).toStrictEqual(minutes(15));
+    expect(await seenAt('ci-clock')).toStrictEqual(minutes(15));
+  });
+
+  it('stamps an alias added to an existing record with the poll that added it', async () => {
+    await seedObservation(db, {
+      primaryKey: 'us-grow',
+      aliases: ['us-grow'],
+      ingestedAt: minutes(15),
+      centroid: PLACES.marrakech,
+    });
+    await seedObservation(db, {
+      primaryKey: 'us-grow',
+      aliases: ['us-grow', 'nc-grow'],
+      ingestedAt: minutes(40),
+      centroid: PLACES.marrakech,
+    });
+    expect(await seenAt('us-grow')).toStrictEqual(minutes(15));
+    expect(await seenAt('nc-grow')).toStrictEqual(minutes(40));
+  });
+});

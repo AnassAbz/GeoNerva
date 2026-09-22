@@ -36,6 +36,8 @@
 
 import {
   buildBriefing,
+  buildEventDetail,
+  buildFireClusterDetail,
   buildMapFeatures,
   replayHorizonFor,
   type BriefingBuild,
@@ -58,14 +60,18 @@ import {
 import {
   HAZARD_FAMILIES,
   READ_MODEL_SCHEMA_VERSION,
+  familyOf,
   formatCoordinateKey,
+  hazardTypeOfPublicId,
   parseEvidenceId,
   roundUserCoordinate,
   tryParseEvidenceId,
   type ChangeWindow,
   type EvidenceDetail,
   type EvidenceDetailPayload,
+  type EventDetail,
   type EvidenceId,
+  type FireClusterDetail,
   type HazardFamily,
   type LocationBriefing,
   type LocationRef,
@@ -542,6 +548,95 @@ export async function getEvents(db: Kysely, request: EventsRequest): Promise<Map
     asOf: request.asOf,
     retentionProfile: RETENTION_PROFILE,
   });
+}
+
+export interface DetailRequest {
+  readonly publicId: string;
+  readonly asOf: Date;
+  readonly now: Date;
+  /** Only `/events/{publicId}` takes one (§13.1); it adds relevance and distance. */
+  readonly location: LocationParam | null;
+}
+
+/** A detail, or the survivor a merged id now redirects to. */
+export type DetailOutcome<T> =
+  | { readonly kind: 'found'; readonly detail: T }
+  | { readonly kind: 'redirect'; readonly publicId: string };
+
+/**
+ * `GET /api/v1/events/{publicId}`.
+ *
+ * The horizon is checked **before** the read, from the family the id itself names. After retention
+ * has dropped an event's facts the read would find nothing, and answering "not found" would be the
+ * empty result ADR-035 forbids: the event existed, GeoNerva no longer remembers it.
+ */
+export async function getEventDetail(
+  db: Kysely,
+  request: DetailRequest,
+): Promise<DetailOutcome<EventDetail>> {
+  assertFamiliesWithinHorizon(request.asOf, request.now, [familyOfPublicId(request.publicId)]);
+  const location = request.location === null ? null : await resolveLocation(db, request.location);
+  const result = await buildEventDetail({
+    db,
+    publicId: request.publicId,
+    asOf: request.asOf,
+    location,
+    retentionProfile: RETENTION_PROFILE,
+  });
+  switch (result.kind) {
+    case 'found':
+      return { kind: 'found', detail: result.detail };
+    case 'merged':
+      return { kind: 'redirect', publicId: result.survivorPublicId };
+    case 'not_found':
+      throw new ApiProblemError({
+        code: 'NOT_FOUND',
+        detail:
+          result.reason === 'NO_MEMBERS'
+            ? 'That event has no source records at this knowledge time.'
+            : 'GeoNerva holds no event with that identifier at this knowledge time.',
+      });
+  }
+}
+
+/** `GET /api/v1/fire-clusters/{publicId}`. The horizon rule is the event detail's. */
+export async function getFireClusterDetail(
+  db: Kysely,
+  request: DetailRequest,
+): Promise<DetailOutcome<FireClusterDetail>> {
+  assertFamiliesWithinHorizon(request.asOf, request.now, [familyOfPublicId(request.publicId)]);
+  const location = request.location === null ? null : await resolveLocation(db, request.location);
+  const result = await buildFireClusterDetail({
+    db,
+    publicId: request.publicId,
+    asOf: request.asOf,
+    location,
+    retentionProfile: RETENTION_PROFILE,
+  });
+  switch (result.kind) {
+    case 'found':
+      return { kind: 'found', detail: result.detail };
+    case 'merged':
+      return { kind: 'redirect', publicId: result.survivorPublicId };
+    case 'not_found':
+      throw new ApiProblemError({
+        code: 'NOT_FOUND',
+        detail:
+          result.reason === 'NO_SUMMARY'
+            ? 'That fire cluster has no summary computed at this knowledge time.'
+            : 'GeoNerva holds no fire cluster with that identifier at this knowledge time.',
+      });
+  }
+}
+
+/**
+ * The family a public id names. The id is already shape-checked by `parsePublicId`, so a `null`
+ * here is a programming error rather than a caller's.
+ */
+function familyOfPublicId(publicId: string): HazardFamily {
+  const hazardType = hazardTypeOfPublicId(publicId);
+  if (hazardType === null) throw new Error('familyOfPublicId: not a public id');
+  return familyOf(hazardType);
 }
 
 /**

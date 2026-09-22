@@ -15,7 +15,9 @@
  */
 
 import {
+  eventDetailSchema,
   evidenceDetailSchema,
+  fireClusterDetailSchema,
   locationBriefingSchema,
   mapFeaturesResponseSchema,
   problemDetailsSchema,
@@ -47,6 +49,8 @@ export interface EndpointContract {
    */
   readonly cache: readonly string[];
   readonly implemented: boolean;
+  /** True when a merged subject's id is answered with a `308` to its survivor. */
+  readonly redirectsMerged?: boolean;
   /** Why not, for the ones that are not. Kept honest rather than left blank. */
   readonly blockedBy?: string;
 }
@@ -74,20 +78,20 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
   {
     path: '/api/v1/events/{publicId}',
     summary: 'Canonical event detail: observations, version timeline, agreement, correlation.',
-    response: null,
+    response: eventDetailSchema,
     rateLimit: 'default',
     cache: [CACHE_POLICIES.eventDetail],
-    implemented: false,
-    blockedBy: 'the `EventDetail` contract has no runtime schema yet.',
+    implemented: true,
+    redirectsMerged: true,
   },
   {
     path: '/api/v1/fire-clusters/{publicId}',
     summary: 'Fire-cluster detail, version history and detection summary.',
-    response: null,
+    response: fireClusterDetailSchema,
     rateLimit: 'default',
     cache: [CACHE_POLICIES.fireCluster],
-    implemented: false,
-    blockedBy: 'the `FireClusterDetail` contract has no runtime schema yet.',
+    implemented: true,
+    redirectsMerged: true,
   },
   {
     path: '/api/v1/history',
@@ -208,6 +212,14 @@ export function buildOpenApiDocument(options: { readonly version: string }): {
      * shape the API does not produce must not promise a status the API never returns. The `404`
      * already present is the truthful one, and the description says the path is not served.
      */
+    if (contract.implemented && contract.redirectsMerged === true) {
+      responses['308'] = {
+        description:
+          'The id belonged to a subject since merged into another. `Location` is the survivor, with the query string preserved.',
+        headers: { Location: { schema: { type: 'string' } } },
+      };
+    }
+
     if (!contract.implemented || contract.response === null) {
       /* No 200. The `404` below is what a caller actually receives. */
     } else {

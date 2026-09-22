@@ -33,7 +33,7 @@
  * field, "features were dropped", and it is the honest one.
  */
 
-import { chooseHeadlineMagnitude, type MemberSolution } from '@geonerva/correlation';
+import { chooseHeadlineMagnitude } from '@geonerva/correlation';
 import {
   attributionsFor,
   canonicalEventsInViewportAsOf,
@@ -41,7 +41,6 @@ import {
   linksAsOf,
   observationsAsOf,
   sourceCutoffsAsOf,
-  type AttributionRow,
   type ClusterVersionRow,
   type LinkRow,
   type ObservationRow,
@@ -53,7 +52,6 @@ import {
   evidenceId,
   familyOf,
   formatSubjectRef,
-  type Attribution,
   type BoundingBox,
   type EvidenceId,
   type FireClusterStatus,
@@ -66,6 +64,7 @@ import {
 import { fireClusterState, type FireClusterState } from '@geonerva/relevance';
 import type { Kysely } from 'kysely';
 
+import { toAttribution } from './briefing.ts';
 import { replayHorizonFor } from './replay-horizon.ts';
 import {
   FAMILY_RECENCY_DAYS,
@@ -73,6 +72,7 @@ import {
   asLifecycleStatus,
   asOfContextFor,
   hazardTypesOf,
+  memberSolutionsOf,
   numberOf,
   providerSeverityOf,
   titleOf,
@@ -289,21 +289,7 @@ function describeEvent(
   const link = linkByRecord.get(first.source_record_id);
   if (link === undefined) return null;
 
-  const solutions: MemberSolution[] = members.map((row) => ({
-    sourceId: row.source_id,
-    sourceRecordId: row.source_record_id,
-    relation:
-      linkByRecord.get(row.source_record_id)?.relation === 'DERIVED_COPY'
-        ? 'DERIVED_COPY'
-        : 'SAME_EVENT',
-    epicentre: { lat: row.lat, lon: row.lon },
-    magnitude: numberOf(row.magnitude),
-    magnitudeType: row.magnitude_type,
-    depthKm: numberOf(row.depth_km),
-    providerStatus: row.provider_status,
-    contributor: row.contributor,
-  }));
-  const headline = chooseHeadlineMagnitude(solutions);
+  const headline = chooseHeadlineMagnitude(memberSolutionsOf(members, linkByRecord));
   const anchor =
     members.find((row) => row.source_record_id === headline?.member.sourceRecordId) ?? first;
 
@@ -422,18 +408,6 @@ function clusterStatusOf(state: FireClusterState): FireClusterStatus {
     case 'DORMANT':
       return 'INACTIVE';
   }
-}
-
-function toAttribution(row: AttributionRow): Attribution {
-  return {
-    sourceId: row.source_id,
-    name: row.name,
-    homepage: row.homepage,
-    licence: row.licence,
-    attributionText: row.attribution_text,
-    termsUrl: row.terms_url,
-    disclaimer: row.disclaimer,
-  };
 }
 
 function assertBelowLimit(count: number, what: string): void {

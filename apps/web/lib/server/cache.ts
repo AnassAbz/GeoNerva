@@ -139,3 +139,25 @@ export function jsonResponse(
     },
   });
 }
+
+/**
+ * A permanent redirect to the address a merged subject now lives at.
+ *
+ * `308`, not `301`: it preserves the method and says the move is permanent, which a merge is —
+ * the absorbed id never comes back. The query string is the caller's, so a replay stays a replay
+ * at the new address. The same framing headers as every other response, because a redirect is
+ * still something a browser renders.
+ */
+export function redirectResponse(location: string, cacheControl: string): Response {
+  return new Response(null, {
+    status: 308,
+    headers: {
+      location,
+      'cache-control': cacheControl,
+      vary: 'Accept-Encoding',
+      'x-content-type-options': 'nosniff',
+      'x-frame-options': 'DENY',
+      'referrer-policy': 'no-referrer',
+    },
+  });
+}

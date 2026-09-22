@@ -523,8 +523,26 @@ describe('parseQuery', () => {
 });
 
 describe('parsePublicId', () => {
-  it('accepts the shape GeoNerva issues', () => {
-    expect(parsePublicId('EQ-26-7K3F9Q')).toBe('EQ-26-7K3F9Q');
+  it('accepts the shape GeoNerva issues, for the kind the endpoint serves', () => {
+    expect(parsePublicId('EQ-26-7K3F9Q', 'canonical_event')).toBe('EQ-26-7K3F9Q');
+    expect(parsePublicId('FR-26-7K3F9Q', 'fire_cluster')).toBe('FR-26-7K3F9Q');
+  });
+
+  it.each([
+    ['an unknown prefix', 'XX-26-7K3F9Q'],
+    ['a four-character token', 'EQ-26-7K3F'],
+    ['a letter Crockford base32 leaves out', 'EQ-26-7K3F9U'],
+  ])('rejects %s, which the looser earlier pattern accepted', (_label, value) => {
+    expect(problemOf(() => parsePublicId(value, 'canonical_event')).problem.code).toBe(
+      'VALIDATION_FAILED',
+    );
+  });
+
+  it('refuses a cluster id on the event endpoint and an event id on the cluster endpoint', () => {
+    const onEvents = problemOf(() => parsePublicId('FR-26-7K3F9Q', 'canonical_event'));
+    expect(onEvents.problem.detail).toContain('/api/v1/fire-clusters/');
+    const onClusters = problemOf(() => parsePublicId('EQ-26-7K3F9Q', 'fire_cluster'));
+    expect(onClusters.problem.detail).toContain('/api/v1/events/');
   });
 
   it.each([
@@ -535,11 +553,15 @@ describe('parsePublicId', () => {
     ['too short a suffix', 'EQ-26-7K3'],
     ['an oversized id', `EQ-26-${'A'.repeat(200)}`],
   ])('rejects %s', (_label, value) => {
-    expect(problemOf(() => parsePublicId(value)).problem.code).toBe('VALIDATION_FAILED');
+    expect(problemOf(() => parsePublicId(value, 'canonical_event')).problem.code).toBe(
+      'VALIDATION_FAILED',
+    );
   });
 
   it('never echoes the rejected identifier', () => {
-    const problem = problemOf(() => parsePublicId("EQ-26-AAAA'; DROP TABLE geonerva.sources;--"));
+    const problem = problemOf(() =>
+      parsePublicId("EQ-26-AAAA'; DROP TABLE geonerva.sources;--", 'canonical_event'),
+    );
     expect(JSON.stringify(problem.problem)).not.toContain('DROP TABLE');
   });
 });

@@ -475,6 +475,19 @@ async function resolveManifest(
   return items.sort((left, right) => compare(left.id, right.id));
 }
 
+/**
+ * The manifest for a response that mints no derived evidence of its own — a detail view.
+ *
+ * The same resolver the briefing uses, so an id resolves to the same entry wherever it is cited.
+ */
+export async function resolveEvidenceManifest(
+  db: BuildSnapshotOptions['db'],
+  asOf: Date,
+  ids: readonly EvidenceId[],
+): Promise<EvidenceItem[]> {
+  return await resolveManifest(db, asOf, [...new Set(ids)], new Set());
+}
+
 function toEvidenceItem(row: EvidenceRow): EvidenceItem {
   return {
     id: row.id,
@@ -522,7 +535,7 @@ async function resolveAttribution(
   return rows.map(toAttribution);
 }
 
-function toAttribution(row: AttributionRow): Attribution {
+export function toAttribution(row: AttributionRow): Attribution {
   return {
     sourceId: row.source_id,
     name: row.name,

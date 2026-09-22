@@ -54,7 +54,9 @@ import {
   CHANGE_WINDOWS,
   HAZARD_FAMILIES,
   USER_COORDINATE_DECIMALS,
+  hazardTypeOfPublicId,
   isLocationKey,
+  isPublicId,
   roundUserCoordinate,
   type BoundingBox,
   type ChangeWindow,
@@ -416,13 +418,46 @@ export function parseQuery(search: URLSearchParams, name = 'q'): string {
   return value;
 }
 
-/** A public id (`EQ-26-7K3F9Q`, `FR-26-…`), shape-checked before it reaches a query. */
-export function parsePublicId(raw: string, name = 'publicId'): string {
-  if (raw.length > MAX_PUBLIC_ID_LENGTH || !/^[A-Z]{2}-\d{2}-[0-9A-Z]{4,12}$/u.test(raw)) {
+/**
+ * A public id, checked against the format GeoNerva mints — and against the kind of subject the
+ * endpoint serves.
+ *
+ * The domain's `isPublicId` is the check, not a looser pattern of its own. An earlier pattern here
+ * accepted any two-letter prefix and a four-to-twelve character token, so `XX-26-AAAA` passed
+ * validation and then named no hazard type; the family lookup that the horizon rule needs would
+ * have turned it into a 500.
+ *
+ * `FR-` ids name fire *clusters* and every other prefix names a canonical event, so each detail
+ * endpoint refuses the other's ids with the reason, rather than looking one up and answering
+ * "not found" about a subject that may well exist at the other address.
+ */
+export function parsePublicId(
+  raw: string,
+  expect: 'canonical_event' | 'fire_cluster',
+  name = 'publicId',
+): string {
+  if (raw.length > MAX_PUBLIC_ID_LENGTH || !isPublicId(raw)) {
     throw new ApiProblemError({
       code: 'VALIDATION_FAILED',
       detail: 'That identifier is not the shape GeoNerva issues.',
       invalidParams: [{ name, reason: 'must be a GeoNerva public id, e.g. EQ-26-7K3F9Q' }],
+    });
+  }
+  const isCluster = hazardTypeOfPublicId(raw) === 'THERMAL_ACTIVITY';
+  if (isCluster !== (expect === 'fire_cluster')) {
+    throw new ApiProblemError({
+      code: 'VALIDATION_FAILED',
+      detail: isCluster
+        ? 'That identifier names a fire cluster; fetch it from /api/v1/fire-clusters/{publicId}.'
+        : 'That identifier names an event; fetch it from /api/v1/events/{publicId}.',
+      invalidParams: [
+        {
+          name,
+          reason: isCluster
+            ? 'must be an event id, not an FR- cluster id'
+            : 'must be an FR- cluster id',
+        },
+      ],
     });
   }
   return raw;

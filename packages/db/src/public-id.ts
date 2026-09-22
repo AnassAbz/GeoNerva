@@ -15,28 +15,12 @@ import {
   PUBLIC_ID_ALPHABET,
   PUBLIC_ID_TOKEN_LENGTH,
   formatPublicId,
+  publicIdPrefixFor,
   type HazardType,
-  type PublicIdPrefix,
 } from '@geonerva/domain';
 
-/** Prefix per hazard type. `FR` is reserved for fire *clusters*, which are not events. */
-const PREFIX_BY_HAZARD: Readonly<Record<HazardType, PublicIdPrefix>> = {
-  EARTHQUAKE: 'EQ',
-  THERMAL_ACTIVITY: 'FR',
-  WILDFIRE_EVENT: 'WF',
-  FLOOD: 'FL',
-  TROPICAL_CYCLONE: 'TC',
-  VOLCANO: 'VO',
-  DROUGHT: 'DR',
-  WEATHER_ALERT: 'WA',
-  TSUNAMI: 'TS',
-  OTHER: 'EV',
-};
-
-/** The public-ID prefix for a hazard type. */
-export function publicIdPrefixFor(hazardType: HazardType): PublicIdPrefix {
-  return PREFIX_BY_HAZARD[hazardType];
-}
+/** Re-exported: the table moved to the domain, beside the format it belongs to. */
+export { publicIdPrefixFor };
 
 /** A random token from the reduced alphabet. */
 function randomToken(): string {

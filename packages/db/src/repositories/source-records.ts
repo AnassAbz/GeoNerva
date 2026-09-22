@@ -124,7 +124,7 @@ export async function resolveSourceRecord(
      * silent disappearance rather than an error, so it is resolved here.
      */
     const recordId = row.merged_into === null ? row.id : await resolveSurvivor(trx, row.id);
-    const added = await addAliases(trx, input.sourceId, recordId, aliases);
+    const added = await addAliases(trx, input.sourceId, recordId, aliases, input.firstIngestedAt);
     return {
       sourceRecordId: recordId,
       created: row.was_inserted,
@@ -136,7 +136,7 @@ export async function resolveSourceRecord(
   if (matched.length === 1) {
     const recordId = matched[0];
     if (recordId === undefined) throw new Error('unreachable: matched record missing');
-    const added = await addAliases(trx, input.sourceId, recordId, aliases);
+    const added = await addAliases(trx, input.sourceId, recordId, aliases, input.firstIngestedAt);
     return { sourceRecordId: recordId, created: false, mergedRecordIds: [], addedAliases: added };
   }
 
@@ -149,17 +149,25 @@ export async function resolveSourceRecord(
   });
 }
 
-/** Inserts the aliases a record does not have yet. Returns the ones actually added. */
+/**
+ * Inserts the aliases a record does not have yet. Returns the ones actually added.
+ *
+ * `seenAt` is the knowledge time of the poll that reported them, and it is written explicitly.
+ * The column's `DEFAULT now()` is the database's wall clock, which is not the clock any other fact
+ * carries: a backfill stamped historical aliases with the day it ran, and a replay at a record's
+ * own ingestion time could show the record without the identifier it arrived under.
+ */
 export async function addAliases(
   db: Db,
   sourceId: string,
   sourceRecordId: string,
   aliases: readonly string[],
+  seenAt: Date,
 ): Promise<string[]> {
   if (aliases.length === 0) return [];
   const result = await sql<{ alias: string }>`
-    INSERT INTO geonerva.source_record_aliases (source_id, alias, source_record_id)
-    SELECT ${sourceId}, alias, ${sourceRecordId}::bigint
+    INSERT INTO geonerva.source_record_aliases (source_id, alias, source_record_id, first_seen_at)
+    SELECT ${sourceId}, alias, ${sourceRecordId}::bigint, ${seenAt}
     FROM unnest(${sql.val(aliases)}::text[]) AS alias
     ON CONFLICT (source_id, alias) DO NOTHING
     RETURNING alias
@@ -217,7 +225,13 @@ export async function mergeSourceRecords(
     `.execute(trx);
   }
 
-  const added = await addAliases(trx, input.sourceId, survivor, input.aliases ?? []);
+  const added = await addAliases(
+    trx,
+    input.sourceId,
+    survivor,
+    input.aliases ?? [],
+    input.mergedAt,
+  );
   return {
     sourceRecordId: survivor,
     created: false,

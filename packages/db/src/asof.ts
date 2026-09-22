@@ -1862,3 +1862,9 @@ export async function correlationEvidenceAsOf(
   `.execute(db);
   return result.rows[0] ?? null;
 }
+
+/*
+ * The detail reads live in their own module because the file was already long. They are part of
+ * this layer and reach callers only through this entry point, like everything above.
+ */
+export * from './asof-detail.ts';

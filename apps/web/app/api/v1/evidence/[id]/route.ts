@@ -16,26 +16,11 @@ import {
   parseAsOf,
   rejectUnknownParams,
 } from '../../../../../lib/server/params.ts';
+import { lastPathSegment } from '../../../../../lib/server/path.ts';
 import { ApiProblemError } from '../../../../../lib/server/problem.ts';
 import { getEvidence } from '../../../../../lib/server/services.ts';
 
 const ALLOWED = ['as_of'] as const;
-
-/**
- * Decodes one path segment, or `null` when it is not decodable.
- *
- * `decodeURIComponent` throws `URIError` on a malformed escape — `%ZZ`, or a truncated
- * `%E0%A4%A` — and an unhandled throw here became a 500 with an error-level log line. That made
- * `GET /api/v1/evidence/%ZZ` a one-byte, caller-triggerable 5xx: alert noise and log amplification
- * for what is plainly a bad request.
- */
-function decodeSegment(segment: string): string | null {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return null;
-  }
-}
 
 export const GET = apiRoute(
   async ({ search, now, url }) => {
@@ -48,7 +33,7 @@ export const GET = apiRoute(
      * it, because the id reaches a `LIKE`-free but still parameterised query and an unbounded path
      * segment is an unbounded cache key.
      */
-    const raw = decodeSegment(url.pathname.split('/').pop() ?? '');
+    const raw = lastPathSegment(url);
     if (raw === null || raw === '' || raw.length > MAX_EVIDENCE_ID_LENGTH) {
       throw new ApiProblemError({
         code: 'VALIDATION_FAILED',

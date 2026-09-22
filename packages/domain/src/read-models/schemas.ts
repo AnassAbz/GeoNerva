@@ -60,6 +60,8 @@ import {
   HAZARD_TYPES,
   HEADLINE_CODES,
   LIFECYCLE_STATUSES,
+  LINK_MATCH_KINDS,
+  LINK_RELATIONS,
   PRODUCT_STATUSES,
   RELEVANCE_LEVELS,
   RUN_STATUSES,
@@ -124,6 +126,23 @@ import type {
   LocationSnapshotView,
   SnapshotOverall,
 } from './location-briefing.ts';
+import type {
+  CorrelationDecisionView,
+  CorrelationView,
+  EventDetail,
+  EventHeadline,
+  EventObservationView,
+  EventTimelineEntry,
+  PossibleMatchView,
+  RelatedEventRef,
+} from './event-detail.ts';
+import type {
+  FireClusterDetail,
+  FireClusterDetectionsView,
+  FireClusterSummaryView,
+  FireClusterVersionView,
+  FireDetectionView,
+} from './fire-cluster-detail.ts';
 import type { MapFeature, MapFeaturesResponse, ReplayHorizonResponse } from './map-and-places.ts';
 import type {
   DataQualityCheckView,
@@ -1121,4 +1140,385 @@ export const mapFeaturesResponseSchema = z
   });
 export type MapFeaturesResponseMatches = Expect<
   Exact<z.infer<typeof mapFeaturesResponseSchema>, MapFeaturesResponse>
+>;
+
+/*
+ * ── Event and fire-cluster detail ─────────────────────────────────────────────
+ *
+ * The two detail contracts, frozen at G2 and given runtime form here. Beyond the shapes, each
+ * refinement states an invariant the type cannot:
+ *
+ *  - **I9**: every cited evidence id is in the response's own manifest.
+ *  - **Location is all-or-nothing**: `relevance` and the distances are present together or absent
+ *    together, because both exist only when the caller supplied a location. A relevance level with
+ *    no distance behind it — or a distance with no assessment — is a half-answer.
+ *  - **History is newest first**, as both contracts document. A timeline in planner order reads as
+ *    a different story.
+ *  - **A merge is a pair**: `mergedIntoPublicId` and `mergedAt` are both set or both null, as the
+ *    table's own CHECK constraint makes them.
+ *  - **Truncation is declared** for the detection sample, exactly as for map features.
+ */
+
+/** Newest first by a timestamp field: each entry no later than the one before it. */
+function isNewestFirst<T>(entries: readonly T[], at: (entry: T) => string): boolean {
+  return entries.every((entry, index) => {
+    const previous = entries[index - 1];
+    return previous === undefined || at(previous) >= at(entry);
+  });
+}
+
+export const eventHeadlineSchema = z.object({
+  title: z.string().min(1),
+  observedAt: isoTimestamp,
+  lifecycleStatus: z.enum(LIFECYCLE_STATUSES),
+  isActive: z.boolean(),
+  providerSeverity: providerSeveritySchema.nullable(),
+  preferredSourceId: z.string().min(1),
+  preferenceReason: reasonSchema,
+  centroid: z.object({ lat: z.number().min(-90).max(90), lon: z.number().min(-180).max(180) }),
+  facts: z.array(factSchema),
+  evidenceIds: z.array(evidenceId),
+});
+export type EventHeadlineMatches = Expect<
+  Exact<z.infer<typeof eventHeadlineSchema>, EventHeadline>
+>;
+
+export const eventObservationViewSchema = z
+  .object({
+    sourceId: z.string().min(1),
+    sourceName: z.string().min(1),
+    productCode: z.string().nullable(),
+    contributor: z.string().nullable(),
+    relation: z.enum(LINK_RELATIONS),
+    matchKind: z.enum(LINK_MATCH_KINDS),
+    isDerivedCopy: z.boolean(),
+    primaryKey: z.string().min(1),
+    aliases: z.array(z.string()),
+    versionId: z.string().regex(/^\d+$/u),
+    versionSeq: z.number().int().positive(),
+    observedAt: isoTimestamp,
+    validFrom: isoTimestamp.nullable(),
+    validTo: isoTimestamp.nullable(),
+    sourceUpdatedAt: isoTimestamp.nullable(),
+    ingestedAt: isoTimestamp,
+    lifecycleStatus: z.enum(LIFECYCLE_STATUSES),
+    providerSeverity: providerSeveritySchema.nullable(),
+    providerStatus: z.string().nullable(),
+    title: z.string().nullable(),
+    sourceUrl: z.string().nullable(),
+    facts: z.array(factSchema),
+    evidenceId,
+  })
+  .refine((view) => view.isDerivedCopy === (view.relation === 'DERIVED_COPY'), {
+    message: 'isDerivedCopy must say exactly what relation says (ADR-006)',
+    path: ['isDerivedCopy'],
+  });
+export type EventObservationViewMatches = Expect<
+  Exact<z.infer<typeof eventObservationViewSchema>, EventObservationView>
+>;
+
+export const eventTimelineEntrySchema = z.object({
+  versionId: z.string().regex(/^\d+$/u),
+  versionSeq: z.number().int().positive(),
+  sourceId: z.string().min(1),
+  ingestedAt: isoTimestamp,
+  observedAt: isoTimestamp,
+  sourceUpdatedAt: isoTimestamp.nullable(),
+  lifecycleStatus: z.enum(LIFECYCLE_STATUSES),
+  summary: z.string().min(1),
+  changedFields: z.array(z.string()),
+  changes: z.array(
+    z.object({
+      code: z.string(),
+      label: z.string(),
+      before: factValueSchema.nullable(),
+      after: factValueSchema.nullable(),
+    }),
+  ),
+  evidenceId,
+});
+export type EventTimelineEntryMatches = Expect<
+  Exact<z.infer<typeof eventTimelineEntrySchema>, EventTimelineEntry>
+>;
+
+export const correlationDecisionViewSchema = z
+  .object({
+    linkId: z.string().regex(/^\d+$/u),
+    sourceId: z.string().min(1),
+    primaryKey: z.string().min(1),
+    relation: z.enum(LINK_RELATIONS),
+    matchKind: z.enum(LINK_MATCH_KINDS),
+    confidence: z.number().min(0).max(1).nullable(),
+    reasons: z.array(reasonSchema),
+    linkedAt: isoTimestamp,
+    unlinkedAt: isoTimestamp.nullable(),
+    unlinkReason: z.string().nullable(),
+    evidenceId,
+  })
+  .refine((view) => view.unlinkedAt !== null || view.unlinkReason === null, {
+    message: 'a link that is still open has no unlink reason',
+    path: ['unlinkReason'],
+  });
+export type CorrelationDecisionViewMatches = Expect<
+  Exact<z.infer<typeof correlationDecisionViewSchema>, CorrelationDecisionView>
+>;
+
+export const possibleMatchViewSchema = z.object({
+  otherPublicId: z.string().nullable(),
+  sourceId: z.string().min(1),
+  primaryKey: z.string().min(1),
+  score: z.number().min(0).max(1),
+  reasons: z.array(reasonSchema),
+  evaluatedAt: isoTimestamp,
+});
+export type PossibleMatchViewMatches = Expect<
+  Exact<z.infer<typeof possibleMatchViewSchema>, PossibleMatchView>
+>;
+
+export const correlationViewSchema = z.object({
+  algorithmVersion: z.string().min(1),
+  decisions: z.array(correlationDecisionViewSchema),
+  possibleMatches: z.array(possibleMatchViewSchema),
+  agreementLevel: z.enum(AGREEMENT_LEVELS),
+});
+export type CorrelationViewMatches = Expect<
+  Exact<z.infer<typeof correlationViewSchema>, CorrelationView>
+>;
+
+export const relatedEventRefSchema = z.object({
+  subjectRef,
+  publicId: z.string().min(1),
+  hazardType: z.enum(HAZARD_TYPES),
+  relation: z.string().min(1),
+  label: z.string().min(1),
+  href: z.string().min(1),
+  reasons: z.array(reasonSchema),
+});
+export type RelatedEventRefMatches = Expect<
+  Exact<z.infer<typeof relatedEventRefSchema>, RelatedEventRef>
+>;
+
+/** I9, as every top-level response with a manifest states it. */
+function requireManifestCoverage(
+  response: { readonly evidenceManifest: readonly { readonly id: string }[] },
+  ctx: z.RefinementCtx,
+): void {
+  const manifest = new Set(response.evidenceManifest.map((item) => item.id));
+  for (const id of citedEvidenceIds(response)) {
+    if (!manifest.has(id)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['evidenceManifest'],
+        message: `the response cites ${id}, which its manifest does not contain (I9)`,
+      });
+    }
+  }
+}
+
+/** `mergedIntoPublicId` and `mergedAt` are both set or both null, as the table's CHECK says. */
+function requireMergePair(
+  response: { readonly mergedIntoPublicId: string | null; readonly mergedAt: string | null },
+  ctx: z.RefinementCtx,
+): void {
+  if ((response.mergedIntoPublicId === null) !== (response.mergedAt === null)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['mergedAt'],
+      message: 'mergedIntoPublicId and mergedAt must be set together',
+    });
+  }
+}
+
+/**
+ * `GET /api/v1/events/{publicId}`.
+ */
+export const eventDetailSchema = z
+  .object({
+    schemaVersion,
+    publicId: z.string().min(1),
+    subjectRef,
+    hazardType: z.enum(HAZARD_TYPES),
+    family: z.enum(HAZARD_FAMILIES),
+    asOfContext: asOfContextSchema,
+    createdAt: isoTimestamp,
+    headline: eventHeadlineSchema,
+    observations: z.array(eventObservationViewSchema),
+    agreement: agreementSchema,
+    timeline: z.array(eventTimelineEntrySchema),
+    correlation: correlationViewSchema,
+    geometries: z.array(geometryViewSchema),
+    relevance: relevanceAssessmentSchema.nullable(),
+    distanceKm: z.number().nonnegative().nullable(),
+    hypocentralDistanceKm: z.number().nonnegative().nullable(),
+    mergedIntoPublicId: z.string().nullable(),
+    mergedAt: isoTimestamp.nullable(),
+    supersededPublicIds: z.array(z.string()),
+    relatedEvents: z.array(relatedEventRefSchema),
+    evidenceManifest: z.array(evidenceItemSchema),
+    attribution: z.array(attributionSchema),
+  })
+  .superRefine((detail, ctx) => {
+    requireManifestCoverage(detail, ctx);
+    requireMergePair(detail, ctx);
+
+    if ((detail.relevance === null) !== (detail.distanceKm === null)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['relevance'],
+        message: 'relevance and distanceKm exist only together, when a location was supplied',
+      });
+    }
+    if (detail.hypocentralDistanceKm !== null && detail.distanceKm === null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['hypocentralDistanceKm'],
+        message: 'a hypocentral distance needs the epicentral distance it extends',
+      });
+    }
+    if (!isNewestFirst(detail.timeline, (entry) => entry.ingestedAt)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['timeline'],
+        message: 'the timeline must be newest first',
+      });
+    }
+  });
+export type EventDetailMatches = Expect<Exact<z.infer<typeof eventDetailSchema>, EventDetail>>;
+
+export const fireClusterSummaryViewSchema = z.object({
+  clusterVersionId: z.string().regex(/^\d+$/u),
+  asOf: isoTimestamp,
+  detectionCountTotal: z.number().int().nonnegative(),
+  detectionCount24h: z.number().int().nonnegative(),
+  distinctOverpasses24h: z.number().int().nonnegative(),
+  firstDetectedAt: isoTimestamp,
+  lastDetectedAt: isoTimestamp,
+  frpSum24h: z.number().nonnegative().nullable(),
+  frpMax: z.number().nonnegative().nullable(),
+  maxConfidence: confidenceViewSchema.nullable(),
+  sensors: z.array(sensorRefSchema),
+  facts: z.array(factSchema),
+  evidenceIds: z.array(evidenceId),
+});
+export type FireClusterSummaryViewMatches = Expect<
+  Exact<z.infer<typeof fireClusterSummaryViewSchema>, FireClusterSummaryView>
+>;
+
+export const fireClusterVersionViewSchema = z.object({
+  clusterVersionId: z.string().regex(/^\d+$/u),
+  asOf: isoTimestamp,
+  detectionCountTotal: z.number().int().nonnegative(),
+  detectionCount24h: z.number().int().nonnegative(),
+  distinctOverpasses24h: z.number().int().nonnegative(),
+  frpSum24h: z.number().nonnegative().nullable(),
+  frpMax: z.number().nonnegative().nullable(),
+  lastDetectedAt: isoTimestamp,
+  summary: z.string().min(1),
+  evidenceId,
+});
+export type FireClusterVersionViewMatches = Expect<
+  Exact<z.infer<typeof fireClusterVersionViewSchema>, FireClusterVersionView>
+>;
+
+export const fireDetectionViewSchema = z.object({
+  acquiredAt: isoTimestamp,
+  lat: z.number().min(-90).max(90),
+  lon: z.number().min(-180).max(180),
+  productId: z.number().int().positive(),
+  confidence: confidenceViewSchema,
+  frpMw: z.number().nonnegative().nullable(),
+  brightnessTi4K: z.number().nullable(),
+  brightnessTi5K: z.number().nullable(),
+  daynight: z.enum(['D', 'N']).nullable(),
+  scanKm: z.number().nonnegative().nullable(),
+  trackKm: z.number().nonnegative().nullable(),
+  distanceKm: z.number().nonnegative().nullable(),
+});
+export type FireDetectionViewMatches = Expect<
+  Exact<z.infer<typeof fireDetectionViewSchema>, FireDetectionView>
+>;
+
+export const fireClusterDetectionsViewSchema = z
+  .object({
+    total: z.number().int().nonnegative(),
+    truncated: z.boolean(),
+    cap: z.number().int().positive(),
+    sample: z.array(fireDetectionViewSchema),
+    byDay: z.array(
+      z.object({
+        day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
+        count: z.number().int().nonnegative(),
+        frpSum: z.number().nonnegative().nullable(),
+        hasSatelliteCoverage: z.boolean(),
+      }),
+    ),
+    evidenceId,
+  })
+  .refine((view) => view.sample.length <= view.cap, {
+    message: 'the sample is larger than its own cap',
+    path: ['sample'],
+  })
+  .refine((view) => view.truncated === view.total > view.sample.length, {
+    message: 'truncated must be true exactly when detections were left out of the sample',
+    path: ['truncated'],
+  });
+export type FireClusterDetectionsViewMatches = Expect<
+  Exact<z.infer<typeof fireClusterDetectionsViewSchema>, FireClusterDetectionsView>
+>;
+
+/**
+ * `GET /api/v1/fire-clusters/{publicId}`.
+ */
+export const fireClusterDetailSchema = z
+  .object({
+    schemaVersion,
+    publicId: z.string().min(1),
+    subjectRef,
+    asOfContext: asOfContextSchema,
+    status: z.enum(FIRE_CLUSTER_STATUSES),
+    createdAt: isoTimestamp,
+    summary: fireClusterSummaryViewSchema,
+    hull: geoJsonGeometrySchema.nullable(),
+    centroid: geoJsonGeometrySchema,
+    relevance: relevanceAssessmentSchema.nullable(),
+    distanceKm: z.number().nonnegative().nullable(),
+    nearestDetectionKm: z.number().nonnegative().nullable(),
+    versions: z.array(fireClusterVersionViewSchema),
+    detections: fireClusterDetectionsViewSchema,
+    mergedIntoPublicId: z.string().nullable(),
+    mergedAt: isoTimestamp.nullable(),
+    mergedFromPublicIds: z.array(z.string()),
+    relatedEvents: z.array(relatedEventRefSchema),
+    mandatoryCaveat: z.string().min(1),
+    evidenceManifest: z.array(evidenceItemSchema),
+    attribution: z.array(attributionSchema),
+  })
+  .superRefine((detail, ctx) => {
+    requireManifestCoverage(detail, ctx);
+    requireMergePair(detail, ctx);
+
+    if ((detail.relevance === null) !== (detail.distanceKm === null)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['relevance'],
+        message: 'relevance and distanceKm exist only together, when a location was supplied',
+      });
+    }
+    if ((detail.distanceKm === null) !== (detail.nearestDetectionKm === null)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['nearestDetectionKm'],
+        message: 'both distances exist only together, when a location was supplied',
+      });
+    }
+    if (!isNewestFirst(detail.versions, (version) => version.asOf)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['versions'],
+        message: 'summary versions must be newest first',
+      });
+    }
+  });
+export type FireClusterDetailMatches = Expect<
+  Exact<z.infer<typeof fireClusterDetailSchema>, FireClusterDetail>
 >;

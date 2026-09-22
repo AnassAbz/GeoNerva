@@ -74,7 +74,9 @@ describe('ENDPOINT_CONTRACTS', () => {
     expect(served.sort()).toEqual([
       '/api/v1/briefing',
       '/api/v1/events',
+      '/api/v1/events/{publicId}',
       '/api/v1/evidence/{id}',
+      '/api/v1/fire-clusters/{publicId}',
       '/api/v1/replay/horizon',
       '/api/v1/sources/status',
     ]);

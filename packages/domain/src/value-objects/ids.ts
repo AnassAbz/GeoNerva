@@ -9,6 +9,8 @@
 
 import { z } from 'zod';
 
+import type { HazardType } from '../enums.ts';
+
 /**
  * A `bigserial` primary key, as a decimal string with no leading zeros and no sign
  * (e.g. `"1"`, `"90071992547409910"`). Values are always within PostgreSQL's `bigint` range.
@@ -93,6 +95,44 @@ export const PUBLIC_ID_PREFIXES = [
   'EV',
 ] as const;
 export type PublicIdPrefix = (typeof PUBLIC_ID_PREFIXES)[number];
+
+/**
+ * The prefix each hazard type's public ids carry. `FR` is reserved for fire *clusters*, which
+ * are not events. The mapping is one-to-one, which is what lets `hazardTypeOfPublicId` read a
+ * hazard type back out of an id without a database round trip.
+ */
+export const PUBLIC_ID_PREFIX_BY_HAZARD: Readonly<Record<HazardType, PublicIdPrefix>> = {
+  EARTHQUAKE: 'EQ',
+  THERMAL_ACTIVITY: 'FR',
+  WILDFIRE_EVENT: 'WF',
+  FLOOD: 'FL',
+  TROPICAL_CYCLONE: 'TC',
+  VOLCANO: 'VO',
+  DROUGHT: 'DR',
+  WEATHER_ALERT: 'WA',
+  TSUNAMI: 'TS',
+  OTHER: 'EV',
+};
+
+/** The public-ID prefix for a hazard type. */
+export function publicIdPrefixFor(hazardType: HazardType): PublicIdPrefix {
+  return PUBLIC_ID_PREFIX_BY_HAZARD[hazardType];
+}
+
+/**
+ * The hazard type a well-formed public id names, or `null` for anything else.
+ *
+ * Used before any read, so that a request for a subject whose family is past its replay horizon
+ * is refused as a retention limit instead of answered as "not found" (ADR-035).
+ */
+export function hazardTypeOfPublicId(publicId: string): HazardType | null {
+  if (!PUBLIC_ID_PATTERN.test(publicId)) return null;
+  const prefix = publicId.slice(0, publicId.indexOf('-'));
+  for (const [hazardType, candidate] of Object.entries(PUBLIC_ID_PREFIX_BY_HAZARD)) {
+    if (candidate === prefix) return hazardType as HazardType;
+  }
+  return null;
+}
 
 const PUBLIC_ID_PATTERN = new RegExp(
   `^(${PUBLIC_ID_PREFIXES.join('|')})-[0-9]{2}-[${PUBLIC_ID_ALPHABET}]{${String(PUBLIC_ID_TOKEN_LENGTH)}}$`,

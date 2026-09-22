@@ -18,12 +18,15 @@ import {
   isValidLatitude,
 } from './geography.ts';
 import {
+  PUBLIC_ID_PREFIX_BY_HAZARD,
   formatPublicId,
+  hazardTypeOfPublicId,
   isDatabaseId,
   isPublicId,
   isSha256Hex,
   isUuid,
   parsePublicId,
+  publicIdPrefixFor,
 } from './ids.ts';
 import {
   formatCoordinateKey,
@@ -305,5 +308,35 @@ describe('geography validation', () => {
   it('detects an antimeridian-crossing viewport', () => {
     expect(crossesAntimeridian({ west: 170, south: -20, east: -170, north: -10 })).toBe(true);
     expect(crossesAntimeridian({ west: -10, south: -20, east: 10, north: -10 })).toBe(false);
+  });
+});
+
+describe('hazardTypeOfPublicId', () => {
+  it('reads back the hazard type every prefix was minted for', () => {
+    for (const hazardType of HAZARD_TYPES) {
+      const id = formatPublicId({
+        prefix: publicIdPrefixFor(hazardType),
+        year: 26,
+        token: '7K3F9Q',
+      });
+      expect(hazardTypeOfPublicId(id), id).toBe(hazardType);
+    }
+  });
+
+  it('gives every hazard type its own prefix, so the inverse is a function', () => {
+    const prefixes = Object.values(PUBLIC_ID_PREFIX_BY_HAZARD);
+    expect(new Set(prefixes).size).toBe(prefixes.length);
+  });
+
+  it('keeps the documented prefixes', () => {
+    expect(publicIdPrefixFor('EARTHQUAKE')).toBe('EQ');
+    expect(publicIdPrefixFor('THERMAL_ACTIVITY')).toBe('FR');
+    expect(publicIdPrefixFor('WILDFIRE_EVENT')).toBe('WF');
+  });
+
+  it('refuses anything that is not a well-formed public id', () => {
+    for (const bad of ['', 'EQ', 'EQ-26', 'XX-26-7K3F9Q', 'eq-26-7K3F9Q', 'EQ-26-7K3F9QX']) {
+      expect(hazardTypeOfPublicId(bad), bad).toBeNull();
+    }
   });
 });

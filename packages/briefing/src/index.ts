@@ -16,7 +16,20 @@ export type { LexiconClass, LexiconHit, LexiconOptions } from './lexicon.ts';
 
 export { replayHorizonFor } from './replay-horizon.ts';
 
-export { EvidenceManifestError, buildBriefing } from './briefing.ts';
+export { EvidenceManifestError, buildBriefing, resolveEvidenceManifest } from './briefing.ts';
+
+export { TIMELINE_CAP, buildEventDetail } from './event-detail.ts';
+export type { BuildEventDetailOptions, EventDetailResult } from './event-detail.ts';
+
+export {
+  CLUSTER_VERSION_CAP,
+  DETECTION_SAMPLE_CAP,
+  buildFireClusterDetail,
+} from './fire-cluster-detail.ts';
+export type {
+  BuildFireClusterDetailOptions,
+  FireClusterDetailResult,
+} from './fire-cluster-detail.ts';
 export type { BriefingBuild, BuildBriefingOptions } from './briefing.ts';
 
 export { MAP_FEATURE_CAP, buildMapFeatures } from './map-features.ts';
