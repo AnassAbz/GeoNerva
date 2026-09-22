@@ -81,6 +81,12 @@ export interface BuildFireClusterDetailOptions {
   readonly db: Kysely<DB>;
   readonly publicId: string;
   readonly asOf: Date;
+  /**
+   * The caller's present, which decides `isReplay`. Defaults to the wall clock for a
+   * caller that has no opinion; every caller in this repository has one, and a fixed
+   * clock only reaches the response through it.
+   */
+  readonly now?: Date;
   readonly location: LocationRef | null;
   readonly retentionProfile?: 'lean' | 'standard';
 }
@@ -199,6 +205,7 @@ export async function buildFireClusterDetail(
       asOf,
       cutoffs,
       replayHorizonFor(options.retentionProfile ?? 'lean', asOf),
+      options.now ?? new Date(),
     ),
     status: statusOf(state),
     createdAt: cluster.created_at.toISOString(),

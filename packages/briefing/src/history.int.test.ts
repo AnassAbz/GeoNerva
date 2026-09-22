@@ -1210,10 +1210,29 @@ describe('live coverage comes from the ledger, by read window (ADR-041)', () => 
   }
 
   /** Polls every 30 minutes over `[from, to]`. */
-  async function polled(from: Date, to: Date, lookbackHours = 24): Promise<void> {
-    for (let at = from.getTime(); at <= to.getTime(); at += 30 * 60_000) {
+  /**
+   * Polls from `from` to `to` at `stepMinutes`, which must stay inside `lookbackHours` or the
+   * windows stop overlapping and the ledger gets the gaps these tests are about.
+   *
+   * The default cadence is the one the gap tests need. A test that only wants *unbroken* coverage
+   * over a long span should widen the step: at half an hour, sixty days is some 2,880 sequential
+   * round trips, which on this machine is twenty-five seconds and the reason a full-suite run
+   * could trip the thirty-second timeout while the same file passed on its own.
+   */
+  async function polled(from: Date, to: Date, lookbackHours = 24, stepMinutes = 30): Promise<void> {
+    if (stepMinutes > lookbackHours * 60) {
+      throw new Error(`polled: a ${String(stepMinutes)}-minute step leaves a gap in the ledger`);
+    }
+    let at = from.getTime();
+    for (; at <= to.getTime(); at += stepMinutes * 60_000) {
       await poll(new Date(at), lookbackHours);
     }
+    /*
+     * And one at `to` itself. Without it the last poll lands up to a step short of the range end,
+     * and the earthquake baseline refuses because the *current* window was not read whole — which
+     * is correct behaviour, and a fixture artefact rather than the thing under test.
+     */
+    if (at - stepMinutes * 60_000 < to.getTime()) await poll(to, lookbackHours);
   }
 
   const backfillEnd = daysAgo(60);
@@ -1305,7 +1324,9 @@ describe('live coverage comes from the ledger, by read window (ADR-041)', () => 
   });
 
   it('keeps working after run history older than ninety days is pruned (ADR-033, ADR-041)', async () => {
-    await polled(backfillEnd, daysAgo(0.01));
+    // Twelve-hour steps inside a 24-hour look-back: the same unbroken coverage, a twentieth of
+    // the round trips. This test is about what survives pruning, not about polling cadence.
+    await polled(backfillEnd, daysAgo(0.01), 24, 12 * 60);
     await sql`DELETE FROM geonerva.ingestion_runs WHERE started_at < ${daysAgo(90)}`.execute(db);
     await sql`DELETE FROM geonerva.backfill_intervals`.execute(db);
     await sql`DELETE FROM geonerva.backfill_plans`.execute(db);

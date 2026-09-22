@@ -308,7 +308,7 @@ export async function buildSnapshot(options: BuildSnapshotOptions): Promise<Snap
     contentSha256: contentSha256(hashable),
   };
 
-  const asOfContext = asOfContextFor(asOf, cutoffs, replayHorizon);
+  const asOfContext = asOfContextFor(asOf, cutoffs, replayHorizon, buildNow);
 
   return { snapshot, asOfContext, evidenceIds: [...evidence].sort(compare) };
 }
@@ -323,6 +323,7 @@ export function asOfContextFor(
   asOf: Date,
   cutoffs: Readonly<Record<string, Date | null>>,
   replayHorizon: AsOfContext['replayHorizon'],
+  now: Date,
 ): AsOfContext {
   return {
     asOf: asOf.toISOString(),
@@ -330,8 +331,14 @@ export function asOfContextFor(
      * "Materially in the past" rather than "before now": every build has some latency between
      * taking the clock and finishing, and calling a live request a replay because of it would
      * make an immutable-response header depend on how loaded the server was.
+     *
+     * `now` is the caller's present, never `Date.now()`. It used to be the wall clock, which made
+     * every response a replay whenever the two disagreed: under `GEONERVA_FAKE_NOW` the fixed
+     * instant is by construction in the past of the real clock, so a live page rendered the replay
+     * banner and a "Return to the present" link that went nowhere. The request already knows what
+     * "now" means; a read model that decides it independently is a second clock (P9b).
      */
-    isReplay: Date.now() - asOf.getTime() > REPLAY_THRESHOLD_MS,
+    isReplay: now.getTime() - asOf.getTime() > REPLAY_THRESHOLD_MS,
     replayHorizon,
     sourceCutoffs: Object.fromEntries(
       Object.entries(cutoffs)

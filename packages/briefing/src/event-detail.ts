@@ -101,6 +101,12 @@ export interface BuildEventDetailOptions {
   readonly db: Kysely<DB>;
   readonly publicId: string;
   readonly asOf: Date;
+  /**
+   * The caller's present, which decides `isReplay`. Defaults to the wall clock for a
+   * caller that has no opinion; every caller in this repository has one, and a fixed
+   * clock only reaches the response through it.
+   */
+  readonly now?: Date;
   /** The rounded location the caller supplied, or `null` for no relevance. */
   readonly location: LocationRef | null;
   readonly retentionProfile?: 'lean' | 'standard';
@@ -229,6 +235,7 @@ export async function buildEventDetail(
       asOf,
       cutoffs,
       replayHorizonFor(options.retentionProfile ?? 'lean', asOf),
+      options.now ?? new Date(),
     ),
     createdAt: event.created_at.toISOString(),
     headline: {

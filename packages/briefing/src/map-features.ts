@@ -111,6 +111,12 @@ export interface BuildMapFeaturesOptions {
   /** Non-empty, deduplicated, in `HAZARD_FAMILIES` order. */
   readonly families: readonly HazardFamily[];
   readonly asOf: Date;
+  /**
+   * The caller's present, which decides `isReplay`. Defaults to the wall clock for a
+   * caller that has no opinion; every caller in this repository has one, and a fixed
+   * clock only reaches the response through it.
+   */
+  readonly now?: Date;
   readonly retentionProfile?: 'lean' | 'standard';
   /**
    * Features per response. Defaults to `MAP_FEATURE_CAP`, and exists so that a test can exercise
@@ -176,6 +182,7 @@ export async function buildMapFeatures(
       asOf,
       cutoffs,
       replayHorizonFor(options.retentionProfile ?? 'lean', asOf),
+      options.now ?? new Date(),
     ),
     bbox,
     bboxParts: splitViewport(bbox),

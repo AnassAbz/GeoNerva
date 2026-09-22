@@ -540,6 +540,7 @@ export async function getHistory(db: Kysely, request: HistoryRequest): Promise<H
     metric: request.history.metric,
     radiusKm: request.history.radiusKm,
     asOf: request.now,
+    now: request.now,
     retentionProfile: RETENTION_PROFILE,
   });
 }
@@ -565,6 +566,7 @@ export async function getEvents(db: Kysely, request: EventsRequest): Promise<Map
     zoom: request.viewport.zoom,
     families: request.families,
     asOf: request.asOf,
+    now: request.now,
     retentionProfile: RETENTION_PROFILE,
   });
 }
@@ -599,6 +601,7 @@ export async function getEventDetail(
     db,
     publicId: request.publicId,
     asOf: request.asOf,
+    now: request.now,
     location,
     retentionProfile: RETENTION_PROFILE,
   });
@@ -629,6 +632,7 @@ export async function getFireClusterDetail(
     db,
     publicId: request.publicId,
     asOf: request.asOf,
+    now: request.now,
     location,
     retentionProfile: RETENTION_PROFILE,
   });

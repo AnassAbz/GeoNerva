@@ -119,6 +119,8 @@ export interface BuildHistoryOptions {
   readonly metric: HistoryMetric;
   readonly radiusKm: number;
   readonly asOf: Date;
+  /** The caller's present, which decides `isReplay`. */
+  readonly now?: Date;
   readonly retentionProfile?: 'lean' | 'standard';
   /**
    * The catalog read's safety bound. Only tests set it: a bound can be tested only from above it,
@@ -139,6 +141,7 @@ export async function buildHistory(options: BuildHistoryOptions): Promise<Histor
     options.asOf,
     cutoffs,
     replayHorizonFor(options.retentionProfile ?? 'lean', options.asOf),
+    options.now ?? new Date(),
   );
   const base = { options, asOfContext, cutoffs };
   switch (options.metric) {
