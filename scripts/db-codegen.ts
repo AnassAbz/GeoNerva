@@ -30,27 +30,40 @@ const packageDir = fileURLToPath(new URL('../packages/db/', import.meta.url));
 const requireFromDb = createRequire(new URL('../packages/db/package.json', import.meta.url));
 const require = createRequire(import.meta.url);
 
-function runNode(entry: string, args: readonly string[]): number {
+function runNode(
+  entry: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): number {
   const result = spawnSync(process.execPath, [entry, ...args], {
     cwd: packageDir,
     stdio: 'inherit',
+    env,
   });
   // A signal leaves `status` null; report that as a failure rather than as a success.
   return result.status ?? 1;
 }
 
-const generated = runNode(requireFromDb.resolve('kysely-codegen/dist/cli/bin.js'), [
-  '--url',
-  resolveDatabaseUrl(process.env),
-  '--dialect',
-  'postgres',
-  '--default-schema',
-  'geonerva',
-  '--include-pattern',
-  'geonerva.*',
-  '--out-file',
-  OUT_FILE,
-]);
+/*
+ * The URL goes in the child's environment, not in its argv: `resolveDatabaseUrl` prefers
+ * `DATABASE_URL_WORKER`, so a developer with a real credential in their shell would otherwise hand
+ * it to a child process where it is visible in the process table and in anything that echoes a
+ * command line (security review F-24). `kysely-codegen` reads `DATABASE_URL` itself.
+ */
+const generated = runNode(
+  requireFromDb.resolve('kysely-codegen/dist/cli/bin.js'),
+  [
+    '--dialect',
+    'postgres',
+    '--default-schema',
+    'geonerva',
+    '--include-pattern',
+    'geonerva.*',
+    '--out-file',
+    OUT_FILE,
+  ],
+  { ...process.env, DATABASE_URL: resolveDatabaseUrl(process.env) },
+);
 
 if (generated !== 0) {
   console.error('✗ codegen failed. Is the database running and migrated?');

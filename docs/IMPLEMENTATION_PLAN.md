@@ -345,15 +345,17 @@ Replay UI + reconstructed scenarios → Runtime AI (Interpreter + Skeptic, eval 
 
 These are **exit criteria** of the named phases. A phase gate cannot pass while its items are open.
 
+✅ marks an item closed and evidenced in `docs/reviews/security-p1.md`. F-5, F-6, F-8 and F-16 closed in P9 (2026-09-22); the P9 security review's own findings, F-18 to F-25, are in the same register and are all fixed.
+
 | Finding | Requirement | Phase |
 |---|---|---|
-| F-6 | Integration tests use a dedicated `DATABASE_URL_TEST`. Any test that writes must refuse to run against a non-local host unless `GEONERVA_ALLOW_REMOTE_TEST_DB=1`, and must use an isolated schema or database | P2 (before the first writing integration test) |
+| F-6 ✅ | Integration tests use a dedicated `DATABASE_URL_TEST`. Any test that writes must refuse to run against a non-local host unless `GEONERVA_ALLOW_REMOTE_TEST_DB=1`, and must use an isolated schema or database | P2 (before the first writing integration test) |
 | F-7 | Production database URLs require TLS (`sslmode=require` or stronger); the config refuses a non-TLS URL when `NODE_ENV=production` | P2 (db client), verified in P10 |
 | F-12 | Production processes must set `NODE_ENV=production` explicitly. Deployment manifests set it, and the worker/web start-up logs it | P3 (worker), P10 |
-| F-8 | Web configuration is loaded only in server-only modules (`server-only` import); secrets never reach RSC props or client components (a test asserts it). Client components must never read `process.env`: a prerendered client page embeds the value in public HTML (verified in the P1 re-review; the `build:canary` check catches it) | P8 |
-| F-5 | A strict Content-Security-Policy (`default-src 'self'`, a script policy compatible with CDN-cached HTML, i.e. hashes or `strict-dynamic`, no `unsafe-inline` for scripts). It must land before any provider text is rendered | P9a (before P9b) |
+| F-8 ✅ | Web configuration is loaded only in server-only modules (`server-only` import); secrets never reach RSC props or client components (a test asserts it). Client components must never read `process.env`: a prerendered client page embeds the value in public HTML (verified in the P1 re-review; the `build:canary` check catches it) | P8 |
+| F-5 ✅ | A strict Content-Security-Policy (`default-src 'self'`, a script policy compatible with CDN-cached HTML, i.e. hashes or `strict-dynamic`, no `unsafe-inline` for scripts). It must land before any provider text is rendered | P9a (before P9b) |
 | R-7 | `apps/web/lib/client/api-client.ts` is the only module exempt from the network-call ban. It must reject absolute URLs and anything outside `/api/v1` at runtime, with a test, and counts as security-review-relevant | P9a |
-| F-16 | `MAP_STYLE_URL` is parsed into an origin and validated before use in CSP or fetches | P9a |
+| F-16 ✅ | `MAP_STYLE_URL` is parsed into an origin and validated before use in CSP or fetches | P9a |
 | F-15 | Enable GitHub private vulnerability reporting, and publish a fallback security contact and a Code of Conduct contact | Before the repository is made public (P10) |
 | F-2b | The worker installs `unhandledRejection` and `uncaughtException` handlers using the same redaction as `describeUnexpectedError`, once asynchronous commands exist | P3 |
 | N-5 | `apps/web` must not reach the Anthropic client even transitively: add a `reachable` dependency rule when `packages/ai` gains it | P1.x (Runtime AI) |

@@ -181,30 +181,76 @@ describe('GEONERVA_FAKE_NOW', () => {
 
   it('parses an ISO instant into the instant it names, for both processes', () => {
     for (const config of [
-      loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: ANCHOR }),
-      loadWorkerConfig({ ...validWorker, GEONERVA_FAKE_NOW: ANCHOR }),
+      loadWebConfig({ ...validWeb, NODE_ENV: 'test', GEONERVA_FAKE_NOW: ANCHOR }),
+      loadWorkerConfig({ ...validWorker, NODE_ENV: 'test', GEONERVA_FAKE_NOW: ANCHOR }),
     ]) {
       expect(hasFixedClock(config)).toBe(true);
       expect(nowFrom(config).toISOString()).toBe(ANCHOR);
     }
   });
 
+  /*
+   * `Date.parse` rolls an impossible date over rather than refusing it, so these were accepted
+   * and silently became a different instant: 30 February became 2 March, and 24:00 became the
+   * next midnight. A typo in a Playwright config would have frozen the clock two days from the
+   * one its author wrote, which is exactly the silence this variable exists to prevent.
+   */
+  it.each([
+    ['a day the month does not have', '2026-02-30T00:00:00Z'],
+    ['the 31st of a 30-day month', '2026-09-31T00:00:00Z'],
+    ['an hour past the end of the day', '2026-09-22T24:00:00Z'],
+    ['a minute past the end of the hour', '2026-09-22T13:60:00Z'],
+    ['a leap second', '2026-09-22T23:59:60Z'],
+  ])('refuses %s rather than rolling it over', (_case, value) => {
+    expect(() =>
+      loadWebConfig({ ...validWeb, NODE_ENV: 'test', GEONERVA_FAKE_NOW: value }),
+    ).toThrow(/is not a real instant/u);
+  });
+
+  it('accepts 29 February in a leap year, which is a real day', () => {
+    const config = loadWebConfig({
+      ...validWeb,
+      NODE_ENV: 'test',
+      GEONERVA_FAKE_NOW: '2028-02-29T00:00:00.000Z',
+    });
+    expect(nowFrom(config).toISOString()).toBe('2028-02-29T00:00:00.000Z');
+  });
+
+  /*
+   * `NODE_ENV` has a default, so an environment that says nothing parses as `development` — and
+   * the clock would have been accepted on the strength of a value nobody chose. The variable is
+   * only ever wanted in a test run, so it requires the operator to say so.
+   */
+  it('refuses a fixed clock when nothing says which environment this is', () => {
+    // `validWeb` sets no NODE_ENV, which is exactly the environment under test.
+    expect(() => loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: ANCHOR })).toThrow(
+      /must not be set unless NODE_ENV is explicitly development or test/u,
+    );
+    expect(() => loadWorkerConfig({ ...validWorker, GEONERVA_FAKE_NOW: ANCHOR })).toThrow(
+      /must not be set unless NODE_ENV is explicitly development or test/u,
+    );
+    // The same environment without the clock still loads: the rule is about the pair.
+    expect(loadWebConfig(validWeb).GEONERVA_FAKE_NOW).toBeUndefined();
+  });
+
   it('freezes the clock: two reads a moment apart are the same instant', () => {
-    const config = loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: ANCHOR });
+    const config = loadWebConfig({ ...validWeb, NODE_ENV: 'test', GEONERVA_FAKE_NOW: ANCHOR });
     expect(nowFrom(config).getTime()).toBe(nowFrom(config).getTime());
   });
 
   it('hands out a fresh Date, so a caller cannot move the clock for everyone else', () => {
-    const config = loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: ANCHOR });
+    const config = loadWebConfig({ ...validWeb, NODE_ENV: 'test', GEONERVA_FAKE_NOW: ANCHOR });
     const first = nowFrom(config);
     first.setUTCFullYear(1999);
     expect(nowFrom(config).toISOString()).toBe(ANCHOR);
   });
 
   it('treats an empty value as absent, like every other optional variable', () => {
-    expect(loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: '' }).GEONERVA_FAKE_NOW).toBeUndefined();
     expect(
-      loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: '   ' }).GEONERVA_FAKE_NOW,
+      loadWebConfig({ ...validWeb, NODE_ENV: 'test', GEONERVA_FAKE_NOW: '' }).GEONERVA_FAKE_NOW,
+    ).toBeUndefined();
+    expect(
+      loadWebConfig({ ...validWeb, NODE_ENV: 'test', GEONERVA_FAKE_NOW: '   ' }).GEONERVA_FAKE_NOW,
     ).toBeUndefined();
   });
 
@@ -216,15 +262,21 @@ describe('GEONERVA_FAKE_NOW', () => {
     ['an empty-looking token', 'now'],
     ['a millisecond epoch', '1790161560000'],
   ])('refuses %s rather than falling back to the wall clock', (_label, value) => {
-    expect(issuesOf(() => loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: value }))).toEqual([
+    expect(
+      issuesOf(() => loadWebConfig({ ...validWeb, NODE_ENV: 'test', GEONERVA_FAKE_NOW: value })),
+    ).toEqual([
       'GEONERVA_FAKE_NOW: must be a full ISO 8601 instant with an offset, e.g. 2026-09-22T13:06:00.000Z (a date alone is not accepted)',
     ]);
   });
 
   it('refuses a well-shaped instant that is not a real one', () => {
     expect(
-      issuesOf(() => loadWebConfig({ ...validWeb, GEONERVA_FAKE_NOW: '2026-13-45T99:99:99Z' })),
-    ).toEqual(['GEONERVA_FAKE_NOW: is not a real instant']);
+      issuesOf(() =>
+        loadWebConfig({ ...validWeb, NODE_ENV: 'test', GEONERVA_FAKE_NOW: '2026-13-45T99:99:99Z' }),
+      ),
+    ).toEqual([
+      'GEONERVA_FAKE_NOW: is not a real instant: check the day of the month and the time of day',
+    ]);
   });
 
   it('is refused in production, in both processes', () => {

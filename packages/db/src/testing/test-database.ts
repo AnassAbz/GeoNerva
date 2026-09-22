@@ -11,7 +11,8 @@
  *  2. **Local *and* disposable.** The host must be loopback **and** the database name must end in
  *     `_test`. Either condition alone is not enough: the development database is on loopback, and
  *     so is any production database someone has tunnelled. Anything else is refused unless
- *     `GEONERVA_ALLOW_REMOTE_TEST_DB=1` is set, which makes it a deliberate, visible act.
+ *     `GEONERVA_ALLOW_REMOTE_TEST_DB=1` is set — which relaxes the **host** only. No variable
+ *     relaxes the `_test` suffix, because that is the half that says the database is disposable.
  *  3. **Isolated.** Tests run against their own database inside the shared container, created on
  *     demand and migrated from empty. The suite truncates between tests rather than sharing
  *     state, and it never touches the development database.
@@ -68,18 +69,30 @@ export function resolveTestDatabaseUrl(env: TestEnv): string {
   const isLocal = isLoopbackHost(host);
   const looksLikeTestDatabase = database.toLowerCase().endsWith('_test');
 
-  // Both conditions, not either (S-3). "Loopback" is not evidence that a database is disposable:
-  // the development database is on loopback, and so is any production database someone has
-  // port-forwarded or tunnelled. These tests migrate and TRUNCATE whatever they are pointed at,
-  // so the name has to say out loud that losing it is acceptable.
-  if (!allowRemote && !(isLocal && looksLikeTestDatabase)) {
-    const reason = isLocal
-      ? `the database name "${database}" does not end in "_test"`
-      : `the host ${host} is not loopback`;
+  /*
+   * Both conditions, not either (S-3). "Loopback" is not evidence that a database is disposable:
+   * the development database is on loopback, and so is any production database someone has
+   * port-forwarded or tunnelled. These tests migrate and TRUNCATE whatever they are pointed at,
+   * so the name has to say out loud that losing it is acceptable.
+   *
+   * The escape hatch relaxes **only the host**. It used to relax both, which meant one variable
+   * turned the guard off entirely: with it set, the development database and a production pooler
+   * URL were each accepted, and the seeder would have truncated them. §3a asks only that a
+   * non-local *host* be overridable; the `_test` suffix is the half that makes a database
+   * disposable, and nothing should be able to wave it away (security review F-19).
+   */
+  if (!looksLikeTestDatabase || !(isLocal || allowRemote)) {
+    const reason = looksLikeTestDatabase
+      ? `the host ${host} is not loopback`
+      : `the database name "${database}" does not end in "_test"`;
+    const remedy = looksLikeTestDatabase
+      ? `Point ${TEST_DATABASE_URL_VAR} at a local database, or set ${ALLOW_REMOTE_VAR}=1 to ` +
+        `accept a remote host deliberately.`
+      : `Point ${TEST_DATABASE_URL_VAR} at a database whose name ends in "_test". ` +
+        `${ALLOW_REMOTE_VAR} does not relax this: it allows a remote host, never a database ` +
+        `that does not say it is disposable.`;
     throw new UnsafeTestDatabaseError(
-      `refusing to run writing tests against ${host}/${database}: ${reason}. ` +
-        `Point ${TEST_DATABASE_URL_VAR} at a disposable database, or set ${ALLOW_REMOTE_VAR}=1 ` +
-        `to override deliberately.`,
+      `refusing to run writing tests against ${host}/${database}: ${reason}. ${remedy}`,
     );
   }
 

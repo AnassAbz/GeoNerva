@@ -34,9 +34,19 @@ export default function proxy(request: NextRequest): NextResponse {
 
 export const config = {
   /*
-   * Every document and every API response, including 404s. Only `_next/static` and `_next/image`
-   * are skipped: they are immutable build output, a per-request header there would defeat their
-   * caching, and a CSP on a `.js` or image response governs nothing.
+   * Every document and every API response, including 404s — except the redirects Next issues
+   * before this runs (a trailing slash, a doubled leading slash), whose bodies are empty.
+   *
+   * Only `_next/static` and `_next/image` are skipped: they are immutable build output, a
+   * per-request header there would defeat their caching, and a CSP on a `.js` or an image
+   * response governs nothing.
+   *
+   * Each exclusion is anchored to a segment or query boundary. Written as bare prefixes they
+   * excluded anything that merely *began* with one — `/_next/staticX`, `/favicon.icoX`,
+   * `/_next/staticky/a.js` — each served as an HTML 404 with no policy at all (security review
+   * F-18). Nothing reflected the request, so there was no exploit; what there was, was an
+   * open-ended exemption that the next route to land under such a prefix would have inherited in
+   * silence.
    *
    * `/maplibre/*` is deliberately **not** skipped. A dedicated worker created from a same-origin
    * URL takes its CSP from its own response, so the worker inherits `'strict-dynamic'`, and the
@@ -46,5 +56,5 @@ export const config = {
    * fetched, with no CSP violation and no console error. An exclusion that is not needed is only
    * a hole, so there is none.
    */
-  matcher: ['/((?!_next/static|_next/image|favicon\\.ico).*)'],
+  matcher: ['/((?!_next/static/|_next/image$|_next/image\\?|favicon\\.ico$).*)'],
 };

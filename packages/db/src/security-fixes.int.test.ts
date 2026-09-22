@@ -117,12 +117,19 @@ describe('S-3 — the test-database guard needs loopback AND a disposable name',
         DATABASE_URL_TEST: 'postgresql://geonerva:geonerva@127.0.0.1:54320/geonerva_test',
       }),
     ).toContain('geonerva_test');
+    // The escape hatch relaxes the host, and only the host (security review F-19).
     expect(
+      resolveTestDatabaseUrl({
+        DATABASE_URL_TEST: 'postgresql://u:p@db.example.com/scratch_test',
+        GEONERVA_ALLOW_REMOTE_TEST_DB: '1',
+      }),
+    ).toContain('db.example.com');
+    expect(() =>
       resolveTestDatabaseUrl({
         DATABASE_URL_TEST: 'postgresql://u:p@db.example.com/anything',
         GEONERVA_ALLOW_REMOTE_TEST_DB: '1',
       }),
-    ).toContain('db.example.com');
+    ).toThrow(/does not end in "_test"/u);
   });
 
   it('does not treat 0.0.0.0 as this machine (S-18)', () => {
@@ -332,6 +339,42 @@ describe('S-13 — the web role cannot read AI output text', () => {
     expect(columns).not.toContain('output');
     expect(columns).not.toContain('validation_errors');
     expect(columns).toContain('validation_status');
+  });
+});
+
+describe('F-23 — the append-only tables cannot be rewritten by the role that writes them', () => {
+  /*
+   * 0017 and 0018 each granted `SELECT, INSERT`, which reads as least privilege — but 0007's
+   * default privileges had already granted UPDATE and DELETE at `CREATE TABLE` time, and a
+   * narrower GRANT does not revoke a wider one. So the "append-only" in those tables' comments
+   * was decoration until 0019 revoked them, and this is what keeps it from becoming decoration
+   * again the next time a table is added.
+   */
+  it.each(['feed_coverage_hours', 'fire_daily_counts', 'fire_daily_coverage'])(
+    '%s: the worker may insert and read, and nothing else',
+    async (table) => {
+      const grants = await sql<{ privilege_type: string }>`
+        SELECT privilege_type
+        FROM information_schema.role_table_grants
+        WHERE grantee = 'geonerva_worker'
+          AND table_schema = 'geonerva'
+          AND table_name = ${table}
+        ORDER BY privilege_type
+      `.execute(db);
+      expect(grants.rows.map((row) => row.privilege_type)).toEqual(['INSERT', 'SELECT']);
+    },
+  );
+
+  /* The frontier is operational state, one row per feed, maintained with ON CONFLICT DO UPDATE. */
+  it('leaves the coverage frontier writable, because it carries no history', async () => {
+    const grants = await sql<{ privilege_type: string }>`
+      SELECT privilege_type
+      FROM information_schema.role_table_grants
+      WHERE grantee = 'geonerva_worker'
+        AND table_schema = 'geonerva'
+        AND table_name = 'feed_coverage_frontier'
+    `.execute(db);
+    expect(grants.rows.map((row) => row.privilege_type)).toContain('UPDATE');
   });
 });
 

@@ -56,6 +56,16 @@ const ROUTES = [
   // The MapLibre worker is inside the policy too: a same-origin worker inherits the CSP of its
   // own response, and it was measured to still load itself and its shared chunk under it.
   '/maplibre/maplibre-gl-worker.mjs',
+  /*
+   * Paths that merely begin with an excluded prefix. These were served as HTML 404s with no
+   * policy at all until the matcher's exclusions were anchored to a segment boundary (security
+   * review F-18), and this assertion existed nowhere — the suite probed only the routes that were
+   * always covered, so the register's claim that every response carries a CSP was untested where
+   * it was false.
+   */
+  '/_next/staticX',
+  '/_next/staticky/a.js',
+  '/favicon.icoX',
 ];
 
 test('the strict script policy holds on every route (F-5)', async ({ request }) => {

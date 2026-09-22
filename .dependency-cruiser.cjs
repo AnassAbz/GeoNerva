@@ -86,7 +86,14 @@ module.exports = {
       name: 'no-test-fixtures-in-production-code',
       comment: 'Fixtures may only be imported from tests.',
       severity: 'error',
-      from: { pathNot: '(\\.test\\.ts$|\\.int\\.test\\.ts$|/e2e/|^packages/test-fixtures/)' },
+      from: {
+        pathNot:
+          '(\\.test\\.ts$|\\.int\\.test\\.ts$|/e2e/|^packages/test-fixtures/' +
+          // The scenario seeder's whole job is to load a fixture into a disposable database,
+          // and it is a developer command, never part of a shipped bundle. Named here so the
+          // exception is reviewed rather than invisible (security review F-20).
+          '|^scripts/seed-scenario\\.ts$)',
+      },
       to: { path: '^packages/test-fixtures/' },
     },
     {
@@ -100,7 +107,10 @@ module.exports = {
           '(\\.test\\.ts$|\\.int\\.test\\.ts$|/e2e/|^packages/db/src/testing/' +
           // The storage-measurement script builds a disposable database on purpose; that is the
           // harness's whole job, and measuring against a real schema is the point of the script.
-          '|^packages/db/src/estimate-storage\\.ts$)',
+          '|^packages/db/src/estimate-storage\\.ts$' +
+          // Same for the benchmark and the scenario seeder: both exist to build a throw-away
+          // database, and both are developer commands (security review F-20).
+          '|^scripts/(bench-api|seed-scenario)\\.ts$)',
       },
       to: { path: '^packages/db/src/testing/' },
     },

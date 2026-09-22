@@ -69,6 +69,22 @@ describe('F-6: integration tests may only reach a test database', () => {
     ).toBe(REMOTE_TEST);
   });
 
+  /*
+   * The escape hatch used to relax both halves of the rule, so one variable turned the guard off:
+   * with it set, the *development* database and a production pooler URL were each accepted, and
+   * the harness TRUNCATEs whatever it is pointed at. The host is overridable because §3a says so;
+   * the `_test` suffix is what says the database is disposable, and nothing waives it.
+   */
+  it.each([
+    ['the development database', 'postgresql://geonerva:geonerva@127.0.0.1:54320/geonerva'],
+    ['a production pooler', 'postgresql://u:pw@aws-0.pooler.supabase.com:6543/postgres'],
+    ['a remote database with any other name', 'postgresql://u:pw@db.example.com:5432/anything'],
+  ])('refuses %s even with the escape hatch set', (_case, url) => {
+    expect(() =>
+      resolveTestDatabaseUrl({ [TEST_DATABASE_URL_VAR]: url, [ALLOW_REMOTE_VAR]: '1' }),
+    ).toThrow(/does not end in "_test"/u);
+  });
+
   it('treats any value other than "1" as not granting the escape hatch', () => {
     for (const value of ['0', 'true', 'yes', '']) {
       expect(() =>

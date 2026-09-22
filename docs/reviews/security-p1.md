@@ -354,10 +354,10 @@ I did not run `pnpm test:integration` or `pnpm test:e2e`. They are not needed fo
 | F-2 | MEDIUM | **FIXED** | Details below. |
 | F-3 | MEDIUM | **PARTIALLY FIXED** (the remainder is LOW) | Flagged: JSX prop, `createElement` prop (including shorthand `{ dangerouslySetInnerHTML }`), `innerHTML`/`outerHTML` (dot and bracket), `insertAdjacentHTML`, `document.write`, `createContextualFragment`. `.jsx/.mjs/.cjs` in apps/web are now linted, and sinks inside `packages/*` are flagged too. Not flagged: see N-2. |
 | F-4 | MEDIUM | **PARTIALLY FIXED** (MEDIUM remains) | Details below. |
-| F-5 | MEDIUM | DEFERRED, recorded | IMPLEMENTATION_PLAN §3a, P9a before P9b. |
-| F-6 | MEDIUM | DEFERRED, recorded | §3a, P2. The `GEONERVA_ALLOW_REMOTE_TEST_DB=1` escape hatch is acceptable because it is explicit. |
+| F-5 | MEDIUM | **FIXED** (P9, 2026-09-22) | `default-src 'self'` and `script-src 'self' 'strict-dynamic' 'nonce-…'`, per request from `apps/web/proxy.ts`; no `unsafe-inline`, no `unsafe-eval`. Hashes were shown impossible for Next's inline RSC payload, so the root layout declares `force-dynamic`. Verified live on every route family, on 404s, on the API and on the worker; nine mutations each fail. Residual: F-18 below, now fixed; redirects carry no CSP (empty bodies); no `report-to`. |
+| F-6 | MEDIUM | **FIXED** (P2), guard tightened P9 | The escape hatch was *not* merely explicit: it relaxed the `_test` suffix as well as the host, so one variable accepted the development database and a production pooler URL — against a harness that TRUNCATEs. It now relaxes the host only (F-19 below). |
 | F-7 | MEDIUM | DEFERRED, recorded | §3a, P2/P10. |
-| F-8 | MEDIUM | DEFERRED, recorded | §3a, P8. See the extra evidence below. |
+| F-8 | MEDIUM | **FIXED** (P9, 2026-09-22) | The `server-only` package is not in this workspace's offline store, so the rule is enforced by a scan instead: `apps/web/lib/server/server-boundary.test.ts` fails `pnpm check` if any module carrying the `'use client'` directive imports `lib/server/**`. Proven non-vacuous by adding such an import and watching it name the file. `pnpm build:canary` independently confirms no secret canary reaches the client bundles. |
 | F-9 | LOW | **FIXED** (minor LOW residual) | Every item named in F-9 is now caught: `node:fs` (including dynamic `import('node:fs')`), `fs/promises`, `tls`, `worker_threads`, `module` (so `createRequire`), `process` import, global `fetch`/`process` in pure engines, `pg-pool`, `postgres`, `@supabase` (with pnpm `+` encoding). Residual: see N-8. |
 | F-10 | LOW | **FIXED** | `not-to-unresolvable` fires on an unknown import. The `@/` alias is removed and `next-env.d.ts` is excluded. Acceptable residual: `import(variable)` is invisible to static analysis. |
 | F-11 | LOW | **FIXED** (heuristic) | Rejected: 32 spaces, `changeme`×4, 11 distinct characters×3, `Password…`. Accepted: `openssl rand -hex 32` and `-base64 32`. Sequential strings with 12 or more distinct characters still pass. That is acceptable for a heuristic. Errors still never echo values: the 128-case fuzz found 0 leaks. |
@@ -365,6 +365,25 @@ I did not run `pnpm test:integration` or `pnpm test:e2e`. They are not needed fo
 | F-13 | LOW | **FIXED** | `persist-credentials: false` on all 4 checkouts. `.github/dependabot.yml` covers npm, github-actions and docker-compose. Residual: see N-7. |
 | F-14 | LOW | **FIXED** | The digest is pinned in compose and CI, and both are identical. I could not check the digest against the registry because there is no network. |
 | F-15, F-16, F-17 | LOW | DEFERRED, recorded | §3a. |
+
+### P9 security review (2026-09-22) — new findings
+
+Raised by the review of the strict CSP, the fixed clock, the scenario seeder, migration 0018
+and the CI change. **No CRITICAL or HIGH.** All are fixed; each row says what the fix was and
+what proves it.
+
+| ID | Sev | Finding | Status |
+|---|---|---|---|
+| F-18 | LOW | The proxy matcher excluded bare *prefixes*, so `/_next/staticX`, `/favicon.icoX` and anything beneath them were served as HTML 404s with **no CSP at all**. No exploit (nothing reflected the request), but an open-ended exemption any future route under such a prefix would inherit. | **FIXED**: exclusions anchored to a segment or query boundary; the three paths added to the end-to-end CSP assertion, which had never probed them. |
+| F-19 | MEDIUM | `GEONERVA_ALLOW_REMOTE_TEST_DB=1` disabled the whole F-6 guard rather than the host check: with it set, the development database and a production pooler URL were both accepted by a harness that TRUNCATEs. | **FIXED**: the `_test` suffix is now unconditional and no variable relaxes it; documented in `.env.example` and TESTING §5; three regression cases. |
+| F-20 | MEDIUM | `pnpm depcruise` cruised `apps` and `packages` only, so the `no-test-fixtures-in-production-code` rule said nothing about the new `scripts/seed-scenario.ts`. | **FIXED**: `scripts` is cruised too, and the seeder and the benchmark are named exceptions with reasons, as `estimate-storage.ts` already was. |
+| F-21 | MEDIUM | `NODE_ENV` has a default, so an environment that said nothing parsed as `development` and a fixed clock was accepted on the strength of a value nobody chose — fail-open on the one control between a deployment and a frozen clock. | **FIXED**: `GEONERVA_FAKE_NOW` requires an *explicit* `NODE_ENV=development|test`, read from the raw environment before the schema default applies. The wider problem — `NODE_ENV` as an unenforced security signal, shared with F-7's TLS gate — remains F-12. |
+| F-22 | LOW | `GEONERVA_FAKE_NOW` accepted calendar-impossible instants because `Date.parse` rolls them over: `2026-02-30T00:00:00Z` became 2 March, silently. | **FIXED**: the fields are checked against the calendar before the instant is built; five rollover cases and a leap-day negative control. |
+| F-23 | LOW | Migrations 0017/0018 granted `SELECT, INSERT` on their append-only tables, but 0007's default privileges had already granted UPDATE and DELETE at `CREATE TABLE` time, and a narrower GRANT does not revoke a wider one — so "append-only" had no grant-level backing. | **FIXED**: migration 0019 revokes UPDATE and DELETE on `feed_coverage_hours`, `fire_daily_counts` and `fire_daily_coverage` (not on the frontier, which is operational state); asserted by an integration test. |
+| F-24 | LOW | `scripts/db-codegen.ts` passed the resolved database URL in `argv`, where a password is visible in the process table. | **FIXED**: passed in the child's environment. |
+| F-25 | LOW | F-8's `server-only` clause was unmet. | **FIXED**: see F-8 above. |
+
+One claimed finding was **not** real and is recorded so it is not re-raised: migration 0009 appears to drop the `output` column from the web role's grant on `agent_outputs`, but that is deliberate (S-13) — the read path renders AI text from the validated briefing, and the live grant matches the migration exactly.
 
 **F-2 evidence:**
 - `postgresql://geonerva:Sup3r/Secret#pw@db.example.com:5432/geonerva` now fails with a value-free `ConfigError` (exit 1).

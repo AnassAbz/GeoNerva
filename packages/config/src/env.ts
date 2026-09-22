@@ -70,7 +70,31 @@ const optionalNonEmpty = z
  * not what the author meant) and, worse, is implementation-defined for anything non-ISO. So the
  * shape is required to be a full ISO 8601 instant with an explicit offset.
  */
-const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/u;
+const ISO_INSTANT =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/u;
+
+/**
+ * True when the text names a day and time that exist.
+ *
+ * The shape check above is not enough, because `Date.parse` *rolls over* what it cannot fit:
+ * `2026-02-30T00:00:00Z` is accepted and becomes 2 March, and `…T24:00:00Z` becomes the next day.
+ * A typo in a Playwright config would then freeze the clock two days from the instant its author
+ * wrote, silently — which is the failure this variable exists to prevent, arriving by another
+ * door. So the fields are checked against the calendar before the instant is built.
+ */
+function namesARealInstant(value: string): boolean {
+  const parts = ISO_INSTANT.exec(value);
+  if (parts === null) return false;
+  const [year, month, day, hour, minute, second] = parts.slice(1, 7).map(Number);
+  if (year === undefined || month === undefined || day === undefined) return false;
+  if (hour === undefined || minute === undefined || second === undefined) return false;
+  if (month < 1 || month > 12 || day < 1) return false;
+  // `Date.UTC(y, m, 0)` is the last day of month `m`, leap years included.
+  if (day > new Date(Date.UTC(year, month, 0)).getUTCDate()) return false;
+  // No leap seconds: 23:59:60 is not an instant any clock in this system can be set to.
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  return Number.isFinite(Date.parse(value));
+}
 
 const fakeNow = z
   .string()
@@ -82,8 +106,8 @@ const fakeNow = z
       'must be a full ISO 8601 instant with an offset, e.g. 2026-09-22T13:06:00.000Z (a date alone is not accepted)',
     abort: true,
   })
-  .refine((value) => value === undefined || Number.isFinite(Date.parse(value)), {
-    message: 'is not a real instant',
+  .refine((value) => value === undefined || namesARealInstant(value), {
+    message: 'is not a real instant: check the day of the month and the time of day',
   })
   .transform((value) => (value === undefined ? undefined : new Date(Date.parse(value))));
 
@@ -110,17 +134,24 @@ const common = {
  * does not start — not a warning and not a silent ignore. A deployment that has this variable set
  * has something badly wrong with it, and the loudest possible failure is the cheapest one.
  */
-function refuseFakeClockInProduction(
-  env: { readonly NODE_ENV: string; readonly GEONERVA_FAKE_NOW?: Date | undefined },
-  ctx: z.RefinementCtx,
-): void {
-  if (env.NODE_ENV !== 'production' || env.GEONERVA_FAKE_NOW === undefined) return;
-  ctx.addIssue({
-    code: 'custom',
-    path: ['GEONERVA_FAKE_NOW'],
-    message:
-      'must not be set when NODE_ENV=production: a fixed clock in a deployed environment would publish stale data as current',
-  });
+function fixedClockIssue(env: Env): string | null {
+  if ((env['GEONERVA_FAKE_NOW'] ?? '').trim() === '') return null;
+  const rawNodeEnv = env['NODE_ENV'];
+  /*
+   * An **explicit** non-production `NODE_ENV` is required, not merely a non-production one.
+   *
+   * `NODE_ENV` has a default here, so an environment that sets nothing parses as `development`,
+   * and a fixed clock would have been accepted on the strength of a value nobody chose. That is
+   * fail-open on the one control standing between a deployment and a frozen clock — and this
+   * variable is opt-in and only ever wanted in a test or an E2E run, so demanding that the same
+   * operator also say which environment they are in costs nothing. F-12 tracks the wider problem:
+   * `NODE_ENV` is a security signal that is currently enforced by convention.
+   */
+  if (rawNodeEnv === 'development' || rawNodeEnv === 'test') return null;
+  const why = 'a fixed clock in a deployed environment would publish stale data as current';
+  return rawNodeEnv === undefined
+    ? `GEONERVA_FAKE_NOW: must not be set unless NODE_ENV is explicitly development or test: ${why}`
+    : `GEONERVA_FAKE_NOW: must not be set when NODE_ENV=${rawNodeEnv}: ${why}`;
 }
 
 /**
@@ -156,7 +187,7 @@ const webObject = z.object({
     .default(DEFAULT_MAP_STYLE_URL),
 });
 
-const webSchema = webObject.superRefine(refuseFakeClockInProduction);
+const webSchema = webObject;
 
 const workerObject = z
   .object({
@@ -170,7 +201,6 @@ const workerObject = z
     AI_DAILY_BUDGET_USD: z.coerce.number().min(0).max(1000).default(1),
   })
   .superRefine((env, ctx) => {
-    refuseFakeClockInProduction(env, ctx);
     if (env.AI_MODE === 'anthropic' && env.ANTHROPIC_API_KEY === undefined) {
       ctx.addIssue({
         code: 'custom',
@@ -212,13 +242,21 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 function parse<T>(processName: string, schema: z.ZodType<T>, env: Env): Readonly<T> {
   const result = schema.safeParse(env);
-  if (!result.success) {
-    const issues = result.error.issues.map((issue) => {
-      const key = issue.path.map(String).join('.') || '(root)';
-      return `${key}: ${issue.message}`;
-    });
-    throw new ConfigError(processName, issues);
-  }
+  const issues = result.success
+    ? []
+    : result.error.issues.map((issue) => {
+        const key = issue.path.map(String).join('.') || '(root)';
+        return `${key}: ${issue.message}`;
+      });
+  /*
+   * Read from the **raw** environment, which is why this is here and not in a `superRefine`: the
+   * schema's `NODE_ENV` default would hide the case that matters most, an environment that says
+   * nothing about which environment it is.
+   */
+  const clock = fixedClockIssue(env);
+  if (clock !== null) issues.push(clock);
+  if (issues.length > 0) throw new ConfigError(processName, issues);
+  if (!result.success) throw new ConfigError(processName, ['(root): the configuration is invalid']);
   return Object.freeze(result.data);
 }
 

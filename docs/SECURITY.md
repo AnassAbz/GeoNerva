@@ -129,6 +129,15 @@ CI uses no production secrets. Live smoke uses a dedicated FIRMS key stored as a
     and an invalid value fails the build (finding F-16, `apps/web/lib/map-style.ts`).
   - Asserted by `apps/web/lib/csp.test.ts` and, on the live headers of every route family, by
     `apps/web/e2e/smoke.spec.ts`.
+  - The proxy's exclusions (`_next/static/`, `_next/image`, `favicon.ico`) are anchored to a
+    segment or query boundary. Written as bare prefixes they also excluded `/_next/staticX`,
+    `/favicon.icoX` and anything beneath them, each served as an HTML 404 with no policy at all
+    (security review F-18); those paths are now in the end-to-end assertion.
+  - **Redirects carry no CSP.** Next normalises a trailing slash or a doubled leading slash
+    before the proxy runs, so `/methodology/` answers `308` with none of our headers. The bodies
+    are empty and carry no script.
+  - There is no `report-uri`/`report-to`, so a policy break in production is invisible until
+    someone reports a blank page. The end-to-end console assertion is what catches it before then.
 - `Strict-Transport-Security: max-age=63072000; includeSubDomains`
 - `Referrer-Policy: strict-origin-when-cross-origin`
 - `Permissions-Policy: geolocation=(self), camera=(), microphone=()`
