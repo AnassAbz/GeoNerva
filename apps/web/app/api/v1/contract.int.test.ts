@@ -48,6 +48,7 @@ import { ENDPOINT_CONTRACTS, buildOpenApiDocument } from '../../../lib/server/co
 import { setDatabaseForTesting } from '../../../lib/server/db.ts';
 import { GET as briefing } from './briefing/route.ts';
 import { GET as evidence } from './evidence/[id]/route.ts';
+import { GET as events } from './events/route.ts';
 import { GET as replayHorizon } from './replay/horizon/route.ts';
 import { GET as sourcesStatus } from './sources/status/route.ts';
 
@@ -422,6 +423,14 @@ describe('every error is a well-formed problem document', () => {
       () => sourcesStatus(request('/api/v1/sources/status', { method: 'POST' })),
     ],
     ['a place GeoNerva cannot resolve', () => briefing(request('/api/v1/briefing?place=p:1'))],
+    [
+      'a viewport too large for its zoom',
+      () => events(request('/api/v1/events?bbox=-45,0,22.5,45&zoom=2')),
+    ],
+    [
+      'a viewport off the grid',
+      () => events(request('/api/v1/events?bbox=-8.07,28.125,-5.625,33.75&zoom=6')),
+    ],
   ])('%s', async (_label, call) => {
     const response = await call();
     expect(response.status).toBeGreaterThanOrEqual(400);

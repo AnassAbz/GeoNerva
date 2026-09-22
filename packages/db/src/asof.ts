@@ -24,7 +24,7 @@
  * the cache safe to trust.
  */
 
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type RawBuilder } from 'kysely';
 
 import {
   aggregateSourceHealth,
@@ -35,11 +35,13 @@ import {
   type FreshnessPolicy,
   type IngestionRunFact,
   type LatLon,
+  type BoundingBox,
   type RunStatus,
   type SourceHealth,
 } from '@geonerva/domain';
 
 import type { DB } from './generated/database.ts';
+import { splitViewport } from './spatial/viewport.ts';
 
 /** A row from the as-of observation view. Ids are decimal strings (see `DatabaseId`). */
 export interface ObservationRow {
@@ -79,6 +81,8 @@ export interface ObservationsAsOfOptions {
   readonly asOf: Date;
   readonly hazardTypes?: readonly string[];
   readonly sourceIds?: readonly string[];
+  /** Restrict to these source records — the members of a known set of canonical events. */
+  readonly sourceRecordIds?: readonly string[];
   /** Restrict to a radius around a point, measured on the spheroid. */
   readonly near?: { readonly point: LatLon; readonly radiusM: number };
   /** Drop versions whose `observed_at` is older than this. Applied to the latest version. */
@@ -129,6 +133,10 @@ export async function observationsAsOf(
     options.sourceIds === undefined
       ? sql`TRUE`
       : sql`r.source_id = ANY(${sql.val(options.sourceIds)}::text[])`;
+  const recordFilter =
+    options.sourceRecordIds === undefined
+      ? sql`TRUE`
+      : sql`v.source_record_id = ANY(${sql.val(options.sourceRecordIds)}::bigint[])`;
 
   const distanceExpression =
     options.near === undefined
@@ -189,6 +197,7 @@ export async function observationsAsOf(
       WHERE v.ingested_at <= ${options.asOf}
         AND ${hazardFilter}
         AND ${sourceFilter}
+        AND ${recordFilter}
         AND ${candidateFilter}
       ORDER BY v.source_record_id, v.ingested_at DESC, v.version_seq DESC
     )
@@ -516,6 +525,234 @@ export async function clusterVersionsNow(
     LIMIT ${options.limit ?? 500}
   `.execute(db);
   return [...result.rows];
+}
+
+/**
+ * The `ST_MakeEnvelope` tests for a viewport, split at the antimeridian and OR-ed together.
+ *
+ * Planar on purpose. A viewport is a rectangle in longitude and latitude, and the geometry cast of
+ * a geography point is exactly its `(lon, lat)` — so this is the exact test, not an approximation.
+ * The geography `&&` operator would **not** be: it compares geocentric boxes, and the geodesic
+ * edges of an envelope cast to geography bow towards the pole, so it misses points just inside
+ * the rectangle's equatorward edge. It cannot even serve as a candidate pre-filter for that
+ * reason.
+ */
+function viewportTest(expression: RawBuilder<unknown>, bbox: BoundingBox): RawBuilder<boolean> {
+  const tests = splitViewport(bbox).map(
+    (envelope) =>
+      sql<boolean>`${expression} && ST_MakeEnvelope(${envelope.west}, ${envelope.south}, ${envelope.east}, ${envelope.north}, 4326)`,
+  );
+  return sql<boolean>`(${sql.join(tests, sql` OR `)})`;
+}
+
+/**
+ * Separates the windowed `total` column from the rows that carried it.
+ *
+ * Every row of a `count(*) OVER ()` result carries the same total, and an empty result carries
+ * none — which is a total of zero, not an unknown one: no row qualified.
+ */
+function splitTotal<Row, Result>(
+  rows: readonly (Row & { readonly total: number })[],
+  build: (rows: Row[], total: number) => Result,
+): Result {
+  const stripped = rows.map((row) => {
+    const copy: Record<string, unknown> = { ...row };
+    Reflect.deleteProperty(copy, 'total');
+    return copy as Row;
+  });
+  return build(stripped, rows[0]?.total ?? 0);
+}
+
+export interface ViewportEventRow {
+  readonly canonical_event_id: string;
+  readonly public_id: string;
+  /** The newest `observed_at` among the event's members that are inside the viewport. */
+  readonly newest_observed_at: Date;
+}
+
+export interface CanonicalEventsInViewportOptions {
+  readonly asOf: Date;
+  /** Any rectangle; one crossing the antimeridian (`west > east`) is split into two. */
+  readonly bbox: BoundingBox;
+  /**
+   * The record-level hazard types to read, each with its own recency window — ADR-037 gives the
+   * families different windows, and one query with one exact total needs them all at once. The
+   * window is applied to the latest version, as `observationsAsOf` applies `observedSince`.
+   */
+  readonly windows: readonly { readonly hazardType: string; readonly observedSince: Date }[];
+  readonly limit: number;
+}
+
+/**
+ * The canonical events with at least one member inside a viewport, as known at `asOf`, and how
+ * many there are in total.
+ *
+ * ### Why an event rather than a record, and why "at least one member"
+ *
+ * A map feature is a *subject*, the same one a briefing card lists — so this reads canonical
+ * events through their links, and a record with no active link is not a feature, exactly as it is
+ * not a card item (see `buildSnapshot`). An event is in the viewport when **any** of its members'
+ * latest version is: that membership test is expressible in SQL, so the total below is exact, and
+ * it is stable under panning — an event whose members straddle the viewport's edge appears in
+ * both viewports rather than in neither.
+ *
+ * ### Why the total is counted here
+ *
+ * `MapFeaturesResponse` refines `truncated` to mean exactly `total > features.length`. A total
+ * that stopped counting at the query's `LIMIT` would be a floor presented as a total, and the
+ * refinement would then let a truncated map claim it was complete. `count(*) OVER ()` is
+ * evaluated before `LIMIT`, so it counts every qualifying event, not every returned one.
+ *
+ * ### Replay
+ *
+ * Every predicate is the one `observationsAsOf` and `linksAsOf` apply, at the same `asOf`: the
+ * latest version by `ingested_at`, the record-merge rule, tombstones, the link window
+ * `linked_at <= T < unlinked_at`, and the event-merge rule. The spatial and recency predicates
+ * narrow **candidates** through versions — a superset, because the qualifying latest version is
+ * itself a witness — and are then re-applied to the latest version, so an epicentre revised out of
+ * the viewport leaves it at the knowledge time of the revision and not before.
+ */
+export async function canonicalEventsInViewportAsOf(
+  db: Kysely<DB>,
+  options: CanonicalEventsInViewportOptions,
+): Promise<{ readonly events: ViewportEventRow[]; readonly total: number }> {
+  if (options.windows.length === 0) return { events: [], total: 0 };
+  const hazardTypes = options.windows.map((window) => window.hazardType);
+  const sinces = options.windows.map((window) => window.observedSince);
+  // The widest window, for candidate narrowing only; each type's own window is applied below.
+  const earliestSince = new Date(Math.min(...sinces.map((since) => since.getTime())));
+
+  const result = await sql<ViewportEventRow & { total: number }>`
+    WITH windows AS (
+      SELECT w.hazard_type, w.observed_since
+      FROM unnest(${sql.val(hazardTypes)}::text[], ${sql.val(sinces)}::timestamptz[])
+           AS w(hazard_type, observed_since)
+    ),
+    candidates AS (
+      SELECT DISTINCT c.source_record_id
+      FROM geonerva.observation_versions c
+      WHERE c.ingested_at <= ${options.asOf}
+        AND c.observed_at >= ${earliestSince}
+        AND ${viewportTest(sql`c.centroid::geometry`, options.bbox)}
+    ),
+    latest AS (
+      SELECT DISTINCT ON (v.source_record_id)
+             v.source_record_id,
+             v.observed_at,
+             v.lifecycle_status,
+             v.centroid,
+             r.merged_at,
+             windows.observed_since
+      FROM geonerva.observation_versions v
+      JOIN geonerva.source_records r ON r.id = v.source_record_id
+      JOIN windows ON windows.hazard_type = r.hazard_type
+      WHERE v.ingested_at <= ${options.asOf}
+        AND v.source_record_id IN (SELECT source_record_id FROM candidates)
+      ORDER BY v.source_record_id, v.ingested_at DESC, v.version_seq DESC
+    ),
+    visible AS (
+      SELECT latest.source_record_id, latest.observed_at
+      FROM latest
+      WHERE (latest.merged_at IS NULL OR latest.merged_at > ${options.asOf})
+        AND latest.lifecycle_status <> ALL(${sql.val(TOMBSTONE_STATUSES)}::text[])
+        AND latest.observed_at >= latest.observed_since
+        AND ${viewportTest(sql`latest.centroid::geometry`, options.bbox)}
+    ),
+    events AS (
+      SELECT l.canonical_event_id,
+             e.public_id,
+             max(visible.observed_at) AS newest_observed_at
+      FROM visible
+      JOIN geonerva.canonical_links l ON l.source_record_id = visible.source_record_id
+      JOIN geonerva.canonical_events e ON e.id = l.canonical_event_id
+      WHERE l.linked_at <= ${options.asOf}
+        AND (l.unlinked_at IS NULL OR l.unlinked_at > ${options.asOf})
+        AND (e.merged_at IS NULL OR e.merged_at > ${options.asOf})
+      GROUP BY l.canonical_event_id, e.public_id
+    )
+    SELECT canonical_event_id::text AS canonical_event_id,
+           public_id,
+           newest_observed_at,
+           (count(*) OVER ())::integer AS total
+    FROM events
+    ORDER BY newest_observed_at DESC, public_id ASC
+    LIMIT ${options.limit}
+  `.execute(db);
+
+  return splitTotal(result.rows, (rows, total) => ({ events: rows, total }));
+}
+
+export interface ClustersInViewportOptions {
+  readonly asOf: Date;
+  readonly bbox: BoundingBox;
+  /** Applied to the latest version's `last_detected_at`. */
+  readonly lastDetectedSince: Date;
+  readonly limit: number;
+}
+
+/**
+ * The latest version of every fire cluster whose **centroid** is inside a viewport, as known at
+ * `asOf`, and how many there are in total.
+ *
+ * The centroid is what the map draws at low zoom (ARCHITECTURE §7.5: "fire cluster centroids"), so
+ * it is what decides membership. As in `clusterVersionsAsOf`, the knowledge time is the version's
+ * `as_of` — cluster versions are derived, not ingested — and a cluster merged at or before `asOf`
+ * is gone. The total is counted before `LIMIT`, for the reason given on
+ * `canonicalEventsInViewportAsOf`.
+ *
+ * The cluster's `status` column is **not** read. It is updated in place as a cluster cools, so at
+ * a past knowledge time it would report the present; the caller derives the state from
+ * `last_detected_at` and `asOf`, which is what `buildSnapshot` already does.
+ */
+export async function clustersInViewportAsOf(
+  db: Kysely<DB>,
+  options: ClustersInViewportOptions,
+): Promise<{ readonly clusters: ClusterVersionRow[]; readonly total: number }> {
+  const result = await sql<ClusterVersionRow & { total: number }>`
+    WITH latest AS (
+      SELECT DISTINCT ON (v.cluster_id)
+             v.id, v.cluster_id, v.as_of, v.n_total, v.n_24h, v.overpasses_24h,
+             v.first_detected_at, v.last_detected_at, v.frp_sum_24h, v.frp_max,
+             v.max_confidence, v.product_ids, v.hull, v.centroid
+      FROM geonerva.fire_cluster_versions v
+      WHERE v.as_of <= ${options.asOf}
+        AND v.cluster_id IN (
+              SELECT c.cluster_id
+              FROM geonerva.fire_cluster_versions c
+              WHERE c.as_of <= ${options.asOf}
+                AND c.last_detected_at >= ${options.lastDetectedSince}
+                AND ${viewportTest(sql`c.centroid::geometry`, options.bbox)}
+            )
+      ORDER BY v.cluster_id, v.as_of DESC, v.id DESC
+    )
+    SELECT latest.id::text         AS cluster_version_id,
+           latest.cluster_id::text AS cluster_id,
+           c.public_id,
+           latest.as_of,
+           latest.n_total,
+           latest.n_24h,
+           latest.overpasses_24h,
+           latest.first_detected_at,
+           latest.last_detected_at,
+           latest.frp_sum_24h,
+           latest.frp_max,
+           latest.max_confidence,
+           latest.product_ids,
+           ST_Y(latest.centroid::geometry) AS centroid_lat,
+           ST_X(latest.centroid::geometry) AS centroid_lon,
+           ST_AsGeoJSON(latest.hull::geometry, 6) AS hull_geojson,
+           NULL::double precision AS distance_m,
+           (count(*) OVER ())::integer AS total
+    FROM latest
+    JOIN geonerva.fire_clusters c ON c.id = latest.cluster_id
+    WHERE (c.merged_at IS NULL OR c.merged_at > ${options.asOf})
+      AND latest.last_detected_at >= ${options.lastDetectedSince}
+      AND ${viewportTest(sql`latest.centroid::geometry`, options.bbox)}
+    ORDER BY latest.last_detected_at DESC, c.public_id ASC
+    LIMIT ${options.limit}
+  `.execute(db);
+
+  return splitTotal(result.rows, (rows, total) => ({ clusters: rows, total }));
 }
 
 interface SourcePolicyRow {

@@ -45,11 +45,18 @@
  */
 
 import {
+  isViewportWithinLimit,
+  MAX_VIEWPORT_DEGREES,
+  quantizationStepDegrees,
+  quantizeViewport,
+} from '@geonerva/db/viewport';
+import {
   CHANGE_WINDOWS,
   HAZARD_FAMILIES,
   USER_COORDINATE_DECIMALS,
   isLocationKey,
   roundUserCoordinate,
+  type BoundingBox,
   type ChangeWindow,
   type HazardFamily,
   type InvalidParam,
@@ -419,6 +426,117 @@ export function parsePublicId(raw: string, name = 'publicId'): string {
     });
   }
   return raw;
+}
+
+/** The highest zoom a map may ask for; the frozen response schema bounds `zoom` the same way. */
+export const MAX_ZOOM = 22;
+
+/** A validated viewport: a canonical, grid-aligned box and the integer zoom it was drawn at. */
+export interface ViewportParam {
+  readonly bbox: BoundingBox;
+  readonly zoom: number;
+}
+
+/**
+ * `bbox=west,south,east,north` and `zoom`, both required (§13.1, §13.2).
+ *
+ * ### The box must arrive already on the grid, for the same reason a coordinate must
+ *
+ * §7.5 says bboxes are "quantized to a tile-aligned grid for cache hits", and a server cannot
+ * quantize a URL the CDN has already keyed: `?bbox=-8.0712,31.5890,…` is a distinct cache entry
+ * for every pixel of every pan, which is §13.2's cache-busting abuse delivered by an ordinary map.
+ * So a box whose edges are not on the zoom's grid is refused, naming the grid step, and a client
+ * snaps outward before it asks — `quantizeViewport` is the rule, and it only ever grows a box.
+ *
+ * Each edge must also be written in its **shortest** form (`11.25`, not `11.250` or `+11.25`):
+ * those are one number and three cache keys. Grid values are dyadic multiples of 90°, so every one
+ * of them has an exact shortest decimal and the rule costs a client nothing.
+ *
+ * ### Geometry
+ *
+ * `west > east` crosses the antimeridian and is accepted (§13.2). A zero-width or zero-height box
+ * is refused rather than read as "nothing" or "everything". `+180` may only be an eastern edge and
+ * `−180` only a western one: a western edge on `+180` is the same meridian as `−180` and would
+ * make a crossing box out of an ordinary one.
+ *
+ * ### Size
+ *
+ * §13.2: "area ≤ 60° × 60° at zoom < 4". Width is measured the short way round, so an antimeridian
+ * box is not charged 340°. `zoom` is declared by the caller, and nothing ties it to the box — a
+ * caller can claim zoom 4 for a world-sized box — so this cap is not what bounds the work; the
+ * response's feature cap is.
+ */
+export function parseViewport(search: URLSearchParams): ViewportParam {
+  const collector = new ParamCollector();
+  const bboxRaw = search.get('bbox');
+  const zoomRaw = search.get('zoom');
+
+  if (bboxRaw === null) collector.fail('bbox', 'is required: west,south,east,north in degrees');
+  if (zoomRaw === null) collector.fail('zoom', 'is required');
+  collector.assertValid();
+
+  const zoom = zoomRaw !== null && /^\d{1,2}$/u.test(zoomRaw) ? Number(zoomRaw) : null;
+  if (zoom === null || zoom > MAX_ZOOM || String(zoom) !== zoomRaw) {
+    collector.fail('zoom', `must be an integer within [0, ${String(MAX_ZOOM)}]`);
+  }
+
+  /*
+   * No separate length cap: `parseFiniteNumber` admits at most 26 characters per edge, so a valid
+   * box is at most 107 characters, and any longer string fails the part count or an edge's
+   * pattern with the same reason a cap would give. A mutation run showed the cap could not change
+   * an outcome, and a check that cannot fail is a distinction a reader has to disprove.
+   */
+  const parts = (bboxRaw ?? '').split(',');
+  const edges = parts.map((part) => parseFiniteNumber(part));
+  if (parts.length !== 4 || edges.some((edge) => edge === null)) {
+    collector.fail('bbox', 'must be four finite decimals: west,south,east,north');
+  } else if (parts.some((part, index) => String(edges[index]) !== part)) {
+    collector.fail('bbox', 'each edge must be written in its shortest form, e.g. 11.25 or -90');
+  }
+  collector.assertValid();
+
+  const [west, south, east, north] = edges as [number, number, number, number];
+  if (west < -180 || west >= 180) collector.fail('bbox', 'west must be within [-180, 180)');
+  if (east <= -180 || east > 180) collector.fail('bbox', 'east must be within (-180, 180]');
+  if (south < -90 || south > 90 || north < -90 || north > 90) {
+    collector.fail('bbox', 'south and north must be within [-90, 90]');
+  }
+  collector.assertValid();
+  if (south >= north) collector.fail('bbox', 'south must be less than north');
+  if (west === east) collector.fail('bbox', 'west and east must differ');
+  collector.assertValid();
+
+  const bbox: BoundingBox = { west, south, east, north };
+  const level = zoom ?? 0;
+  const snapped = quantizeViewport(bbox, level);
+  if (
+    snapped.west !== west ||
+    snapped.south !== south ||
+    snapped.east !== east ||
+    snapped.north !== north
+  ) {
+    collector.fail(
+      'bbox',
+      `edges must lie on this zoom's grid of ${String(quantizationStepDegrees(level))}°; ` +
+        'snap outward before sending, so that nearby views share one cache key',
+    );
+  }
+  collector.assertValid();
+
+  if (!isViewportWithinLimit(bbox, level)) {
+    throw new ApiProblemError({
+      code: 'BBOX_TOO_LARGE',
+      detail: `Below zoom 4 a viewport may span at most ${String(MAX_VIEWPORT_DEGREES)}° in each direction.`,
+      invalidParams: [
+        {
+          name: 'bbox',
+          reason: `must span at most ${String(MAX_VIEWPORT_DEGREES)}° of longitude and of latitude below zoom 4`,
+        },
+      ],
+    });
+  }
+
+  return { bbox, zoom: level };
 }
 
 /** Re-exported so callers do not import the rounding rule from two places. */

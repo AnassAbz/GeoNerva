@@ -69,9 +69,7 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     response: mapFeaturesResponseSchema,
     rateLimit: 'default',
     cache: [CACHE_POLICIES.events],
-    implemented: false,
-    blockedBy:
-      'needs a bbox as-of read; `observationsAsOf` and `clusterVersionsAsOf` take a point and a radius.',
+    implemented: true,
   },
   {
     path: '/api/v1/events/{publicId}',
@@ -197,10 +195,10 @@ export function buildOpenApiDocument(options: { readonly version: string }): {
     /*
      * Branching on `implemented`, not on `response !== null`.
      *
-     * `/events` already has its schema — `MapFeaturesResponse` was frozen at G2 and its runtime
-     * form is written — but no handler serves it yet. Documenting a 200 for a path that answers
-     * 501 would make the document a description of intent rather than of the API, which is the one
-     * thing a generated document is supposed to prevent.
+     * A contract can have its runtime schema before any handler serves it — `/events` did, from
+     * G2 until its handler landed. Documenting a 200 for a path nothing serves would make the
+     * document a description of intent rather than of the API, which is the one thing a generated
+     * document is supposed to prevent.
      */
     /*
      * An unserved path documents **no success and no 501**.

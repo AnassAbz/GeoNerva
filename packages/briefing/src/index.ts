@@ -19,6 +19,9 @@ export { replayHorizonFor } from './replay-horizon.ts';
 export { EvidenceManifestError, buildBriefing } from './briefing.ts';
 export type { BriefingBuild, BuildBriefingOptions } from './briefing.ts';
 
+export { MAP_FEATURE_CAP, buildMapFeatures } from './map-features.ts';
+export type { BuildMapFeaturesOptions } from './map-features.ts';
+
 export { TEMPLATE_VERSION, buildCopy } from './templates.ts';
 export type { CopyInput } from './templates.ts';
 

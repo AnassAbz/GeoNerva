@@ -11,6 +11,7 @@
     "./client": "./src/client.ts",
     "./rate-limit": "./src/rate-limit.ts",
     "./schema": "./src/generated/database.ts",
+    "./viewport": "./src/spatial/viewport.ts",
     "./testing": "./src/testing/test-database.ts",
     "./testing/factories": "./src/testing/factories.ts"
   },

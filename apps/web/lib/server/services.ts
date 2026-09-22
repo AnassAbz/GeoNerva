@@ -34,7 +34,12 @@
  * no other implementation to call.
  */
 
-import { buildBriefing, replayHorizonFor, type BriefingBuild } from '@geonerva/briefing';
+import {
+  buildBriefing,
+  buildMapFeatures,
+  replayHorizonFor,
+  type BriefingBuild,
+} from '@geonerva/briefing';
 import {
   attributionsFor,
   clusterEvidenceAsOf,
@@ -64,6 +69,7 @@ import {
   type HazardFamily,
   type LocationBriefing,
   type LocationRef,
+  type MapFeaturesResponse,
   type ReplayHorizonResponse,
   type SourceStatus,
 } from '@geonerva/domain';
@@ -77,7 +83,7 @@ import {
   runPayload,
   toEvidenceItem,
 } from './evidence-view.ts';
-import type { LocationParam } from './params.ts';
+import type { LocationParam, ViewportParam } from './params.ts';
 import { ApiProblemError } from './problem.ts';
 import { buildSourceStatus, evidenceIdsFor } from './source-status.ts';
 
@@ -508,6 +514,67 @@ function assertWithinHorizon(asOf: Date, now: Date): void {
     code: 'AS_OF_BEFORE_HORIZON',
     detail:
       'That time is outside the window GeoNerva still holds data for. This is a retention limit, not an absence of hazards.',
+    earliestAsOf: new Date(earliest).toISOString(),
+    affectedFamilies: beyond,
+  });
+}
+
+export interface EventsRequest {
+  readonly viewport: ViewportParam;
+  readonly families: readonly HazardFamily[];
+  readonly asOf: Date;
+  readonly now: Date;
+}
+
+/**
+ * `GET /api/v1/events`.
+ *
+ * The map is assembled by `buildMapFeatures` in `@geonerva/briefing`, beside the snapshot whose
+ * subjects it draws, so that a map and a briefing cannot describe one earthquake two ways.
+ */
+export async function getEvents(db: Kysely, request: EventsRequest): Promise<MapFeaturesResponse> {
+  assertFamiliesWithinHorizon(request.asOf, request.now, request.families);
+  return await buildMapFeatures({
+    db,
+    bbox: request.viewport.bbox,
+    zoom: request.viewport.zoom,
+    families: request.families,
+    asOf: request.asOf,
+    retentionProfile: RETENTION_PROFILE,
+  });
+}
+
+/**
+ * Refuses a knowledge time that is beyond the horizon of **any** requested family.
+ *
+ * Stricter than the briefing's guard, and for a reason. A briefing can carry a family it no longer
+ * remembers — the card says `UNAVAILABLE` with `BEYOND_REPLAY_HORIZON` — so it refuses only when
+ * *every* family is gone. A map has no per-family field to say it with: `MapFeaturesResponse` is a
+ * list of features, and a family whose data retention has dropped would simply be absent from it,
+ * which reads as "nothing was burning". ADR-035's rule is that retention loss is reported, never
+ * rendered as an empty result, so the map refuses and names the families; a caller who wants the
+ * rest asks again without them. That is also the frozen code's own definition: "`as_of` is earlier
+ * than the replay horizon for a requested family".
+ */
+function assertFamiliesWithinHorizon(
+  asOf: Date,
+  now: Date,
+  families: readonly HazardFamily[],
+): void {
+  const horizon = replayHorizonFor(RETENTION_PROFILE, now);
+  const beyond = families.filter(
+    (family) => asOf.getTime() < Date.parse(horizon.byFamily[family].earliestAsOf),
+  );
+  if (beyond.length === 0) return;
+
+  const earliest = beyond
+    .map((family) => Date.parse(horizon.byFamily[family].earliestAsOf))
+    .reduce((left, right) => Math.max(left, right));
+
+  throw new ApiProblemError({
+    code: 'AS_OF_BEFORE_HORIZON',
+    detail:
+      'That time is outside the window GeoNerva still holds data for, for at least one requested hazard type. This is a retention limit, not an absence of hazards.',
     earliestAsOf: new Date(earliest).toISOString(),
     affectedFamilies: beyond,
   });

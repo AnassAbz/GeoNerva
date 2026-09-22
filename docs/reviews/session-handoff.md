@@ -40,9 +40,10 @@ acceptance criterion "G6". State which scheme a report uses.
   migration 0007 revokes the web role's `SELECT` on that table. The recommendation is a
   column-level grant excluding `payload`, the pattern 0007 already uses for `agent_outputs`. Until
   it is decided, `/evidence/{id}` serves `rawExcerpt: null` and `rawPayloadSha256: null`.
-- **The page-file cap needs an elevated shell.** The owner chose to pin it at 8 GB (26.9 GB
-  allocated on a 16 GB-RAM machine, 5.1 GB recorded peak). It has **not been applied**: if `C:`
-  shows about 1 GB free, that command has not run. The command is in the P8 session log.
+- **The page file is 8 GB initial, 24 GB maximum** (owner decision, 2026-09-21). A *fixed* 8 GB
+  was tried first and cut the commit limit from ~42.7 GB to 23.9 GB; the machine then idled at
+  ~90 % commit and the WSL VM terminated abruptly twice under test load. Size a page file from
+  commit charge, not from page-file usage.
 
 ## Open findings, none of them CRITICAL or HIGH
 

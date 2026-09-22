@@ -568,3 +568,36 @@ Turborepo is not adopted until build times justify it.
   - `rawPayloadPruned` is derived from `observation_versions.raw_record_id`, a column the web role *can* read. `true` means GeoNerva holds no raw row at all for this version; `false` means one exists and this endpoint does not serve its state. That is weaker than the field's doc comment claims and stronger than a hard-coded `false`, and the asymmetry is the reason this ADR exists rather than a quiet choice.
 - **What this does not change:** `content_sha256` on the observation version is unaffected, is readable by the web role, and is the **only** change detector (ADR-029). Two versions remain comparable, and a revision remains provable, without either payload. The audit property ADR-033 bought is degraded by this gap, not lost.
 - **Trade-offs of the recommendation:** one more `GRANT` to keep correct as the schema evolves, and `ALTER DEFAULT PRIVILEGES` does not express column-level grants, so a future table needing the same treatment must be granted explicitly. Against that: the read path gains two auditable scalars and still cannot read a single provider byte.
+
+
+## ADR-039 — Proposed: a detection's cluster membership must be knowable as of a time before the map can draw detections
+- **Date:** 2026-09-21 (P8, found while building `GET /api/v1/events`)
+- **Status:** **Proposed.** Awaiting product-owner input. `/events` ships without individual detections at any zoom, and says so in `buildMapFeatures`' header.
+- **Context — §7.5 asks for something the fact store cannot yet answer at a past knowledge time.**
+
+  ARCHITECTURE §7.5: *"Zoom ≥ 8: individual detections within the viewport, capped at 5,000."* The frozen `MapFeature` has a `kind: 'fire_detection'` for exactly that. But every `MapFeature` must carry a `subjectRef` and a `publicId`, and `SubjectRef` has four kinds — canonical event, fire cluster, source, metric. A detection has no public id and no subject kind of its own; its only possible subject is **its cluster**.
+
+  Membership is `fire_detections.cluster_id`, and that column is written **in place, twice**:
+
+  - `assignDetectionsToCluster` sets it after ingestion, when a clustering run reaches the detection. When that happened is not recorded.
+  - `mergeClusters` **rewrites** it from each absorbed cluster to the survivor. Which cluster a detection belonged to before the merge is then not recorded anywhere.
+
+  So at a knowledge time `T` in the past, GeoNerva cannot say whether a detection belonged to a cluster yet, or to which one. Drawing it under `cluster_id` would show a replay the membership as it is **now** — the future, which invariant I2 forbids. The detection *itself* is a clean fact (`ingested_at <= T` is exact); only its subject is not.
+
+  `EV:FDS` avoids the problem by design: it names a detection *count* on a cluster version and never enumerates members, which is why it has no row to resolve. The map cannot do the same, because drawing a detection *is* enumerating it.
+
+- **Alternatives:**
+  - *Draw detections under their current `cluster_id` and accept the leak on replay* — rejected. It is the one failure the as-of layer exists to make impossible, and it would be invisible: a replayed map would look plausible.
+  - *Draw detections for live requests only, and refuse zoom ≥ 8 on a replay* — workable as an interim, but it makes replay a second-class mode for exactly the hazard with the shortest horizon, and it leaves the contract's `fire_detection` kind meaning "not a subject as of this time".
+  - *Give detections a subject of their own* (a `DET:` subject kind, or a nullable `subjectRef`) — rejected for v1. It changes a frozen contract and needs a `READ_MODEL_SCHEMA_VERSION` bump, and a detection is not something a user follows or a change signal is about — which is what a subject is for (ARCHITECTURE §10.2).
+  - *Draw each cluster's hull at zoom ≥ 8 instead of its detections* — cheap and as-of correct today: a cluster version carries its hull, and hulls are versioned. It departs from §7.5's wording, though, and a buffered convex hull is explicitly *not* a perimeter, so it shows less than the pixels would.
+  - **Recommended: make membership bitemporal, without rewriting it.**
+
+    1. Add `cluster_assigned_at timestamptz` to `fire_detections`, set by `assignDetectionsToCluster` to the clustering run's `as_of`.
+    2. **Stop rewriting `cluster_id` on merge.** A merge is already recorded on the absorbed cluster (`merged_into`, `merged_at`), so the survivor can be found at read time by following that chain for merges with `merged_at <= T`.
+    3. A detection's subject at `T` is then: none if `cluster_assigned_at > T`; otherwise its assigned cluster, followed through merges known at `T`. Every input is a fact with a knowledge time, and `detectionsInViewportAsOf` can be written like the other viewport reads.
+
+    This is one additive migration, a change to two repository functions, and a backfill that can set `cluster_assigned_at` from the cluster version that first counted each detection — or, more honestly, leave it `NULL` for detections assigned before the migration and treat those as unknowable before the migration date.
+
+- **Until this is decided**, `/events` returns canonical events and fire-cluster centroids at every zoom, one cap of 2,000 applies throughout, and no `fire_detection` feature is ever produced. Nothing is silently missing: the map never claimed to show detections, and `total` counts only the subjects it draws.
+- **Trade-offs of the recommendation:** one more column on the highest-volume table (8 bytes per row, about 1.2 MB per day at ≈146k detections), and a read that follows a merge chain rather than a single column. Against that: the map can draw what §7.5 asked for at every knowledge time, and the membership history of an area of thermal activity becomes auditable, which DOMAIN_MODEL §4.10 already claims it is.

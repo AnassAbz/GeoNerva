@@ -73,6 +73,7 @@ describe('ENDPOINT_CONTRACTS', () => {
     );
     expect(served.sort()).toEqual([
       '/api/v1/briefing',
+      '/api/v1/events',
       '/api/v1/evidence/{id}',
       '/api/v1/replay/horizon',
       '/api/v1/sources/status',
@@ -85,6 +86,7 @@ describe('ENDPOINT_CONTRACTS', () => {
     expect(contractFor('/api/v1/places/search')?.rateLimit).toBe('placesSearch');
     expect(contractFor('/api/v1/sources/status')?.rateLimit).toBe('default');
     expect(contractFor('/api/v1/evidence/{id}')?.rateLimit).toBe('default');
+    expect(contractFor('/api/v1/events')?.rateLimit).toBe('default');
   });
 
   it('returns undefined for a path outside §13.1', () => {

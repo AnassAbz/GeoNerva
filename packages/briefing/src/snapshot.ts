@@ -294,7 +294,23 @@ export async function buildSnapshot(options: BuildSnapshotOptions): Promise<Snap
     contentSha256: contentSha256(hashable),
   };
 
-  const asOfContext: AsOfContext = {
+  const asOfContext = asOfContextFor(asOf, cutoffs, replayHorizon);
+
+  return { snapshot, asOfContext, evidenceIds: [...evidence].sort(compare) };
+}
+
+/**
+ * The knowledge-time context every read model carries.
+ *
+ * One function, so that a map and a briefing at the same `asOf` describe that knowledge time
+ * identically — the same replay flag, the same horizon, the same cutoffs in the same order.
+ */
+export function asOfContextFor(
+  asOf: Date,
+  cutoffs: Readonly<Record<string, Date | null>>,
+  replayHorizon: AsOfContext['replayHorizon'],
+): AsOfContext {
+  return {
     asOf: asOf.toISOString(),
     /*
      * "Materially in the past" rather than "before now": every build has some latency between
@@ -309,8 +325,6 @@ export async function buildSnapshot(options: BuildSnapshotOptions): Promise<Snap
         .map(([sourceId, at]) => [sourceId, at === null ? null : at.toISOString()]),
     ),
   };
-
-  return { snapshot, asOfContext, evidenceIds: [...evidence].sort(compare) };
 }
 
 /** Five minutes: longer than any build, shorter than any window a user would call a replay. */
@@ -838,7 +852,7 @@ function buildFireSubject(
   };
 }
 
-function hazardTypesOf(family: HazardFamily): readonly HazardType[] {
+export function hazardTypesOf(family: HazardFamily): readonly HazardType[] {
   switch (family) {
     case 'EARTHQUAKES':
       return ['EARTHQUAKE'];
@@ -1106,7 +1120,7 @@ function assessSubject(input: SubjectAssessmentInput): RelevanceAssessment | nul
  * so that a value is never compared across scales, and a scheme string nobody has defined an
  * ordering for would let one be.
  */
-function providerSeverityOf(anchor: ObservationRow): ProviderSeverity | null {
+export function providerSeverityOf(anchor: ObservationRow): ProviderSeverity | null {
   const scheme = anchor.severity_scheme;
   const value = anchor.severity_value;
   if (scheme === null || value === null) return null;
@@ -1146,7 +1160,11 @@ function tsunamiFlagOf(attributes: unknown): boolean {
 }
 
 /** A deterministic title. Never the provider's own string, which may carry markup. */
-function titleOf(hazardType: HazardType, anchor: ObservationRow, magnitude: number | null): string {
+export function titleOf(
+  hazardType: HazardType,
+  anchor: ObservationRow,
+  magnitude: number | null,
+): string {
   if (hazardType === 'EARTHQUAKE') {
     return magnitude === null ? 'Earthquake' : `M${magnitude.toFixed(1)} earthquake`;
   }
@@ -1373,18 +1391,18 @@ function buildOverall(families: Readonly<Record<HazardFamily, FamilyCard>>): Sna
 }
 
 /** The column is `text`; only a value the domain declares may enter the read model. */
-function asHazardType(value: string): HazardType | null {
+export function asHazardType(value: string): HazardType | null {
   return (HAZARD_TYPES as readonly string[]).includes(value) ? (value as HazardType) : null;
 }
 
-function asLifecycleStatus(value: string): LifecycleStatus | null {
+export function asLifecycleStatus(value: string): LifecycleStatus | null {
   return (LIFECYCLE_STATUSES as readonly string[]).includes(value)
     ? (value as LifecycleStatus)
     : null;
 }
 
 /** A `numeric` column arrives as a string; an unparseable one is absent, never zero. */
-function numberOf(value: string | null): number | null {
+export function numberOf(value: string | null): number | null {
   if (value === null) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;

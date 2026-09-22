@@ -26,6 +26,7 @@ import {
   parseLocation,
   parsePublicId,
   parseQuery,
+  parseViewport,
   parseWindow,
   rejectUnknownParams,
 } from './params.ts';
@@ -540,5 +541,185 @@ describe('parsePublicId', () => {
   it('never echoes the rejected identifier', () => {
     const problem = problemOf(() => parsePublicId("EQ-26-AAAA'; DROP TABLE geonerva.sources;--"));
     expect(JSON.stringify(problem.problem)).not.toContain('DROP TABLE');
+  });
+});
+
+describe('parseViewport', () => {
+  /*
+   * At zoom 6 the grid step is 90 / 2^6 = 1.40625°, and every edge below is a multiple of it.
+   * The expectations are written as literals rather than computed from `quantizationStepDegrees`,
+   * so that changing the grid rule changes what these tests accept.
+   */
+  const MOROCCO = '-11.25,28.125,-5.625,33.75';
+  const FIJI = '177.1875,-19.6875,-177.1875,-16.875';
+
+  function viewport(bbox: string, zoom: string): ReturnType<typeof parseViewport> {
+    return parseViewport(
+      new URLSearchParams([
+        ['bbox', bbox],
+        ['zoom', zoom],
+      ]),
+    );
+  }
+
+  it('accepts a grid-aligned box and an integer zoom', () => {
+    expect(viewport(MOROCCO, '6')).toStrictEqual({
+      bbox: { west: -11.25, south: 28.125, east: -5.625, north: 33.75 },
+      zoom: 6,
+    });
+  });
+
+  it('accepts a box across the antimeridian, keeping west > east', () => {
+    expect(viewport(FIJI, '6').bbox).toStrictEqual({
+      west: 177.1875,
+      south: -19.6875,
+      east: -177.1875,
+      north: -16.875,
+    });
+  });
+
+  it('accepts the whole world at zoom 4, where the size cap no longer applies', () => {
+    expect(viewport('-180,-90,180,90', '4').bbox).toStrictEqual({
+      west: -180,
+      south: -90,
+      east: 180,
+      north: 90,
+    });
+  });
+
+  it('requires both parameters, naming each', () => {
+    const problem = problemOf(() => parseViewport(params('')));
+    expect(problem.problem.code).toBe('VALIDATION_FAILED');
+    expect(problem.problem.invalidParams?.map((entry) => entry.name)).toStrictEqual([
+      'bbox',
+      'zoom',
+    ]);
+  });
+
+  it.each(['6.5', '-1', '23', '06', '', 'x', '1e1', ' 6'])('rejects zoom=%j', (zoom) => {
+    const problem = problemOf(() => viewport(MOROCCO, zoom));
+    expect(problem.problem.code).toBe('VALIDATION_FAILED');
+    expect(problem.problem.invalidParams?.map((entry) => entry.name)).toContain('zoom');
+  });
+
+  it('accepts the highest zoom and refuses the next one', () => {
+    expect(viewport(MOROCCO, '22').zoom).toBe(22);
+    expect(problemOf(() => viewport(MOROCCO, '23')).problem.code).toBe('VALIDATION_FAILED');
+  });
+
+  it.each([
+    ['three edges', '-11.25,28.125,-5.625'],
+    ['five edges', '-11.25,28.125,-5.625,33.75,0'],
+    ['an empty edge', '-11.25,,-5.625,33.75'],
+    ['NaN', 'NaN,28.125,-5.625,33.75'],
+    ['exponent notation', '-1.125e1,28.125,-5.625,33.75'],
+    ['Infinity', '-11.25,28.125,Infinity,33.75'],
+    ['a space', '-11.25, 28.125,-5.625,33.75'],
+  ])('rejects %s', (_label, bbox) => {
+    const problem = problemOf(() => viewport(bbox, '6'));
+    expect(problem.problem.code).toBe('VALIDATION_FAILED');
+    expect(problem.problem.invalidParams?.[0]?.name).toBe('bbox');
+  });
+
+  it('rejects an oversized bbox string', () => {
+    const problem = problemOf(() => viewport(`${'1'.repeat(118)},0,1,1`, '6'));
+    expect(problem.problem.invalidParams?.[0]?.reason).toContain('four finite decimals');
+  });
+
+  it.each([
+    ['a trailing zero', '-11.250,28.125,-5.625,33.75'],
+    ['a plus sign', '-11.25,+28.125,-5.625,33.75'],
+    ['negative zero', '-0,28.125,5.625,33.75'],
+    ['a leading zero', '-11.25,028.125,-5.625,33.75'],
+  ])('rejects %s, which would be a second cache key for one box', (_label, bbox) => {
+    const problem = problemOf(() => viewport(bbox, '6'));
+    expect(problem.problem.invalidParams?.[0]?.reason).toContain('shortest form');
+  });
+
+  it.each([
+    ['a western edge on +180', '180,0,-174.375,5.625', 'west must be within [-180, 180)'],
+    ['an eastern edge on -180', '174.375,0,-180,5.625', 'east must be within (-180, 180]'],
+    ['a western edge past -180', '-181.40625,0,5.625,5.625', 'west must be within [-180, 180)'],
+    [
+      'a latitude past the pole',
+      '0,84.375,5.625,91.40625',
+      'south and north must be within [-90, 90]',
+    ],
+  ])('rejects %s', (_label, bbox, reason) => {
+    const problem = problemOf(() => viewport(bbox, '6'));
+    expect(problem.problem.invalidParams?.map((entry) => entry.reason)).toContain(reason);
+  });
+
+  it.each([
+    ['zero height', '-11.25,28.125,-5.625,28.125', 'south must be less than north'],
+    ['an inverted box', '-11.25,33.75,-5.625,28.125', 'south must be less than north'],
+    ['zero width', '-5.625,28.125,-5.625,33.75', 'west and east must differ'],
+  ])('rejects a degenerate box: %s', (_label, bbox, reason) => {
+    const problem = problemOf(() => viewport(bbox, '6'));
+    expect(problem.problem.invalidParams?.map((entry) => entry.reason)).toContain(reason);
+  });
+
+  it('rejects an edge off the grid, naming the step and never the value', () => {
+    // -8.07 is Marrakech's longitude: a precise position, exactly what must not become a key.
+    const problem = problemOf(() => viewport('-8.07,28.125,-5.625,33.75', '6'));
+    expect(problem.problem.code).toBe('VALIDATION_FAILED');
+    expect(problem.problem.invalidParams?.[0]?.reason).toContain('1.40625°');
+    expect(JSON.stringify(problem.problem)).not.toContain('8.07');
+  });
+
+  it.each([
+    // Controls: "south off the grid" and "north off the grid". Each edge alone, so no other
+    // edge's check can be what refuses it.
+    ['south', '-11.25,28.2,-5.625,33.75'],
+    ['north', '-11.25,28.125,-5.625,33.7'],
+  ])('rejects a %s edge off the grid', (_edge, bbox) => {
+    const problem = problemOf(() => viewport(bbox, '6'));
+    expect(problem.problem.code).toBe('VALIDATION_FAILED');
+    expect(problem.problem.invalidParams?.[0]?.reason).toContain('1.40625°');
+  });
+
+  it('judges the grid by the zoom', () => {
+    // 1.40625 is a multiple of zoom 8's 0.3515625, so the zoom-6 box is still aligned at zoom 8…
+    expect(viewport(MOROCCO, '8').zoom).toBe(8);
+    // …but a zoom-8 edge is not on zoom 6's coarser grid.
+    expect(problemOf(() => viewport('-11.25,28.125,-5.2734375,33.75', '6')).problem.code).toBe(
+      'VALIDATION_FAILED',
+    );
+  });
+
+  describe('the size cap below zoom 4 (§13.2)', () => {
+    // At zoom 2 the grid step is 22.5°; at zoom 3 it is 11.25°.
+    it('accepts a 45° box at zoom 2', () => {
+      expect(viewport('-22.5,0,22.5,45', '2').bbox.east).toBe(22.5);
+    });
+
+    it('refuses a box wider than 60° with BBOX_TOO_LARGE', () => {
+      const problem = problemOf(() => viewport('-45,0,22.5,45', '2'));
+      expect(problem.problem.code).toBe('BBOX_TOO_LARGE');
+      expect(problem.problem.invalidParams?.[0]?.name).toBe('bbox');
+    });
+
+    it('refuses a box taller than 60°', () => {
+      expect(problemOf(() => viewport('0,-33.75,11.25,33.75', '3')).problem.code).toBe(
+        'BBOX_TOO_LARGE',
+      );
+    });
+
+    it('accepts 56.25°, the widest the zoom-3 grid can draw under the cap', () => {
+      expect(viewport('0,0,56.25,56.25', '3').bbox.north).toBe(56.25);
+    });
+
+    it('refuses 67.5°, the next the zoom-3 grid can draw', () => {
+      expect(problemOf(() => viewport('0,0,67.5,56.25', '3')).problem.code).toBe('BBOX_TOO_LARGE');
+    });
+
+    it('measures an antimeridian box the short way round', () => {
+      // 157.5 → -157.5 is 45° across the Pacific, not 315°.
+      expect(viewport('157.5,0,-157.5,45', '2').bbox.west).toBe(157.5);
+    });
+
+    it('lifts the cap at zoom 4', () => {
+      expect(viewport('-45,0,22.5,45', '4').zoom).toBe(4);
+    });
   });
 });
