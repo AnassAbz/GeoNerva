@@ -105,7 +105,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 2
+                      "const": 3
                     },
                     "__schema1": {
                       "type": "object",
@@ -1462,6 +1462,21 @@
                               }
                             ]
                           },
+                          "trendBand": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "INCREASING",
+                                  "STABLE",
+                                  "DECREASING"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "interpretation": {
                             "type": "string",
                             "minLength": 1
@@ -1494,6 +1509,7 @@
                           "reference",
                           "percentile",
                           "band",
+                          "trendBand",
                           "interpretation",
                           "caveats",
                           "methodVersion",
@@ -2255,7 +2271,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 2
+                      "const": 3
                     },
                     "__schema1": {
                       "type": "object",
@@ -2877,7 +2893,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 2
+                      "const": 3
                     },
                     "__schema1": {
                       "type": "string",
@@ -4632,7 +4648,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 2
+                      "const": 3
                     },
                     "__schema1": {
                       "type": "string",
@@ -5991,7 +6007,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 2
+                      "const": 3
                     },
                     "__schema1": {
                       "type": "object",
@@ -6315,6 +6331,21 @@
                             }
                           ]
                         },
+                        "trendBand": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "INCREASING",
+                                "STABLE",
+                                "DECREASING"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "interpretation": {
                           "type": "string",
                           "minLength": 1
@@ -6347,6 +6378,7 @@
                         "reference",
                         "percentile",
                         "band",
+                        "trendBand",
                         "interpretation",
                         "caveats",
                         "methodVersion",
@@ -7052,7 +7084,7 @@
                   "properties": {
                     "schemaVersion": {
                       "type": "number",
-                      "const": 2
+                      "const": 3
                     },
                     "query": {
                       "type": "string",
@@ -7286,7 +7318,7 @@
                   "properties": {
                     "schemaVersion": {
                       "type": "number",
-                      "const": 2
+                      "const": 3
                     },
                     "query": {
                       "type": "string",
@@ -7510,7 +7542,7 @@
                   "properties": {
                     "schemaVersion": {
                       "type": "number",
-                      "const": 2
+                      "const": 3
                     },
                     "query": {
                       "type": "string",
@@ -7756,7 +7788,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 2
+                      "const": 3
                     },
                     "__schema1": {
                       "type": "object",
@@ -8628,7 +8660,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 2
+                      "const": 3
                     },
                     "__schema1": {
                       "type": "object",
@@ -9695,7 +9727,7 @@
                   "properties": {
                     "schemaVersion": {
                       "type": "number",
-                      "const": 2
+                      "const": 3
                     },
                     "generatedAt": {
                       "$ref": "#/$defs/__schema0"

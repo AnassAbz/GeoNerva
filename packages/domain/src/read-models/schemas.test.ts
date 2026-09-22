@@ -13,16 +13,19 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { HAZARD_FAMILIES } from '../enums.ts';
 import { READ_MODEL_SCHEMA_VERSION } from './common.ts';
 import { PROBLEM_CODES, PROBLEM_STATUS, problemTypeUri } from './problem.ts';
 import {
   aiBriefingViewSchema,
+  baselineMetricViewSchema,
   asOfContextSchema,
   citedEvidenceIds,
   evidenceDetailSchema,
   evidenceItemSchema,
   factValueSchema,
   familyCardSchema,
+  historyResponseSchema,
   locationRefSchema,
   mapFeaturesResponseSchema,
   observationEvidenceDetailSchema,
@@ -952,5 +955,237 @@ describe('subject links follow the product routes (PRODUCT §6.1)', () => {
     ]) {
       expect(parses(href), href).toBe(false);
     }
+  });
+});
+
+describe('a trend carries a direction, not a distribution band (ADR-040)', () => {
+  function metric(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: 'EV:BAS:8f14e45fce0b4d3a9c1e2b7f6a5d4c3b2a1908f7e6d5c4b3a2019f8e7d6c5b4a',
+      family: 'FIRE_ACTIVITY',
+      metricCode: 'FIRE_TREND',
+      label: 'Fire activity within 100 km',
+      params: { radiusKm: 100, lastDay: '2026-09-20' },
+      asOf: TS,
+      status: 'OK',
+      observedValue: { kind: 'number', value: 31.4, unit: 'detections/day', decimals: 1 },
+      reference: null,
+      percentile: null,
+      band: null,
+      trendBand: 'INCREASING',
+      interpretation: 'More thermal detections in the last 7 days than in the 4 weeks before.',
+      caveats: [],
+      methodVersion: 'baselines-1',
+      evidenceIds: [],
+      ...overrides,
+    };
+  }
+
+  it('accepts a direction with no distribution band', () => {
+    expect(baselineMetricViewSchema.safeParse(metric()).success).toBe(true);
+  });
+
+  /*
+   * The field is required, not optional: a metric that simply omits it would read to a client as
+   * "no direction known", which is a different statement from "this metric has no direction".
+   */
+  it('requires the field, and refuses a direction that is not one of the three', () => {
+    const withoutTrend = metric();
+    delete withoutTrend['trendBand'];
+    expect(baselineMetricViewSchema.safeParse(withoutTrend).success).toBe(false);
+    for (const value of ['RISING', 'ABOVE_TYPICAL', 'increasing', '']) {
+      expect(baselineMetricViewSchema.safeParse(metric({ trendBand: value })).success, value).toBe(
+        false,
+      );
+    }
+  });
+
+  /* A refused comparison still has to be a valid document: no direction, and no value. */
+  it('accepts the insufficient-coverage answer, which has neither band', () => {
+    expect(
+      baselineMetricViewSchema.safeParse(
+        metric({
+          status: 'INSUFFICIENT_COVERAGE',
+          observedValue: { kind: 'unavailable', reason: 'NOT_COVERED' },
+          trendBand: null,
+          interpretation: 'Not enough satellite coverage in the last five weeks.',
+        }),
+      ).success,
+    ).toBe(true);
+  });
+});
+
+/**
+ * `/history`'s response-level rules, and the one ADR-040 changed.
+ *
+ * The refinement used to read "a reference distribution exists exactly when the metric status is
+ * OK", which was true while every metric was a comparison against a distribution. `FIRE_TREND`
+ * states a direction instead and succeeds with no reference at all, so a successful trend was
+ * rejected by the contract it was built for. Nothing caught it: the refinement had no test.
+ */
+describe('a history response and its reference distribution', () => {
+  const BAS = 'EV:BAS:8f14e45fce0b4d3a9c1e2b7f6a5d4c3b2a1908f7e6d5c4b3a2019f8e7d6c5b4a';
+
+  function bands(): Record<string, unknown> {
+    return {
+      windowDays: 7,
+      nWindows: 260,
+      nEvents: 812,
+      referenceFrom: TS,
+      referenceTo: TS,
+      p25: 1,
+      median: 2,
+      p75: 4,
+      p90: 6,
+      p95: 8,
+      mean: 2.9,
+      evidenceIds: [],
+    };
+  }
+
+  function reference(): Record<string, unknown> {
+    return {
+      nWindows: 260,
+      nEvents: 812,
+      windowDays: 7,
+      referenceFrom: TS,
+      referenceTo: TS,
+      median: 2,
+      p25: 1,
+      p75: 4,
+      p90: 6,
+      p95: 8,
+      mean: 2.9,
+      ratePerWindow: 2.9,
+      activityRatio: 1.4,
+    };
+  }
+
+  function history(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      schemaVersion: READ_MODEL_SCHEMA_VERSION,
+      location: {
+        key: 'c:31.63,-8.00',
+        label: '31.63, -8.00',
+        lat: 31.63,
+        lon: -8,
+        timezone: 'UTC',
+        countryCode: null,
+        admin1: null,
+      },
+      family: 'FIRE_ACTIVITY',
+      metricCode: 'FIRE_TREND',
+      asOfContext: {
+        asOf: TS,
+        isReplay: false,
+        replayHorizon: {
+          profile: 'lean',
+          byFamily: Object.fromEntries(
+            HAZARD_FAMILIES.map((family) => [family, { earliestAsOf: TS, note: 'kept' }]),
+          ),
+        },
+        sourceCutoffs: { firms: TS },
+      },
+      metric: {
+        id: BAS,
+        family: 'FIRE_ACTIVITY',
+        metricCode: 'FIRE_TREND',
+        label: 'Fire activity within 100 km',
+        params: { radiusKm: 100 },
+        asOf: TS,
+        status: 'OK',
+        observedValue: { kind: 'number', value: 31.4, unit: 'detections/day', decimals: 1 },
+        reference: null,
+        percentile: null,
+        band: null,
+        trendBand: 'INCREASING',
+        interpretation: 'More thermal detections than in the four weeks before.',
+        caveats: [],
+        methodVersion: 'baselines-1',
+        evidenceIds: [],
+      },
+      series: [],
+      referenceBands: null,
+      rarity: null,
+      largestRecent: null,
+      sequenceContext: null,
+      completenessStatement: null,
+      caveats: [],
+      methodologyHref: '/methodology#fire-trend',
+      // I9: the manifest must contain everything the response cites, the metric's own id included.
+      evidenceManifest: [
+        {
+          id: BAS,
+          kind: 'BAS',
+          summary: 'fire activity trend within 100 km',
+          sourceId: null,
+          productId: null,
+          observedAt: null,
+          ingestedAt: TS,
+          url: null,
+          resolvable: true,
+        },
+      ],
+      attribution: [],
+      ...overrides,
+    };
+  }
+
+  /** A distribution metric, for the rule the trend is exempt from. */
+  function distribution(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    const base = history({ family: 'EARTHQUAKES', metricCode: 'EQ_COUNT_7D' });
+    return {
+      ...base,
+      metric: {
+        ...(base['metric'] as Record<string, unknown>),
+        family: 'EARTHQUAKES',
+        metricCode: 'EQ_COUNT_7D',
+        label: 'Earthquakes in 7 days',
+        observedValue: { kind: 'count', value: 5 },
+        trendBand: null,
+        band: 'TYPICAL',
+        percentile: 62,
+        reference: reference(),
+      },
+      referenceBands: bands(),
+      ...overrides,
+    };
+  }
+
+  it('accepts a successful trend that has no reference distribution (ADR-040)', () => {
+    expect(historyResponseSchema.safeParse(history()).success).toBe(true);
+  });
+
+  /* The other direction: a direction with a distribution beside it is a statistic nobody computed. */
+  it('refuses a trend that carries a reference distribution', () => {
+    const result = historyResponseSchema.safeParse(history({ referenceBands: bands() }));
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('a trend states a direction instead');
+
+    /* A fully-formed distribution beside a direction is the coherent-looking version, and worse. */
+    const base = history({ referenceBands: bands() });
+    const metric = { ...(base['metric'] as Record<string, unknown>) };
+    metric['reference'] = reference();
+    expect(historyResponseSchema.safeParse({ ...base, metric }).success).toBe(false);
+  });
+
+  it('still requires a reference when a distribution metric is OK', () => {
+    expect(historyResponseSchema.safeParse(distribution()).success).toBe(true);
+    expect(historyResponseSchema.safeParse(distribution({ referenceBands: null })).success).toBe(
+      false,
+    );
+  });
+
+  /* A refused comparison keeps the old rule: no status OK, no reference, and no band. */
+  it('refuses a reference on a metric that did not succeed', () => {
+    const base = history();
+    const metric = { ...(base['metric'] as Record<string, unknown>) };
+    metric['status'] = 'INSUFFICIENT_COVERAGE';
+    metric['trendBand'] = null;
+    metric['observedValue'] = { kind: 'unavailable', reason: 'NOT_COVERED' };
+    expect(
+      historyResponseSchema.safeParse({ ...base, metric, referenceBands: bands() }).success,
+    ).toBe(false);
+    expect(historyResponseSchema.safeParse({ ...base, metric }).success).toBe(true);
   });
 });

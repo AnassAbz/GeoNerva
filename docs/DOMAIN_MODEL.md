@@ -332,7 +332,7 @@ source_records *─* correlation_candidates
 analysis_locations 1─* location_snapshots 1─* change_signals
 location_snapshots 1─* agent_outputs (P1)
 baseline_metrics (cache) ; analysis_runs ; places (GeoNames) ; geocode_cache ; rate_limit_buckets
-fire_daily_cells (long-term aggregate)
+fire_daily_counts + fire_daily_coverage (long-term aggregate, ADR-040)
 ```
 
 ## 6. Database design (PostgreSQL 15+ / PostGIS 3.3+)
@@ -491,10 +491,20 @@ fire_cluster_versions(
 fire_cluster_heads(cluster_id uuid PK, latest_version_id bigint, status text, last_detected_at timestamptz)
   INDEX (status)
 
-fire_daily_cells(                                 -- long-term compact aggregate for fire trends/baselines
-  cell_id int, day date, product_group text, n int, frp_sum real, n_high_conf int,
-  PRIMARY KEY (cell_id, day, product_group))
+fire_daily_counts(                                -- long-term compact aggregate for fire trends (ADR-040)
+  cell_id int, day date, product_id smallint, computed_at timestamptz,
+  n int, n_high_conf int, frp_sum real,
+  PRIMARY KEY (cell_id, day, product_id, computed_at))
   -- cell_id = regular 0.25° lat/lon grid index; see ARCHITECTURE §7.6 for why not H3
+  -- append-only: a correction is a new row with a later computed_at, so a replay reads the day as
+  -- it stood at T. Per product, not per group, so sensor context survives (ADR-009).
+
+fire_daily_coverage(                              -- what can be said about one feed's whole day
+  product_id smallint, day date, computed_at timestamptz,
+  state text,                                     -- COVERED | MISSING_DATA | NOT_COVERED
+  PRIMARY KEY (product_id, day, computed_at))
+  -- only a COVERED day with no counts means zero detections; the other two states are excluded
+  -- from the comparison rather than read as quiet days
 ```
 
 ### 6.5 Locations, analysis, AI
@@ -558,7 +568,7 @@ rate_limit_buckets(bucket_key bytea, window_start timestamptz, n int, PRIMARY KE
 |---|---|---|
 | `fire_detections` | 72 h (drop daily partitions) | 30 d |
 | `fire_cluster_versions` | 30 d | 1 y |
-| `fire_daily_cells` | 400 d at 0.5° | 5 y at 0.25° |
+| `fire_daily_counts`, `fire_daily_coverage` | 400 d at 0.25° | 5 y at 0.25° |
 | `observation_versions` (EQ M ≥ 4.5 catalog) | forever (~190k rows since 2000) | forever |
 | `observation_versions` (EQ < M4.5) | 90 d | 2 y |
 | `observation_versions` (GDACS, ECCC) | forever (small) | forever |

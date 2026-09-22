@@ -32,6 +32,7 @@ import {
   finishRun,
   findProductByCode,
   acquireRunLease,
+  recordFireDailyAggregate,
   recordLiveCoverage,
   recordReject,
   type DB,
@@ -402,6 +403,37 @@ export async function runFireIngestion(
         );
       } catch (error) {
         logger.log('error', 'ingestion.coverage_failed', {
+          ...base,
+          runId,
+          detail: describeDatabaseFailure(error),
+        });
+      }
+    }
+
+    /*
+     * The daily aggregate the fire trend reads (ADR-040), for every day that has become final.
+     *
+     * Here rather than in a nightly job because it reads `fire_detections`, which the lean profile
+     * keeps for 72 hours: a day is final two days after it began, and this runs after every FIRMS
+     * ingestion, so a final day is always still readable. Failure is logged, not fatal: the next
+     * ingestion recomputes, and a day with no aggregate is `NOT_COVERED` rather than quiet.
+     */
+    if (status === 'SUCCEEDED') {
+      try {
+        const written = await db
+          .transaction()
+          .execute((trx) =>
+            recordFireDailyAggregate(trx, { productId: product.id, now: committedAt }),
+          );
+        if (written.days > 0) {
+          logger.log('info', 'ingestion.fire_daily', {
+            ...base,
+            runId,
+            detail: `${String(written.days)} final day(s), ${String(written.cells)} cell rows`,
+          });
+        }
+      } catch (error) {
+        logger.log('error', 'ingestion.fire_daily_failed', {
           ...base,
           runId,
           detail: describeDatabaseFailure(error),

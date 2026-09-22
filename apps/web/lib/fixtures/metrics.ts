@@ -52,6 +52,7 @@ export function eqCount7d(asOf: string): BaselineMetricView {
     },
     percentile: 91,
     band: 'ABOVE_TYPICAL',
+    trendBand: null,
     interpretation:
       '2 earthquakes of M3.1 or larger within 150 km in the past 7 days: above typical for this area, compared with 260 7-day periods since 2021.',
     caveats: [EARTHQUAKE_ELEVATED_CAVEAT],
@@ -73,6 +74,7 @@ export function eqCount30d(asOf: string): BaselineMetricView {
     reference: null,
     percentile: null,
     band: null,
+    trendBand: null,
     interpretation:
       'GeoNerva had been reading the earthquake catalog for less than 30 days at this time, so it cannot count a whole period.',
     caveats: [],
@@ -95,6 +97,7 @@ export function fireTrend(asOf: string, scenario: FixtureScenario): BaselineMetr
       reference: null,
       percentile: null,
       band: null,
+      trendBand: null,
       interpretation:
         'NASA FIRMS has not delivered recently, so the last days cannot be counted and no trend can be stated.',
       caveats: [],
@@ -114,6 +117,8 @@ export function fireTrend(asOf: string, scenario: FixtureScenario): BaselineMetr
     reference: null,
     percentile: null,
     band: null,
+    // A direction, not a distribution (ADR-040): there is no direction to state here either.
+    trendBand: null,
     interpretation:
       'GeoNerva does not yet hold the five weeks of daily fire records this comparison needs, so it cannot say whether fire activity here is rising or falling.',
     caveats: [],
@@ -135,6 +140,7 @@ export function floodContext(asOf: string): BaselineMetricView {
     reference: null,
     percentile: null,
     band: null,
+    trendBand: null,
     interpretation:
       "Rare here: 2 GDACS flood events within 300 km since 21 September 2021, when GeoNerva's GDACS record begins.",
     caveats: ['GDACS flood areas are modelled, not observed flood extents.'],
@@ -156,6 +162,7 @@ export function cycloneContext(asOf: string): BaselineMetricView {
     reference: null,
     percentile: null,
     band: null,
+    trendBand: null,
     interpretation:
       'No GDACS tropical cyclone track has passed within 300 km of this location in the record, so there is no history to compare with.',
     caveats: [],

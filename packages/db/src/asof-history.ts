@@ -17,7 +17,11 @@ export interface CoverageSpan {
 export interface CatalogCoverage {
   /** Every product of the requested sources whose hazard types meet the requested ones. */
   readonly productIds: readonly number[];
-  readonly spans: readonly (CoverageSpan & { readonly productId: number })[];
+  /** Each span says which feed read it, and which source that feed belongs to. */
+  readonly spans: readonly (CoverageSpan & {
+    readonly productId: number;
+    readonly sourceId: string;
+  })[];
 }
 
 /**
@@ -48,14 +52,15 @@ export async function catalogCoverageAsOf(
   if (options.sourceIds.length === 0 || options.hazardTypes.length === 0) {
     return { productIds: [], spans: [] };
   }
-  const products = await sql<{ id: number }>`
-    SELECT p.id
+  const products = await sql<{ id: number; source_id: string }>`
+    SELECT p.id, p.source_id
     FROM geonerva.source_products p
     WHERE p.source_id = ANY(${sql.val(options.sourceIds)}::text[])
       AND p.hazard_types && ${sql.val(options.hazardTypes)}::text[]
     ORDER BY p.id
   `.execute(db);
   const productIds = products.rows.map((row) => row.id);
+  const sourceOf = new Map(products.rows.map((row) => [row.id, row.source_id]));
   if (productIds.length === 0) return { productIds: [], spans: [] };
 
   const floorFilter =
@@ -85,6 +90,7 @@ export async function catalogCoverageAsOf(
     productIds,
     spans: result.rows.map((row) => ({
       productId: row.product_id,
+      sourceId: sourceOf.get(row.product_id) ?? '',
       from: row.from_at,
       to: row.to_at,
     })),

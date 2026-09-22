@@ -389,7 +389,7 @@ Run in the worker after each FIRMS batch.
 | Candidate use | Verdict |
 |---|---|
 | Radius / point-in-polygon for a location | GiST on geography is exact and already indexed. H3 would add approximation error |
-| Baseline bucketing | Baselines compare **a location against its own history**, so equal-area cells are unnecessary. A regular 0.25° (lean: 0.5°) lat/lon grid (`fire_daily_cells`) is simpler, dependency-free and produces identical conclusions |
+| Baseline bucketing | Baselines compare **a location against its own history**, so equal-area cells are unnecessary. A regular 0.25° (lean: 0.5°) lat/lon grid (`fire_daily_counts`) is simpler, dependency-free and produces identical conclusions |
 | Hotspot grouping | Fire clustering is pixel-distance based, and H3 cell boundaries would split fires arbitrarily |
 | Fast lookup | Not a bottleneck |
 
@@ -447,9 +447,10 @@ Detection counts depend on the number of satellite overpasses, cloud cover, view
 - Clusters and detections within R = 100 km over the last 7 d vs the previous 28 d.
 - Same sensor group (NOAA-20 + NOAA-21), normalized per day and per overpass-day (days with missing satellite data from FIRMS `missing_data` are excluded).
 - Band: `INCREASING` / `STABLE` / `DECREASING` when the 7-day daily mean differs from the 28-day daily mean by ≥ 50 % **and** ≥ 10 detections/day absolute. Otherwise `STABLE`.
+- **As built (ADR-040):** read from `fire_daily_counts` / `fire_daily_coverage`, not from raw detections, which the lean profile keeps for 72 h. Three rules make the aggregate an honest source: a day enters it only once it is **final** (two days after it began, so no further detection can arrive); a day is compared only when ADR-041's ledger holds all 24 of its hours *and* its detection partition is still readable; and a day that fails either test is **excluded**, never counted as zero. The window is also refused outright unless one FIRMS feed's lifecycle spans the whole 35 days (ADR-009), and `INSUFFICIENT_COVERAGE` is a valid answer rather than a fallback trend. Direction is carried by `BaselineMetricView.trendBand`, never by `band`, which holds distribution bands.
 
 **P1 `FIRE_SEASONAL`:**
-- Same calendar window (±15 d) in prior years from `fire_daily_cells`.
+- Same calendar window (±15 d) in prior years from `fire_daily_counts`.
 - Requires ≥ 3 prior years of the **same sensor family**, which means a NOAA-20 NRT archive backfill via the FIRMS API (availability V3).
 - MODIS/SNPP history is **not** mixed in, because different sensors produce different counts.
 - Until then: "Seasonal comparison not available yet."
@@ -794,7 +795,7 @@ The retention *functions* exist (`prunePayloadsBefore`, `dropDetectionPartitions
 and until that job runs the growth above is real.
 
 Not yet included, because P2 does not populate them: `places` (GeoNames `cities15000`, 34,146
-rows), `fire_cluster_versions` and `fire_daily_cells` at steady state, snapshots and caches.
+rows), `fire_cluster_versions` and `fire_daily_counts` at steady state, snapshots and caches.
 Budgeting ~40 MB for those puts the lean profile at **roughly 375 MB of 500 MB**.
 
 Two things the measurement makes obvious: indexes are ~45 % of the cost on both big tables, and

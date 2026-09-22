@@ -61,6 +61,7 @@ export type {
 
 export { findRawPayload, prunePayloadsBefore, upsertRawRecords } from './raw-records.ts';
 export { recordIntervalCoverage, recordLiveCoverage } from './coverage.ts';
+export { recordFireDailyAggregate, type FireDayState } from './fire-daily.ts';
 export type { RawRecordInput } from './raw-records.ts';
 
 export {

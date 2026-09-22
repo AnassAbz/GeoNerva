@@ -14,7 +14,13 @@
 import { sql, type Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { createDb, listRecentRuns, type DB } from '@geonerva/db';
+import {
+  createDb,
+  ensurePartitionsForDays,
+  listRecentRuns,
+  recordLiveCoverage,
+  type DB,
+} from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import type { HttpClient } from '@geonerva/http';
 import { createSourceClient, firmsDescriptor } from '@geonerva/sources';
@@ -370,5 +376,137 @@ describe('coverage (ADR-040, ADR-041)', () => {
     expect((await ingest('j1-24h-slice.csv')).status).toBe('SUCCEEDED');
     expect((await ingest('drift-renamed-column.csv', 200, 'SCHEDULE')).status).toBe('FAILED');
     expect(await coveredHours()).toBe(0);
+  });
+});
+
+/**
+ * The daily aggregate the fire trend reads (ADR-040).
+ *
+ * It is computed here, after every FIRMS ingestion, rather than by a nightly job, because it reads
+ * `fire_detections` — which the lean profile keeps for 72 hours. A day is final two days after it
+ * began, so running it on every ingestion is what guarantees the rows are still there to count.
+ *
+ * Nothing below names a wall-clock date. The aggregator's candidate days are relative to the run's
+ * own `committed_at`, so the assertions are relative to it too: a test that hardcoded "yesterday"
+ * would be correct only on the day it was written.
+ */
+describe('the daily fire aggregate (ADR-040)', () => {
+  const DAY_MS = 24 * 60 * 60 * 1_000;
+
+  async function noaa20(): Promise<number> {
+    const result = await sql<{ id: number }>`
+      SELECT id FROM geonerva.source_products
+      WHERE source_id = 'firms' AND code = 'VIIRS_NOAA20_NRT'
+    `.execute(db);
+    const id = result.rows[0]?.id;
+    if (id === undefined) throw new Error('the NOAA-20 product is not seeded');
+    return id;
+  }
+
+  /**
+   * Every hour of the last eight days recorded as read, with a partition for each day.
+   *
+   * Both are what `recordFireDailyAggregate` asks of a day before it will call it `COVERED`: the
+   * ADR-041 ledger holding all 24 hours, and a partition still present to count detections in. A
+   * window rather than a chosen day, so that a run started either side of midnight sees the same
+   * thing.
+   */
+  async function lastEightDaysRead(): Promise<void> {
+    const productId = await noaa20();
+    const now = Date.now();
+    await ensurePartitionsForDays(
+      db,
+      Array.from({ length: 9 }, (_, index) => new Date(now - index * DAY_MS)),
+    );
+    await db.transaction().execute((trx) =>
+      recordLiveCoverage(trx, {
+        productId,
+        window: { from: new Date(now - 8 * DAY_MS), to: new Date(now) },
+        // Before the run, so the aggregate — which reads the ledger as of its own clock — sees it.
+        recordedAt: new Date(now - 60_000),
+      }),
+    );
+  }
+
+  /** The aggregate rows for NOAA-20, newest day first, each with its age at its knowledge time. */
+  async function aggregated(): Promise<{ state: string; finalAfter: number }[]> {
+    const result = await sql<{ state: string; final_after: number }>`
+      SELECT c.state, (date_trunc('day', c.computed_at)::date - c.day) AS final_after
+      FROM geonerva.fire_daily_coverage c
+      JOIN geonerva.source_products p ON p.id = c.product_id
+      WHERE p.source_id = 'firms' AND p.code = 'VIIRS_NOAA20_NRT'
+      ORDER BY c.day DESC
+    `.execute(db);
+    return result.rows.map((row) => ({ state: row.state, finalAfter: row.final_after }));
+  }
+
+  function logged(event: string): { level: string; fields: Record<string, unknown> }[] {
+    return lastLogger.entries.filter((entry) => entry.event === event);
+  }
+
+  it('records every day that has become final, once, when the run succeeds', async () => {
+    await lastEightDaysRead();
+    expect((await ingest('j1-24h-slice.csv')).status).toBe('SUCCEEDED');
+
+    /*
+     * Two days back is the first final day, and the aggregator looks five further back for a
+     * worker that was down: six days, each read in full, so each `COVERED`. `NOT_COVERED` here
+     * would mean the ledger or the partition check had moved, and a day recorded that way is
+     * excluded from the trend for good — nothing ever revisits it unless a later row is written.
+     */
+    expect(await aggregated()).toEqual([
+      { state: 'COVERED', finalAfter: 2 },
+      { state: 'COVERED', finalAfter: 3 },
+      { state: 'COVERED', finalAfter: 4 },
+      { state: 'COVERED', finalAfter: 5 },
+      { state: 'COVERED', finalAfter: 6 },
+      { state: 'COVERED', finalAfter: 7 },
+    ]);
+    expect(logged('ingestion.fire_daily')[0]?.fields['detail']).toMatch(/^6 final day\(s\)/u);
+
+    /*
+     * And written **once**. A day is aggregated when it becomes final and then left alone, so the
+     * next poll half an hour later must not write it again: a second row for the same day at a
+     * later knowledge time is a *correction*, and one produced by nothing having changed would
+     * make every replay of that day read the last run rather than the day.
+     */
+    expect((await ingest('j1-24h-slice.csv')).status).toBe('SUCCEEDED');
+    expect(await aggregated()).toHaveLength(6);
+    expect(logged('ingestion.fire_daily')).toHaveLength(0);
+  });
+
+  it('does not fail the run when the aggregate cannot be written', async () => {
+    /*
+     * The aggregate is a *derived* read-side convenience; the detections are the facts. Losing it
+     * costs the trend a day, which the read path already states as `NOT_COVERED`, and the next
+     * ingestion recomputes — whereas failing the run would throw away a stored batch and make
+     * `/data-status` report a sensor outage that had not happened.
+     *
+     * `CHECK (false) NOT VALID` refuses every new row without scanning the table, so the insert
+     * fails exactly where production would fail on a permission or constraint change.
+     */
+    await lastEightDaysRead();
+    await sql`
+      ALTER TABLE geonerva.fire_daily_coverage
+      ADD CONSTRAINT fire_daily_coverage_refuses_writes CHECK (false) NOT VALID
+    `.execute(db);
+    try {
+      const outcome = await ingest('j1-24h-slice.csv');
+
+      expect(outcome.status).toBe('SUCCEEDED');
+      expect(outcome.counts.inserted).toBeGreaterThan(100);
+      expect(await detectionCount()).toBe(outcome.counts.inserted);
+      const runs = await listRecentRuns(db, { sourceId: 'firms', limit: 1 });
+      expect(runs[0]?.status, finishFailures()).toBe('SUCCEEDED');
+      // Logged rather than swallowed: a day the trend will never hold is worth an operator's eye.
+      expect(logged('ingestion.fire_daily_failed')).toHaveLength(1);
+      expect(logged('ingestion.fire_daily')).toHaveLength(0);
+    } finally {
+      // `fire_daily_coverage` is truncated between tests, but a constraint is not: left behind, it
+      // would fail every test that ran after this one.
+      await sql`
+        ALTER TABLE geonerva.fire_daily_coverage DROP CONSTRAINT fire_daily_coverage_refuses_writes
+      `.execute(db);
+    }
   });
 });

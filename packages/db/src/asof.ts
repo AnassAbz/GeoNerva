@@ -1890,3 +1890,4 @@ export async function correlationEvidenceAsOf(
  */
 export * from './asof-detail.ts';
 export * from './asof-history.ts';
+export * from './asof-fire-daily.ts';

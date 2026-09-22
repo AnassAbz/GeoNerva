@@ -44,6 +44,7 @@ import type {
   RunTrigger,
   SourceCapability,
   SourceHealthStatus,
+  TrendBand,
 } from '../enums.ts';
 import type { EvidenceId } from '../evidence/evidence-id.ts';
 import type { GeoJsonGeometry } from '../value-objects/geography.ts';
@@ -57,8 +58,9 @@ import type { IsoTimestamp } from '../value-objects/time.ts';
  * Current version of the read-model contracts. Bumping it requires an ADR.
  *
  * 2 — ADR-038: `ObservationEvidenceDetail.rawPayload`, the raw-payload lifecycle state.
+ * 3 — ADR-040: `BaselineMetricView.trendBand`, the fire trend's direction.
  */
-export const READ_MODEL_SCHEMA_VERSION = 2;
+export const READ_MODEL_SCHEMA_VERSION = 3;
 
 export type ReadModelSchemaVersion = typeof READ_MODEL_SCHEMA_VERSION;
 
@@ -348,6 +350,12 @@ export interface BaselineMetricView {
   /** Mid-rank empirical percentile, only when `status === 'OK'`. */
   readonly percentile: number | null;
   readonly band: 'BELOW_TYPICAL' | 'TYPICAL' | 'ABOVE_TYPICAL' | 'WELL_ABOVE_TYPICAL' | null;
+  /**
+   * The direction of a **trend** metric: `FIRE_TREND` compares two periods rather than placing one
+   * value in a distribution, so `band` above cannot describe it (ADR-040, schema version 3). Null
+   * for every distribution metric, and for a trend with too little coverage to state one.
+   */
+  readonly trendBand: TrendBand | null;
   /** One plain sentence stating what the number means. Always present. */
   readonly interpretation: string;
   /** The mandatory caveat whenever the band is elevated. */

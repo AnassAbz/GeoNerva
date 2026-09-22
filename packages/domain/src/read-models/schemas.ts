@@ -46,6 +46,7 @@ import { z } from 'zod';
 import {
   AGREEMENT_LEVELS,
   BASELINE_BANDS,
+  TREND_BANDS,
   BASELINE_STATUSES,
   CHANGE_PROMINENCES,
   CHANGE_TYPES,
@@ -567,6 +568,7 @@ export const baselineMetricViewSchema = z.object({
   reference: baselineReferenceSchema.nullable(),
   percentile: z.number().min(0).max(100).nullable(),
   band: z.enum(BASELINE_BANDS).nullable(),
+  trendBand: z.enum(TREND_BANDS).nullable(),
   interpretation: z.string().min(1),
   caveats: z.array(z.string()),
   methodVersion: z.string(),
@@ -1795,11 +1797,23 @@ export const historyResponseSchema = z
   .superRefine((history, ctx) => {
     requireManifestCoverage(history, ctx);
     const ok = history.metric.status === 'OK';
-    if (ok !== (history.metric.reference !== null) || ok !== (history.referenceBands !== null)) {
+    /*
+     * A trend answers a different question from a baseline: it states a **direction**, not a
+     * position in a distribution (ADR-040). `FIRE_TREND` succeeds with no reference at all, and a
+     * reference distribution beside a direction would be a statistic nothing computed — so the
+     * rule is "exactly when a *distribution* metric is OK", and a trend must carry neither.
+     */
+    const distribution = history.metric.trendBand === null;
+    const expectsReference = ok && distribution;
+    if (
+      expectsReference !== (history.metric.reference !== null) ||
+      expectsReference !== (history.referenceBands !== null)
+    ) {
       ctx.addIssue({
         code: 'custom',
         path: ['referenceBands'],
-        message: 'a reference distribution exists exactly when the metric status is OK',
+        message:
+          'a reference distribution exists exactly when a distribution metric is OK; a trend states a direction instead',
       });
     }
     if (!ok && (history.metric.percentile !== null || history.metric.band !== null)) {

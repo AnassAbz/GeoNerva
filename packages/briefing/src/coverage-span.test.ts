@@ -44,7 +44,12 @@ describe('coveredSince', () => {
 });
 
 describe('coveredSinceForEvery', () => {
-  const of = (productId: number, from: number, to: number) => ({ productId, ...span(from, to) });
+  // `sourceId` rides along on every span; this function answers per feed, so it is the same here.
+  const of = (productId: number, from: number, to: number) => ({
+    productId,
+    sourceId: 'usgs',
+    ...span(from, to),
+  });
 
   it('is the latest start when every product reaches the knowledge time', () => {
     expect(

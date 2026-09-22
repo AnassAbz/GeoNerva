@@ -16,18 +16,21 @@
  * ### Metrics
  *
  * `EQ_COUNT_7D` (primary) and `EQ_COUNT_30D` for earthquakes; `GDACS_CONTEXT` for floods,
- * cyclones and the volcano/drought family; `FIRE_TREND` for fire activity, which answers
- * `INSUFFICIENT_COVERAGE` until the daily aggregate it needs exists (ADR-040).
+ * cyclones and the volcano/drought family; `FIRE_TREND` for fire activity, read from the daily
+ * aggregate of ADR-040 over the days FIRMS ingestion actually covered.
  */
 
 import { chooseHeadlineMagnitude } from '@geonerva/correlation';
+import { THERMAL_DETECTION_CAVEAT } from '@geonerva/relevance';
 import {
   BASELINE_METHOD_VERSION,
   EARTHQUAKE_BASELINE,
+  FIRE_TREND,
   GDACS_CONTEXT,
   RETENTION_FLOOR_MAGNITUDE,
   earthquakeCountBaseline,
   estimateCompleteness,
+  fireTrend,
   gdacsContext,
   type EarthquakeCountResult,
   type QuakeRecord,
@@ -36,6 +39,8 @@ import {
   attributionsFor,
   derivationsAsOf,
   catalogCoverageAsOf,
+  fireDailyAsOf,
+  fireProductsActiveThroughout,
   linksAsOf,
   observationsAsOf,
   sourceCutoffsAsOf,
@@ -143,14 +148,134 @@ export async function buildHistory(options: BuildHistoryOptions): Promise<Histor
     case 'GDACS_CONTEXT':
       return await gdacsHistory(base);
     case 'FIRE_TREND':
-      return await unavailable(base, {
-        label: 'Fire activity trend',
-        interpretation:
-          'GeoNerva does not yet hold the five weeks of daily fire records this comparison needs, so it cannot say whether fire activity here is rising or falling.',
-        methodologyHref: '/methodology#fire-trend',
-        sourceIds: ['firms'],
-      });
+      return await fireTrendHistory(base);
   }
+}
+
+/**
+ * A UTC day is still inside the FIRMS fetch window for a day after it ends, so the trend's window
+ * ends two days before the knowledge time: nothing more recent is final (ADR-040).
+ */
+const FIRE_FINAL_AFTER_DAYS = 2;
+
+const FIRE_TREND_DAYS = FIRE_TREND.previousDays + FIRE_TREND.recentDays;
+
+/** `YYYY-MM-DD` of a UTC instant. */
+function isoDay(at: Date): string {
+  return at.toISOString().slice(0, 10);
+}
+
+/**
+ * `FIRE_TREND` — the last 7 days of thermal detections against the 28 before them, per covered day
+ * (ARCHITECTURE §8.2), from the daily aggregate (ADR-040).
+ *
+ * Three refusals before any comparison, each of which would otherwise read as quiet:
+ *
+ *  - no FIRMS feed covered the whole window (a sensor added or retired inside it cannot be
+ *    compared against itself, ADR-009);
+ *  - the aggregate holds no day of one of the two periods;
+ *  - a day GeoNerva did not read every hour of, or that FIRMS reported no satellite data for, is
+ *    excluded rather than counted as zero.
+ */
+async function fireTrendHistory(base: Base): Promise<HistoryResponse> {
+  const { options } = base;
+  const { db, asOf } = options;
+  const label = `Fire activity within ${String(FIRE_TREND.radiusKm)} km`;
+  const methodologyHref = '/methodology#fire-trend';
+
+  const lastDay = new Date(
+    Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), asOf.getUTCDate()) -
+      FIRE_FINAL_AFTER_DAYS * DAY_MS,
+  );
+  const firstDay = new Date(lastDay.getTime() - (FIRE_TREND_DAYS - 1) * DAY_MS);
+
+  const productIds = await fireProductsActiveThroughout(db, { from: firstDay, to: lastDay });
+  if (productIds.length === 0) {
+    return await unavailable(base, {
+      label,
+      interpretation:
+        'No fire-detection sensor covered this whole period, so GeoNerva cannot compare the last week with the four weeks before it.',
+      methodologyHref,
+      sourceIds: ['firms'],
+    });
+  }
+
+  const rows = await fireDailyAsOf(db, {
+    asOf,
+    productIds,
+    point: { lat: options.location.lat, lon: options.location.lon },
+    radiusM: FIRE_TREND.radiusKm * 1000,
+    from: isoDay(firstDay),
+    to: isoDay(lastDay),
+  });
+  const result = fireTrend(rows);
+
+  const params = {
+    radiusKm: FIRE_TREND.radiusKm,
+    recentDays: FIRE_TREND.recentDays,
+    previousDays: FIRE_TREND.previousDays,
+    sensors: productIds.length,
+    lastDay: isoDay(lastDay),
+  };
+  const id = baselineId(options, params, result);
+  const metric: BaselineMetricView = {
+    id,
+    family: 'FIRE_ACTIVITY',
+    metricCode: 'FIRE_TREND',
+    label,
+    params,
+    asOf: asOf.toISOString(),
+    status: result.status === 'OK' ? 'OK' : 'INSUFFICIENT_COVERAGE',
+    observedValue:
+      result.recentMeanPerDay === null
+        ? { kind: 'unavailable', reason: 'NOT_COVERED' }
+        : {
+            kind: 'number',
+            value: Math.round(result.recentMeanPerDay * 10) / 10,
+            unit: 'detections/day',
+            decimals: 1,
+          },
+    reference: null,
+    percentile: null,
+    band: null,
+    trendBand: result.band,
+    interpretation: result.interpretation,
+    // §9.2's mandatory sentence: these are thermal detections, not confirmed fires.
+    caveats: [THERMAL_DETECTION_CAVEAT],
+    methodVersion: result.methodVersion,
+    evidenceIds: [id],
+  };
+
+  const response: Omit<HistoryResponse, 'evidenceManifest' | 'attribution'> = {
+    schemaVersion: READ_MODEL_SCHEMA_VERSION,
+    location: options.location,
+    family: 'FIRE_ACTIVITY',
+    metricCode: 'FIRE_TREND',
+    asOfContext: base.asOfContext,
+    metric,
+    series: [
+      {
+        code: 'FIRE_TREND',
+        label: 'Thermal detections per day',
+        unit: 'detections',
+        bucketDays: 1,
+        points: rows.map((row) => ({
+          t: `${row.day}T00:00:00.000Z`,
+          value: row.covered ? row.detections : null,
+          // A day not read is not a quiet day, and the chart says which it was.
+          missingReason: row.covered ? null : 'NOT_COVERED',
+        })),
+      },
+    ],
+    referenceBands: null,
+    rarity: null,
+    largestRecent: null,
+    sequenceContext: null,
+    completenessStatement: null,
+    caveats: [THERMAL_DETECTION_CAVEAT],
+    methodologyHref,
+  };
+  return await finish(options, response, id, ['firms']);
 }
 
 interface Base {
@@ -165,7 +290,27 @@ async function earthquakeHistory(base: Base, windowDays: number): Promise<Histor
   const label = `Earthquakes within ${String(options.radiusKm)} km, per ${String(windowDays)} days`;
   const methodologyHref = '/methodology#eq-count';
 
-  const read = EARTHQUAKE_SOURCES.filter((source) => (base.cutoffs[source] ?? null) !== null);
+  /*
+   * "Was this catalog read?" is a question for the coverage ledger, not for run history.
+   *
+   * It used to be answered by `sourceCutoffsAsOf`, i.e. by whether any `ingestion_runs` row for the
+   * source had committed by `asOf`. That made every earthquake baseline depend on run rows
+   * surviving — so ADR-033's 90-day sweep would have turned a read catalog into an unread one, and
+   * a replay to any knowledge time older than the retention window would refuse for no reason on
+   * the ground. ADR-041's ledger is the durable record of what was read; this reads that instead.
+   * `cutoffs` stays on `base`, where it says how fresh each source is, which is a different fact.
+   *
+   * Any earthquake product of either source counts: they restate one catalog.
+   */
+  const coverage = await catalogCoverageAsOf(db, {
+    asOf,
+    sourceIds: [...EARTHQUAKE_SOURCES],
+    hazardTypes: ['EARTHQUAKE'],
+    maxMinMagnitude: RETENTION_FLOOR_MAGNITUDE,
+  });
+  const read = EARTHQUAKE_SOURCES.filter((source) =>
+    coverage.spans.some((span) => span.sourceId === source),
+  );
   const derivations = await derivationsAsOf(db, { asOf });
   const correlated = derivations.some(
     (entry) => entry.kind === 'CORRELATION' && entry.lastSucceededAt !== null,
@@ -188,19 +333,7 @@ async function earthquakeHistory(base: Base, windowDays: number): Promise<Histor
    * count: every threshold this metric counts at over a reference older than 30 days is at least
    * the retention floor, and a plan above it would leave M4.5-and-up windows short.
    */
-  const coverageStart = coveredSince(
-    // Any earthquake product of either source: they restate one catalog.
-    (
-      await catalogCoverageAsOf(db, {
-        asOf,
-        sourceIds: [...EARTHQUAKE_SOURCES],
-        hazardTypes: ['EARTHQUAKE'],
-        maxMinMagnitude: RETENTION_FLOOR_MAGNITUDE,
-      })
-    ).spans,
-    asOf,
-    COVERAGE_EDGE_TOLERANCE_MS,
-  );
+  const coverageStart = coveredSince(coverage.spans, asOf, COVERAGE_EDGE_TOLERANCE_MS);
   /*
    * The current window must be read whole, as well as reached: a seven-day count over the three
    * days since polling resumed is a count of three days presented as seven (P8 fix review).
@@ -283,6 +416,7 @@ async function earthquakeHistory(base: Base, windowDays: number): Promise<Histor
           },
     percentile: result.percentile === null ? null : Math.round(result.percentile * 10) / 10,
     band: result.band,
+    trendBand: null,
     interpretation: result.interpretation,
     caveats: result.caveats,
     methodVersion: result.methodVersion,
@@ -466,6 +600,7 @@ async function gdacsHistory(base: Base): Promise<HistoryResponse> {
       reference: null,
       percentile: null,
       band: null,
+      trendBand: null,
       interpretation: result.interpretation,
       caveats: [],
       methodVersion: result.methodVersion,
@@ -514,6 +649,7 @@ async function unavailable(
       reference: null,
       percentile: null,
       band: null,
+      trendBand: null,
       interpretation: copy.interpretation,
       caveats: [],
       methodVersion: BASELINE_METHOD_VERSION,

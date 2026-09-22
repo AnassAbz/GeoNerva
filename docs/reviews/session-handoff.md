@@ -20,9 +20,13 @@ no CRITICAL or HIGH finding is open. Representative latency is measured (`pnpm b
 briefing p95 ≈ 130 ms against G6's 600 ms, `/history` p95 ≈ 195 ms — local, sequential, not
 production.
 
-Two honest absences to know before building UI on `/history`:
+One honest absence to know before building UI on `/history`:
 
-- **`FIRE_TREND` answers `INSUFFICIENT_COVERAGE`** until ADR-040 is decided.
+- **`FIRE_TREND` now answers from the daily aggregate** (ADR-040, implemented 2026-09-22). It is
+  `OK` only where the aggregate holds covered days on both sides of the comparison, which a fresh
+  deployment reaches 35 days after its first FIRMS poll; until then, and for any day GeoNerva did
+  not read every hour of, the answer is `INSUFFICIENT_COVERAGE`. The UI must render a direction
+  (`trendBand`) with no reference distribution, which is a shape no other metric has.
 - **Every GDACS family's baseline refuses in production today**, because the worker schedules only
   USGS (`apps/worker/src/cli/start.ts`, `SCHEDULED_ADAPTERS`). Coverage is per feed; the families
   answer once their GDACS feeds are polled.
@@ -35,12 +39,25 @@ says why).
 
 ## Decisions waiting on the owner
 
-- **ADR-038 (Proposed)** — raw-payload metadata on `/evidence`; the web role cannot read
-  `raw_source_records`. Recommended: a column-level grant excluding `payload`.
-- **ADR-040 (Proposed)** — `FIRE_TREND` needs an append-only daily aggregate with a knowledge time.
-- **ADR-041 (Proposed)** — a baseline trusts *coverage*, derived today from `ingestion_runs` and
-  backfill checkpoints. (1) ADR-033's 90-day run retention would erase that evidence: **do not
-  schedule the `ingestion_runs` sweep before a coverage ledger exists** — P10 inherits this. (2)
+**ADR-038, ADR-040 and ADR-041 were all accepted by the owner on 2026-09-22 and are implemented**
+(migrations 0017 and 0018; `docs/DECISIONS.md` carries an "As built" section for each). What each
+one leaves behind:
+
+- **ADR-038** — `/evidence/{id}` states the raw payload's lifecycle; the provider's bytes are not
+  part of the public contract and are never served by default.
+- **ADR-040** — the daily fire aggregate. Two rules to keep in mind before touching it: a day is
+  judged once, when it is final, and a day whose detection partition retention has dropped can
+  never be recorded `COVERED`, because its absent rows would read as a quiet day. No writer
+  produces a correction row, though the keys allow one.
+- **ADR-041** — the coverage ledger. (1) ADR-033's 90-day run retention would erase run history:
+  coverage no longer derives from it, so **the sweep is no longer blocked by ADR-041's first
+  condition** — but its second, "historical baselines must continue to work after detailed run
+  history is pruned", is demonstrated by "a baseline after its run history is pruned" in
+  `packages/briefing/src/history.int.test.ts`: the same request answers identically after every
+  run row, plan and interval is deleted. That test also drove a fix — the earthquake baseline's
+  "was this catalog read?" gate asked `ingestion_runs`, so the sweep would have turned a read
+  catalog into an unread one; it asks the ledger now. Read it before enabling the sweep. P10
+  inherits this. (2)
   Chains tolerate gaps up to `fetchStaleAfterS`, a health threshold, not what each poll read: any
   worker stop over an hour on this machine cuts earlier backfills off from the present (a refusal,
   live here), while EMSC's 15-minute look-back could lose events in an outage (latent).

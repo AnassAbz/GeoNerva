@@ -7,10 +7,15 @@
  * canonical events rather than as rows, that the reference period never starts before the catalog
  * GeoNerva holds, that a metric with no inputs is refused rather than computed from nothing, and
  * that the whole response satisfies its contract — every citation resolved (I9).
+ *
+ * `FIRE_TREND` adds one more, and it is the sharpest of them: a day GeoNerva did not read every
+ * hour of is **excluded** from the comparison rather than counted as a quiet one (ADR-040). A
+ * missing overpass presented as zero detections is the availability lie arriving through an
+ * average, so the tests for it compare the same detections read two ways.
  */
 
 import { sql, type Kysely } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AFTERSHOCK_CAVEAT, EARTHQUAKE_ELEVATED_CAVEAT } from '@geonerva/baselines';
 import {
@@ -20,10 +25,12 @@ import {
   recordIntervalCoverage,
   recordLiveCoverage,
   type DB,
+  type FireDayState,
 } from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import { seedObservation, seedRun } from '@geonerva/db/testing/factories';
 import { historyResponseSchema, type HazardType, type LocationRef } from '@geonerva/domain';
+import { THERMAL_DETECTION_CAVEAT } from '@geonerva/relevance';
 
 import { buildHistory, type BuildHistoryOptions } from './history.ts';
 import { isLexiconClean } from './lexicon.ts';
@@ -245,6 +252,77 @@ async function referenceCatalog(
   }
 }
 
+/**
+ * ADR-041's second condition, in a test: **historical baselines must keep working after detailed
+ * run history is pruned.**
+ *
+ * Coverage used to be derived from `ingestion_runs` and backfill checkpoints, so ADR-033's 90-day
+ * sweep would have silently turned a read catalog into an unread one — a baseline that answered
+ * yesterday refusing today, for no reason on the ground. The ledger exists to break that
+ * dependency, and the only way to show it did is to delete the run history and ask again.
+ *
+ * The owner's instruction was that the sweep must not be enabled until this is verified. This is
+ * that verification; it is referenced from the handoff.
+ */
+describe('a baseline after its run history is pruned (ADR-041)', () => {
+  /*
+   * Coverage is per feed, so each span must say which source *its* feed belongs to. Reading the
+   * source from anywhere else — the first product of the query, say — credits one provider with
+   * another's data: an answer built entirely from EMSC, attributed to USGS.
+   */
+  it('credits the source whose feed was actually read', async () => {
+    const from = new Date(CURRENT_START.getTime() - 59.5 * WEEK);
+    await backfilled('emsc', from, daysAgo(0.01));
+    await committedRun('emsc', daysAgo(0.01));
+    await correlationRun(daysAgo(0.01));
+    // The whole catalog is EMSC's, so nothing in the answer came from USGS at all.
+    for (let k = 0; k < 60; k += 1) {
+      await quake({
+        observedAt: new Date(CURRENT_START.getTime() - (k + 0.5) * WEEK),
+        sourceId: 'emsc',
+      });
+    }
+    for (const days of [1, 2]) await quake({ observedAt: daysAgo(days), sourceId: 'emsc' });
+
+    const response = await history();
+    expect(response.metric.status).toBe('OK');
+    expect(response.attribution.map((entry) => entry.sourceId)).toEqual(['emsc']);
+  });
+
+  it('answers identically when every ingestion run and backfill record is gone', async () => {
+    await earthquakesRead();
+    await referenceCatalog(60);
+    for (const days of [1, 2, 3]) await quake({ observedAt: daysAgo(days) });
+
+    const before = await history();
+    expect(before.metric.status).toBe('OK');
+    expect(before.metric.reference?.nWindows).toBe(59);
+
+    /*
+     * What ADR-033's sweep does, at its most brutal: every run row, every plan and every interval.
+     * The ledger rows are deliberately left, because they are what is meant to survive — they are
+     * a few hundred bytes a feed a day, which is why keeping them is affordable.
+     */
+    await sql`DELETE FROM geonerva.backfill_intervals`.execute(db);
+    await sql`DELETE FROM geonerva.backfill_plans`.execute(db);
+    await sql`DELETE FROM geonerva.ingestion_runs`.execute(db);
+    const remaining = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM geonerva.feed_coverage_hours
+    `.execute(db);
+    expect(Number(remaining.rows[0]?.n)).toBeGreaterThan(0);
+
+    const after = await history();
+    // The same answer, not merely a non-refusal: the count, the reference and the band all hold.
+    expect(after.metric.status).toBe(before.metric.status);
+    expect(after.metric.observedValue).toEqual(before.metric.observedValue);
+    expect(after.metric.reference).toEqual(before.metric.reference);
+    expect(after.metric.band).toBe(before.metric.band);
+    expect(after.metric.percentile).toBe(before.metric.percentile);
+    expect(after.series[0]?.points).toEqual(before.series[0]?.points);
+    expect(after.completenessStatement).toBe(before.completenessStatement);
+  });
+});
+
 describe('EQ_COUNT_7D', () => {
   it('compares the current week with every week since the catalog began', async () => {
     await earthquakesRead();
@@ -389,6 +467,8 @@ describe('EQ_COUNT_7D', () => {
 
   it('refuses when the records had not yet been grouped into events at the knowledge time', async () => {
     await referenceCatalog(60);
+    // Read — the ledger says so (ADR-041) — but not yet grouped: the second refusal, not the first.
+    await backfilled('usgs', new Date(CURRENT_START.getTime() - 59.5 * WEEK), daysAgo(0.01));
     await committedRun('usgs', daysAgo(0.01));
     await correlationRun(new Date(AS_OF.getTime() + 60_000));
 
@@ -502,6 +582,108 @@ describe('GDACS_CONTEXT', () => {
   });
 });
 
+const FIRE = { family: 'FIRE_ACTIVITY', metric: 'FIRE_TREND', radiusKm: 100 } as const;
+
+/**
+ * The last day the trend may count at `AS_OF`.
+ *
+ * A UTC day stays inside the FIRMS `DAY_RANGE` fetch window for a day after it ends, so nothing
+ * more recent than two days before the knowledge time is final (ADR-040). Stated here rather than
+ * recomputed, so that a test reads as the days it is about.
+ */
+const FIRE_LAST_DAY = '2026-09-19';
+
+/** The 35 UTC days of the window at `AS_OF`, oldest first: the 28 previous, then the 7 recent. */
+const FIRE_WINDOW = Array.from({ length: 35 }, (_, index) =>
+  new Date(Date.UTC(2026, 8, 19) - (34 - index) * DAY).toISOString().slice(0, 10),
+);
+
+/**
+ * Two cells of the 0.25° grid of ADR-011,
+ * `floor((lat + 90) / 0.25) * 1440 + floor((lon + 180) / 0.25)`.
+ *
+ * The read path places a cell at its centre, so `NEAR_CELL` sits about 10 km from Marrakech and
+ * `FAR_CELL`, four degrees of longitude west, about 460 km from it — comfortably outside R.
+ */
+const NEAR_CELL = 486 * 1440 + 688;
+const FAR_CELL = 486 * 1440 + 668;
+
+/** One UTC day of the aggregate: what was read, and how much was detected. */
+interface FireDaySeed {
+  /** `YYYY-MM-DD`. */
+  readonly day: string;
+  readonly detections: number;
+  /** Defaults to `COVERED`; `NOT_COVERED` is a day GeoNerva did not read every hour of. */
+  readonly state?: FireDayState;
+}
+
+/** The FIRMS thermal feeds. Both are seeded active since long before any window in 2026. */
+async function firmsProducts(): Promise<number[]> {
+  const result = await sql<{ id: number }>`
+    SELECT id FROM geonerva.source_products
+    WHERE source_id = 'firms' AND hazard_types && ARRAY['THERMAL_ACTIVITY']::text[]
+    ORDER BY id
+  `.execute(db);
+  return result.rows.map((row) => row.id);
+}
+
+/**
+ * Detections in one grid cell, with no claim about coverage: the counts half of the aggregate.
+ *
+ * Written against the **first** feed alone, so that a day's total is the number the test asked for
+ * rather than twice it. The read path sums every feed's cells for the day, which is right — two
+ * sensors see different overpasses — but it makes a fixture that writes both hard to read.
+ */
+async function fireCounts(
+  cellId: number,
+  days: readonly FireDaySeed[],
+  options: { readonly computedAt?: Date } = {},
+): Promise<void> {
+  const counted = days.filter((entry) => entry.detections > 0);
+  if (counted.length === 0) return;
+  const productIds = await firmsProducts();
+  await sql`
+    INSERT INTO geonerva.fire_daily_counts
+      (cell_id, day, product_id, computed_at, n, n_high_conf, frp_sum)
+    SELECT ${cellId}::int, d.day, ${productIds[0] ?? 0}::smallint,
+           ${options.computedAt ?? daysAgo(0.01)}::timestamptz, d.n, 0, NULL::real
+    FROM unnest(${sql.val(counted.map((entry) => entry.day))}::date[],
+                ${sql.val(counted.map((entry) => entry.detections))}::int[]) AS d(day, n)
+  `.execute(db);
+}
+
+/**
+ * The aggregate `recordFireDailyAggregate` writes, stated a day at a time.
+ *
+ * Raw SQL rather than the aggregator itself, because these are read-side tests: saying "this day
+ * was read and held twenty detections" through the writer would mean seeding 35 daily partitions
+ * and 840 coverage hours per feed for every scenario below. The writer has its own tests, against
+ * a real FIRMS batch, in `@geonerva/pipeline`.
+ *
+ * Coverage is written for **every** feed, because a day counts as read only when each feed the
+ * trend uses read it: one sensor's missing day is not a quiet day for the group.
+ */
+async function fireAggregate(
+  days: readonly FireDaySeed[],
+  options: { readonly computedAt?: Date } = {},
+): Promise<void> {
+  const productIds = await firmsProducts();
+  await sql`
+    INSERT INTO geonerva.fire_daily_coverage (product_id, day, computed_at, state)
+    SELECT p.id, d.day, ${options.computedAt ?? daysAgo(0.01)}::timestamptz, d.state
+    FROM unnest(${sql.val(days.map((entry) => entry.day))}::date[],
+                ${sql.val(days.map((entry) => entry.state ?? 'COVERED'))}::text[]) AS d(day, state)
+    CROSS JOIN unnest(${sql.val(productIds)}::smallint[]) AS p(id)
+  `.execute(db);
+  await fireCounts(NEAR_CELL, days, options);
+}
+
+/** The detections-per-day a response states, or `null` when it states none. */
+function meanPerDay(response: Awaited<ReturnType<typeof history>>): number | null {
+  const value = response.metric.observedValue;
+  return value.kind === 'number' ? value.value : null;
+}
+
 describe('FIRE_TREND', () => {
   it('is unavailable until the daily aggregate exists (ADR-040)', async () => {
     await committedRun('firms', daysAgo(0.01));
@@ -513,6 +695,271 @@ describe('FIRE_TREND', () => {
     expect(response.metric.status).toBe('INSUFFICIENT_COVERAGE');
     expect(response.metric.percentile).toBeNull();
     expect(response.attribution.map((entry) => entry.sourceId)).toEqual(['firms']);
+  });
+
+  it('compares the last 7 days with the 28 before them, per covered day', async () => {
+    await committedRun('firms', daysAgo(0.01));
+    /*
+     * Two detections a day for four weeks, then a week of 148 across seven days. 21.1 is a mean
+     * that no single day holds, so an assertion on it cannot be satisfied by a total or by any
+     * one day's count.
+     */
+    const recent = [20, 20, 20, 20, 20, 20, 28];
+    await fireAggregate(
+      FIRE_WINDOW.map((day, index) => ({
+        day,
+        detections: index < 28 ? 2 : (recent[index - 28] ?? 0),
+      })),
+    );
+    // A busy cell 460 km away on every day of the recent week: read, and outside R, so not counted.
+    await fireCounts(
+      FAR_CELL,
+      FIRE_WINDOW.slice(28).map((day) => ({ day, detections: 500 })),
+    );
+
+    const response = await history(FIRE);
+    const metric = response.metric;
+    expect(metric.status).toBe('OK');
+    expect(metric.trendBand).toBe('INCREASING');
+    expect(metric.observedValue).toEqual({
+      kind: 'number',
+      value: 21.1,
+      unit: 'detections/day',
+      decimals: 1,
+    });
+    /*
+     * A direction is not a place in a distribution. `FIRE_TREND` compares two periods with each
+     * other rather than one value with a reference, so `band` and `percentile` — which mean "where
+     * in the distribution" — must stay empty, and `trendBand` carries the answer (ADR-040).
+     */
+    expect(metric.band).toBeNull();
+    expect(metric.percentile).toBeNull();
+    expect(metric.params).toEqual({
+      radiusKm: 100,
+      recentDays: 7,
+      previousDays: 28,
+      sensors: 2,
+      lastDay: FIRE_LAST_DAY,
+    });
+    // §9.2's mandatory sentence, on the metric and on the response that carries it.
+    expect(metric.caveats).toEqual([THERMAL_DETECTION_CAVEAT]);
+    expect(response.caveats).toEqual([THERMAL_DETECTION_CAVEAT]);
+    expect(response.attribution.map((entry) => entry.sourceId)).toEqual(['firms']);
+  });
+
+  it('is STABLE for a change that is large in proportion and small in detections', async () => {
+    /*
+     * One detection a day becoming three is a trebling, and it is also two detections. The band
+     * moves only when the two means differ by ≥ 50 % **and** by ≥ 10 detections a day, so that a
+     * quiet place is never reported as fire activity trebling on the strength of two pixels.
+     */
+    await committedRun('firms', daysAgo(0.01));
+    await fireAggregate(FIRE_WINDOW.map((day, index) => ({ day, detections: index < 28 ? 1 : 3 })));
+
+    const metric = (await history(FIRE)).metric;
+    expect(metric.status).toBe('OK');
+    expect(metric.trendBand).toBe('STABLE');
+    expect(metric.observedValue).toEqual({
+      kind: 'number',
+      value: 3,
+      unit: 'detections/day',
+      decimals: 1,
+    });
+  });
+
+  it('refuses when the aggregate holds no covered day of one of the two periods', async () => {
+    // Four weeks read, and not one day of the week they are to be compared with.
+    await committedRun('firms', daysAgo(0.01));
+    await fireAggregate(
+      FIRE_WINDOW.map((day, index) => ({
+        day,
+        detections: index < 28 ? 5 : 0,
+        state: index < 28 ? ('COVERED' as const) : ('NOT_COVERED' as const),
+      })),
+    );
+
+    const metric = (await history(FIRE)).metric;
+    expect(metric.status).toBe('INSUFFICIENT_COVERAGE');
+    expect(metric.observedValue).toEqual({ kind: 'unavailable', reason: 'NOT_COVERED' });
+    expect(metric.trendBand).toBeNull();
+    expect(metric.band).toBeNull();
+    expect(metric.interpretation).toContain('Not enough satellite coverage');
+  });
+
+  it('excludes an unread day from the mean instead of counting it as a quiet one', async () => {
+    /*
+     * The invariant ADR-040 exists for.
+     *
+     * Ninety detections over the three days that were read is thirty a day. The same ninety over
+     * seven, four of which GeoNerva did not read every hour of, is thirteen — a number produced by
+     * the reading and not by the fires, because a missing overpass is not a quiet day. Both means
+     * are computed below from the *same* detections, so the difference between them cannot be
+     * anything except how the unread days were treated.
+     */
+    await committedRun('firms', daysAgo(0.01));
+    const unread = FIRE_WINDOW.slice(28, 32);
+    await fireAggregate(
+      FIRE_WINDOW.map((day, index) => ({
+        day,
+        detections: index < 28 ? 2 : unread.includes(day) ? 0 : 30,
+        state: unread.includes(day) ? ('NOT_COVERED' as const) : ('COVERED' as const),
+      })),
+    );
+
+    const excluded = await history(FIRE);
+    expect(excluded.metric.observedValue).toEqual({
+      kind: 'number',
+      value: 30,
+      unit: 'detections/day',
+      decimals: 1,
+    });
+
+    /*
+     * The same four days, later found to have been read after all and to hold nothing — a
+     * correction, which ADR-040 makes a new row with a later knowledge time rather than an update.
+     * Now they are genuine zeros, and 90 detections are spread over seven days instead of three.
+     */
+    await fireAggregate(
+      unread.map((day) => ({ day, detections: 0, state: 'COVERED' as const })),
+      { computedAt: new Date(AS_OF.getTime() + 3_600_000) },
+    );
+    const asZero = await history({ ...FIRE, asOf: new Date(AS_OF.getTime() + 2 * 3_600_000) });
+    expect(asZero.metric.observedValue).toEqual({
+      kind: 'number',
+      value: 12.9,
+      unit: 'detections/day',
+      decimals: 1,
+    });
+
+    // Stated as the comparison rather than as two literals: excluding an unread day must not give
+    // the answer that counting it as zero gives, and here it must give a higher one.
+    expect(meanPerDay(excluded) ?? 0).toBeGreaterThan(meanPerDay(asZero) ?? 0);
+  });
+
+  it('gives one point per day of the window, in order, and says which days were not read', async () => {
+    await committedRun('firms', daysAgo(0.01));
+    const unread = FIRE_WINDOW[30] ?? '';
+    await fireAggregate(
+      FIRE_WINDOW.map((day) => ({
+        day,
+        detections: day === unread ? 0 : 4,
+        state: day === unread ? ('NOT_COVERED' as const) : ('COVERED' as const),
+      })),
+    );
+
+    const series = (await history(FIRE)).series[0];
+    expect(series?.bucketDays).toBe(1);
+    // One point per day, oldest first, and no day of the window missing from the chart.
+    expect(series?.points.map((point) => point.t)).toEqual(
+      FIRE_WINDOW.map((day) => `${day}T00:00:00.000Z`),
+    );
+    // A day not read is not a quiet day, and the chart has to be able to say which it was.
+    expect(series?.points[30]).toEqual({
+      t: `${unread}T00:00:00.000Z`,
+      value: null,
+      missingReason: 'NOT_COVERED',
+    });
+    expect(series?.points[29]).toEqual({
+      t: `${FIRE_WINDOW[29] ?? ''}T00:00:00.000Z`,
+      value: 4,
+      missingReason: null,
+    });
+  });
+
+  it('ends the window two days before the knowledge time, so yesterday cannot be in it', async () => {
+    /*
+     * A UTC day is still inside the FIRMS fetch window for a day after it ends, so the most recent
+     * day the trend may count is two days old. Yesterday is seeded here as read and very busy —
+     * which the aggregator would never write, precisely because the day is not final — so that
+     * what keeps it out of the trend is the window rather than the absence of a row.
+     */
+    await committedRun('firms', daysAgo(0.01));
+    await fireAggregate(FIRE_WINDOW.map((day) => ({ day, detections: 2 })));
+    await fireAggregate([{ day: '2026-09-20', detections: 5000 }]);
+
+    const response = await history(FIRE);
+    expect(response.metric.params).toMatchObject({ lastDay: FIRE_LAST_DAY });
+    expect(response.metric.trendBand).toBe('STABLE');
+    expect(response.metric.observedValue).toEqual({
+      kind: 'number',
+      value: 2,
+      unit: 'detections/day',
+      decimals: 1,
+    });
+    expect(response.series[0]?.points.at(-1)?.t).toBe(`${FIRE_LAST_DAY}T00:00:00.000Z`);
+    expect(response.series[0]?.points.map((point) => point.t)).not.toContain(
+      '2026-09-20T00:00:00.000Z',
+    );
+  });
+
+  it('does not see an aggregate row computed after the knowledge time', async () => {
+    await committedRun('firms', daysAgo(0.01));
+    // The whole window, aggregated an hour after the knowledge time the first request asks about.
+    await fireAggregate(
+      FIRE_WINDOW.map((day, index) => ({ day, detections: index < 28 ? 2 : 40 })),
+      { computedAt: new Date(AS_OF.getTime() + 3_600_000) },
+    );
+
+    const atAsOf = await history(FIRE);
+    expect(atAsOf.metric.status).toBe('INSUFFICIENT_COVERAGE');
+    expect(atAsOf.metric.observedValue).toEqual({ kind: 'unavailable', reason: 'NOT_COVERED' });
+
+    // The same request once that computation had happened. Two hours on is the same UTC day, so
+    // it is the same 35 days being asked about, and only the knowledge time has moved.
+    const afterwards = await history({ ...FIRE, asOf: new Date(AS_OF.getTime() + 2 * 3_600_000) });
+    expect(afterwards.metric.status).toBe('OK');
+    expect(afterwards.metric.trendBand).toBe('INCREASING');
+    expect(afterwards.metric.params).toMatchObject({ lastDay: FIRE_LAST_DAY });
+  });
+
+  describe('when no sensor spans the whole window (ADR-009)', () => {
+    afterEach(async () => {
+      /*
+       * `source_products` is seeded reference data, which the harness deliberately does not
+       * truncate — so a test that moves a sensor's lifetime has to put it back, or it has moved it
+       * for every test that runs after it in this file.
+       */
+      await sql`
+        UPDATE geonerva.source_products
+        SET active_from = CASE code
+              WHEN 'VIIRS_NOAA20_NRT' THEN DATE '2018-01-01'
+              ELSE DATE '2023-01-01'
+            END,
+            active_to = NULL
+        WHERE source_id = 'firms' AND hazard_types && ARRAY['THERMAL_ACTIVITY']::text[]
+      `.execute(db);
+    });
+
+    it('refuses rather than comparing a week with four weeks a sensor was not there for', async () => {
+      await committedRun('firms', daysAgo(0.01));
+      // A complete, strongly increasing aggregate: the refusal below is about the instruments.
+      await fireAggregate(
+        FIRE_WINDOW.map((day, index) => ({ day, detections: index < 28 ? 2 : 40 })),
+      );
+      /*
+       * Both feeds switched on in the middle of the window. A sensor added or retired inside the
+       * period cannot be compared against itself: the step in the detection count would be the
+       * change of instrument, reported as a change in fire activity.
+       */
+      await sql`
+        UPDATE geonerva.source_products SET active_from = DATE '2026-09-01'
+        WHERE source_id = 'firms' AND hazard_types && ARRAY['THERMAL_ACTIVITY']::text[]
+      `.execute(db);
+
+      const response = await history(FIRE);
+      expect(response.metric.status).toBe('INSUFFICIENT_COVERAGE');
+      expect(response.metric.observedValue).toEqual({
+        kind: 'unavailable',
+        reason: 'SOURCE_UNAVAILABLE',
+      });
+      expect(response.metric.trendBand).toBeNull();
+      expect(response.metric.interpretation).toContain(
+        'No fire-detection sensor covered this whole period',
+      );
+      // The unavailable variant carries the radius alone, and has no series to draw.
+      expect(response.metric.params).toEqual({ radiusKm: 100 });
+      expect(response.series).toEqual([]);
+    });
   });
 });
 
