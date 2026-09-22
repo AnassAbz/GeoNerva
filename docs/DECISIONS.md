@@ -610,3 +610,28 @@ Turborepo is not adopted until build times justify it.
   and the briefing measures to the buffered hull, which is never farther than the nearest detection.
   The recommended storage change above would make both exact, and would remove the withholding.
 - **Trade-offs of the recommendation:** one more column on the highest-volume table (8 bytes per row, about 1.2 MB per day at ≈146k detections), and a read that follows a merge chain rather than a single column. Against that: the map can draw what §7.5 asked for at every knowledge time, and the membership history of an area of thermal activity becomes auditable, which DOMAIN_MODEL §4.10 already claims it is.
+
+## ADR-040 — Proposed: the fire-trend aggregate needs a writer and a knowledge time before `FIRE_TREND` can be served
+- **Date:** 2026-09-21 (P8, found while building `GET /api/v1/history`)
+- **Status:** **Proposed.** Awaiting product-owner input. `/history` serves `EQ_COUNT` and `GDACS_CONTEXT`; `FIRE_TREND` answers `INSUFFICIENT_COVERAGE` and says why.
+- **Context — §8.2 labels `FIRE_TREND` P0, and the data it reads does not exist.**
+
+  `FIRE_TREND` compares the last 7 days of thermal detections within 100 km with the 28 before them, per covered day. That is 35 days of daily counts. On the lean profile (DOMAIN_MODEL §6.7) raw `fire_detections` are kept for **72 hours** and `fire_cluster_versions` for **30 days**, so neither can answer. The design's answer is `fire_daily_cells`, "a compact long-term aggregate for fire trends, surviving detection retention" (migration 0005), kept 400 days. Two things stand in the way:
+
+  1. **Nothing writes it.** No repository, pipeline step or worker job populates `fire_daily_cells`; the table has been empty since it was created.
+  2. **It has no knowledge time.** A day's count grows as late overpasses are ingested, and the table's only key is `(cell_id, day, product_group)` with `n` updated in place. A replay reading it would see the day as it is *now*, which is the leak invariant I2 forbids — the same shape as ADR-039's `cluster_id`.
+
+- **Alternatives:**
+  - *Serve the trend from raw detections within retention* — rejected. 72 hours cannot hold a 7-day window, let alone the 28 before it.
+  - *Serve it from cluster summaries* — rejected. `n_24h` and `n_total` per version would let daily counts be reconstructed, but only for 30 days, and only for detections that were clustered.
+  - *Write the aggregate in place and accept the replay leak* — rejected; it is the failure the as-of layer exists to prevent.
+  - **Recommended: an append-only daily aggregate, written once per day when that day is complete.**
+
+    1. A worker step, after each FIRMS ingestion, writes the rows for every day that has become *final* — the UTC day is over and the NRT latency window has passed for every product in the group — with `computed_at` (knowledge time) in a new column. A final day is never rewritten; a correction is a new row with a later `computed_at`.
+    2. Reads take the latest row per `(cell, day, group)` with `computed_at <= T`, exactly as `observationsAsOf` does for versions.
+    3. The last one or two non-final days are read from raw detections, which are within retention and carry `ingested_at`.
+
+    One additive migration (a `computed_at` column and a key including it), one pipeline step and one as-of read. Until the aggregate has 35 final days the trend is `INSUFFICIENT_COVERAGE`, which is the honest state of a new deployment anyway.
+
+- **Until this is decided**, `/history?family=FIRE_ACTIVITY&metric=FIRE_TREND` answers `200` with `status: INSUFFICIENT_COVERAGE`, no series and no band, and an interpretation that states the data is not held — never a trend computed from nothing, and never "stable".
+- **Relation to ADR-039:** both are the same defect in the fire tables — a derived value keyed without the knowledge time it became true. Deciding them together would let one migration fix both.

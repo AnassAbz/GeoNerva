@@ -77,6 +77,7 @@ describe('ENDPOINT_CONTRACTS', () => {
       '/api/v1/events/{publicId}',
       '/api/v1/evidence/{id}',
       '/api/v1/fire-clusters/{publicId}',
+      '/api/v1/history',
       '/api/v1/places/reverse',
       '/api/v1/places/search',
       '/api/v1/places/suggest',
@@ -92,6 +93,7 @@ describe('ENDPOINT_CONTRACTS', () => {
     expect(contractFor('/api/v1/sources/status')?.rateLimit).toBe('default');
     expect(contractFor('/api/v1/evidence/{id}')?.rateLimit).toBe('default');
     expect(contractFor('/api/v1/events')?.rateLimit).toBe('default');
+    expect(contractFor('/api/v1/history')?.rateLimit).toBe('default');
   });
 
   it('returns undefined for a path outside §13.1', () => {

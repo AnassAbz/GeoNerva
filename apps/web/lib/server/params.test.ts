@@ -22,6 +22,7 @@ import {
   parseAsOf,
   parseFamilies,
   parseFiniteNumber,
+  parseHistory,
   parseLimit,
   parseLocation,
   parsePublicId,
@@ -743,5 +744,75 @@ describe('parseViewport', () => {
     it('lifts the cap at zoom 4', () => {
       expect(viewport('-45,0,22.5,45', '4').zoom).toBe(4);
     });
+  });
+});
+
+describe('parseHistory', () => {
+  function invalidParamOf(query: string): { name: string; reason: string } | undefined {
+    try {
+      parseHistory(params(query));
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiProblemError);
+      return (error as ApiProblemError).problem.invalidParams?.[0];
+    }
+    throw new Error(`expected ${query} to be refused`);
+  }
+
+  it("defaults to the family's primary metric and that metric's default radius", () => {
+    expect(parseHistory(params('family=EARTHQUAKES'))).toEqual({
+      family: 'EARTHQUAKES',
+      metric: 'EQ_COUNT_7D',
+      radiusKm: 150,
+    });
+    expect(parseHistory(params('family=FLOODS'))).toEqual({
+      family: 'FLOODS',
+      metric: 'GDACS_CONTEXT',
+      radiusKm: 300,
+    });
+    expect(parseHistory(params('family=FIRE_ACTIVITY'))).toEqual({
+      family: 'FIRE_ACTIVITY',
+      metric: 'FIRE_TREND',
+      radiusKm: 100,
+    });
+  });
+
+  it('accepts each calibrated radius and the secondary window', () => {
+    for (const radius of [50, 150, 300]) {
+      expect(
+        parseHistory(params(`family=EARTHQUAKES&metric=EQ_COUNT_30D&radius_km=${String(radius)}`)),
+      ).toEqual({ family: 'EARTHQUAKES', metric: 'EQ_COUNT_30D', radiusKm: radius });
+    }
+  });
+
+  it('requires a family, rather than defaulting a typo to earthquakes', () => {
+    expect(invalidParamOf('')?.name).toBe('family');
+    expect(invalidParamOf('family=earthquakes')?.name).toBe('family');
+  });
+
+  it('refuses a family with no historical metric', () => {
+    expect(invalidParamOf('family=WEATHER_ALERTS')).toEqual({
+      name: 'family',
+      reason: 'has no historical metric yet',
+    });
+  });
+
+  it('refuses a metric that belongs to another family', () => {
+    expect(invalidParamOf('family=FLOODS&metric=EQ_COUNT_7D')?.name).toBe('metric');
+    expect(invalidParamOf('family=EARTHQUAKES&metric=GDACS_CONTEXT')?.name).toBe('metric');
+  });
+
+  it('refuses any radius the metric was not calibrated for, never rounding to one', () => {
+    for (const radius of ['151', '0', '-150', '150.0', '1e2', '', '3000', 'abc']) {
+      expect(invalidParamOf(`family=EARTHQUAKES&radius_km=${radius}`), radius).toEqual({
+        name: 'radius_km',
+        reason: 'must be one of: 50, 150, 300',
+      });
+    }
+    expect(invalidParamOf('family=FLOODS&radius_km=150')?.name).toBe('radius_km');
+  });
+
+  it('does not echo a submitted value', () => {
+    expect(JSON.stringify(invalidParamOf('family=EARTHQUAKES&radius_km=987'))).not.toContain('987');
+    expect(JSON.stringify(invalidParamOf('family=xyzzy'))).not.toContain('xyzzy');
   });
 });

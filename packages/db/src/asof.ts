@@ -1868,3 +1868,4 @@ export async function correlationEvidenceAsOf(
  * this layer and reach callers only through this entry point, like everything above.
  */
 export * from './asof-detail.ts';
+export * from './asof-history.ts';

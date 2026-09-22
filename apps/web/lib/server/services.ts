@@ -38,6 +38,7 @@ import {
   buildBriefing,
   buildEventDetail,
   buildFireClusterDetail,
+  buildHistory,
   buildMapFeatures,
   replayHorizonFor,
   type BriefingBuild,
@@ -73,6 +74,7 @@ import {
   type EventDetail,
   type EvidenceId,
   type FireClusterDetail,
+  type HistoryResponse,
   type HazardFamily,
   type LocationBriefing,
   type LocationRef,
@@ -90,7 +92,7 @@ import {
   runPayload,
   toEvidenceItem,
 } from './evidence-view.ts';
-import type { LocationParam, ViewportParam } from './params.ts';
+import type { HistoryParam, LocationParam, ViewportParam } from './params.ts';
 import { ApiProblemError } from './problem.ts';
 import { buildSourceStatus, evidenceIdsFor } from './source-status.ts';
 
@@ -511,6 +513,32 @@ function assertWithinHorizon(asOf: Date, now: Date): void {
       'That time is outside the window GeoNerva still holds data for. This is a retention limit, not an absence of hazards.',
     earliestAsOf: new Date(earliest).toISOString(),
     affectedFamilies: beyond,
+  });
+}
+
+export interface HistoryRequest {
+  readonly location: LocationParam;
+  readonly history: HistoryParam;
+  readonly now: Date;
+}
+
+/**
+ * `GET /api/v1/history`.
+ *
+ * §13.1 gives this endpoint no `as_of`: it answers for the present, built as of `now` through the
+ * same as-of readers a replay uses, so the answer an hour later is the answer a replay of that
+ * hour would give. The statistics are `@geonerva/baselines`' and nothing here recomputes them.
+ */
+export async function getHistory(db: Kysely, request: HistoryRequest): Promise<HistoryResponse> {
+  const location = await resolveLocation(db, request.location);
+  return await buildHistory({
+    db,
+    location,
+    family: request.history.family,
+    metric: request.history.metric,
+    radiusKm: request.history.radiusKm,
+    asOf: request.now,
+    retentionProfile: RETENTION_PROFILE,
   });
 }
 

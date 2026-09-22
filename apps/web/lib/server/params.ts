@@ -64,6 +64,8 @@ import {
   type InvalidParam,
 } from '@geonerva/domain';
 
+import { metricsFor, radiiFor, type HistoryMetric } from '@geonerva/briefing';
+
 import { ApiProblemError } from './problem.ts';
 
 /** §13.2: "String params are length-capped." */
@@ -576,3 +578,50 @@ export function parseViewport(search: URLSearchParams): ViewportParam {
 
 /** Re-exported so callers do not import the rounding rule from two places. */
 export { USER_COORDINATE_DECIMALS };
+
+export interface HistoryParam {
+  readonly family: HazardFamily;
+  readonly metric: HistoryMetric;
+  readonly radiusKm: number;
+}
+
+/**
+ * `family`, `metric` and `radius_km` for `/history` (§13.1).
+ *
+ * `family` is required: a chart is always of one family, and defaulting it would give a caller who
+ * mistyped the name an earthquake chart instead of an error. `metric` and `radius_km` default to
+ * the family's primary metric and that metric's default radius (§8.1: 150 km), and anything else
+ * must be one of the values the metric was calibrated for — a radius of 151 km is a 400, never a
+ * silently different baseline.
+ */
+export function parseHistory(search: URLSearchParams): HistoryParam {
+  const rawFamily = search.get('family');
+  if (rawFamily === null || !(HAZARD_FAMILIES as readonly string[]).includes(rawFamily)) {
+    return invalid('family', `is required and must be one of: ${HAZARD_FAMILIES.join(', ')}`);
+  }
+  const family = rawFamily as HazardFamily;
+  const offered = metricsFor(family);
+  const metric = (search.get('metric') ?? offered[0]) as HistoryMetric | undefined;
+  if (metric === undefined) return invalid('family', 'has no historical metric yet');
+  if (!(offered as readonly string[]).includes(metric)) {
+    return invalid('metric', `must be one of: ${offered.join(', ')}`);
+  }
+
+  const radii = radiiFor(metric);
+  const rawRadius = search.get('radius_km');
+  const radiusKm =
+    rawRadius === null ? radii[0] : /^\d{1,3}$/u.test(rawRadius) ? Number(rawRadius) : null;
+  if (radiusKm === undefined || radiusKm === null || !radii.includes(radiusKm)) {
+    return invalid('radius_km', `must be one of: ${[...radii].sort((a, b) => a - b).join(', ')}`);
+  }
+  return { family, metric, radiusKm };
+}
+
+/** One failed parameter, reported the way `ParamCollector` reports several. */
+function invalid(name: string, reason: string): never {
+  throw new ApiProblemError({
+    code: 'VALIDATION_FAILED',
+    detail: 'One or more parameters did not satisfy the documented rules.',
+    invalidParams: [{ name, reason }],
+  });
+}

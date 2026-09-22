@@ -18,6 +18,7 @@ import {
   eventDetailSchema,
   evidenceDetailSchema,
   fireClusterDetailSchema,
+  historyResponseSchema,
   locationBriefingSchema,
   placeSearchResponseSchema,
   placeSuggestResponseSchema,
@@ -98,11 +99,10 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
   {
     path: '/api/v1/history',
     summary: 'Baseline metrics and the time series behind the charts.',
-    response: null,
+    response: historyResponseSchema,
     rateLimit: 'default',
     cache: [CACHE_POLICIES.history],
-    implemented: false,
-    blockedBy: '`packages/baselines` is an empty stub: there are no baseline metrics to serve.',
+    implemented: true,
   },
   {
     path: '/api/v1/places/suggest',

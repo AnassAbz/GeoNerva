@@ -144,6 +144,15 @@ import type {
   FireDetectionView,
 } from './fire-cluster-detail.ts';
 import type {
+  HistoryResponse,
+  LargestRecentView,
+  RarityStatementView,
+  ReferenceBandsView,
+  SequenceContextView,
+  TimeSeriesPoint,
+  TimeSeriesView,
+} from './history-response.ts';
+import type {
   MapFeature,
   MapFeaturesResponse,
   PlaceSearchResponse,
@@ -1592,4 +1601,151 @@ export const placeSearchResponseSchema = z.object({
 });
 export type PlaceSearchResponseMatches = Expect<
   Exact<z.infer<typeof placeSearchResponseSchema>, PlaceSearchResponse>
+>;
+
+/*
+ * ── History ────────────────────────────────────────────────────────────────────
+ *
+ * The contract's three rules, as refinements: reference bands exist exactly when the metric's
+ * status is `OK`, a rarity statement exactly when it is `RARE_ACTIVITY`, and every citation is in
+ * the manifest (I9). A percentile beside `INSUFFICIENT_HISTORY` would be the statistic §8 says to
+ * refuse.
+ */
+
+export const timeSeriesPointSchema = z
+  .object({
+    t: isoTimestamp,
+    value: z.number().nullable(),
+    missingReason: z.string().nullable(),
+  })
+  .refine((point) => (point.value === null) === (point.missingReason !== null), {
+    message: 'a missing value carries its reason, and a present one carries none',
+    path: ['missingReason'],
+  });
+export type TimeSeriesPointMatches = Expect<
+  Exact<z.infer<typeof timeSeriesPointSchema>, TimeSeriesPoint>
+>;
+
+export const timeSeriesViewSchema = z.object({
+  code: z.string().min(1),
+  label: z.string().min(1),
+  unit: z.string().nullable(),
+  bucketDays: z.number().int().positive(),
+  points: z.array(timeSeriesPointSchema),
+});
+export type TimeSeriesViewMatches = Expect<
+  Exact<z.infer<typeof timeSeriesViewSchema>, TimeSeriesView>
+>;
+
+export const referenceBandsViewSchema = z.object({
+  windowDays: z.number().int().positive(),
+  nWindows: z.number().int().nonnegative(),
+  nEvents: z.number().int().nonnegative(),
+  referenceFrom: isoTimestamp,
+  referenceTo: isoTimestamp,
+  p25: z.number(),
+  median: z.number(),
+  p75: z.number(),
+  p90: z.number(),
+  p95: z.number(),
+  mean: z.number(),
+  evidenceIds: z.array(evidenceId),
+});
+export type ReferenceBandsViewMatches = Expect<
+  Exact<z.infer<typeof referenceBandsViewSchema>, ReferenceBandsView>
+>;
+
+export const rarityStatementViewSchema = z.object({
+  nEvents: z.number().int().nonnegative(),
+  sinceYear: z.number().int(),
+  radiusKm: z.number().positive(),
+  thresholdLabel: z.string().min(1),
+  text: z.string().min(1),
+  evidenceIds: z.array(evidenceId),
+});
+export type RarityStatementViewMatches = Expect<
+  Exact<z.infer<typeof rarityStatementViewSchema>, RarityStatementView>
+>;
+
+export const largestRecentViewSchema = z.object({
+  value: factValueSchema,
+  observedAt: isoTimestamp,
+  subjectPublicId: z.string().nullable(),
+  comparisonSince: isoTimestamp,
+  text: z.string().min(1),
+  evidenceIds: z.array(evidenceId),
+});
+export type LargestRecentViewMatches = Expect<
+  Exact<z.infer<typeof largestRecentViewSchema>, LargestRecentView>
+>;
+
+export const sequenceContextViewSchema = z.object({
+  triggerPublicId: z.string().min(1),
+  triggerValue: factValueSchema,
+  triggerObservedAt: isoTimestamp,
+  text: z.string().min(1),
+  caveat: z.string().min(1),
+  evidenceIds: z.array(evidenceId),
+});
+export type SequenceContextViewMatches = Expect<
+  Exact<z.infer<typeof sequenceContextViewSchema>, SequenceContextView>
+>;
+
+/** `GET /api/v1/history`. */
+export const historyResponseSchema = z
+  .object({
+    schemaVersion,
+    location: locationRefSchema,
+    family: z.enum(HAZARD_FAMILIES),
+    metricCode: z.string().min(1),
+    asOfContext: asOfContextSchema,
+    metric: baselineMetricViewSchema,
+    series: z.array(timeSeriesViewSchema),
+    referenceBands: referenceBandsViewSchema.nullable(),
+    rarity: rarityStatementViewSchema.nullable(),
+    largestRecent: largestRecentViewSchema.nullable(),
+    sequenceContext: sequenceContextViewSchema.nullable(),
+    completenessStatement: z.string().nullable(),
+    caveats: z.array(z.string()),
+    methodologyHref: z.string().regex(/^\/methodology(?:#[a-z0-9-]+)?$/u),
+    evidenceManifest: z.array(evidenceItemSchema),
+    attribution: z.array(attributionSchema),
+  })
+  .superRefine((history, ctx) => {
+    requireManifestCoverage(history, ctx);
+    const ok = history.metric.status === 'OK';
+    if (ok !== (history.metric.reference !== null) || ok !== (history.referenceBands !== null)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['referenceBands'],
+        message: 'a reference distribution exists exactly when the metric status is OK',
+      });
+    }
+    if (!ok && (history.metric.percentile !== null || history.metric.band !== null)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['metric', 'percentile'],
+        message: 'a percentile or band without a supportable reference is the statistic §8 refuses',
+      });
+    }
+    if ((history.metric.status === 'RARE_ACTIVITY') !== (history.rarity !== null)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['rarity'],
+        message: 'a rarity statement exists exactly when the status is RARE_ACTIVITY',
+      });
+    }
+    if (
+      history.metricCode !== history.metric.metricCode ||
+      history.family !== history.metric.family
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['metricCode'],
+        message: 'the response and its metric must name the same metric and family',
+      });
+    }
+  });
+export type HistoryResponseMatches = Expect<
+  Exact<z.infer<typeof historyResponseSchema>, HistoryResponse>
 >;

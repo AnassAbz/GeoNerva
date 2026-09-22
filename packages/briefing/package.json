@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@geonerva/baselines": "workspace:*",
     "@geonerva/changes": "workspace:*",
     "@geonerva/correlation": "workspace:*",
     "@geonerva/db": "workspace:*",

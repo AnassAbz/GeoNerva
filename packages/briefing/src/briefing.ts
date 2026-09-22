@@ -484,8 +484,10 @@ export async function resolveEvidenceManifest(
   db: BuildSnapshotOptions['db'],
   asOf: Date,
   ids: readonly EvidenceId[],
+  /** Content-addressed ids this response computed itself — a baseline's `EV:BAS:`, say. */
+  minted: ReadonlySet<EvidenceId> = new Set(),
 ): Promise<EvidenceItem[]> {
-  return await resolveManifest(db, asOf, [...new Set(ids)], new Set());
+  return await resolveManifest(db, asOf, [...new Set(ids)], minted);
 }
 
 function toEvidenceItem(row: EvidenceRow): EvidenceItem {
