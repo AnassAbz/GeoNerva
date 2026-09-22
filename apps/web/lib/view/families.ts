@@ -3,6 +3,7 @@
  * shape + pattern + colour the map and legend use (docs/PRODUCT.md §6.2, §6.5).
  */
 
+import { EARTHQUAKE_BASELINE, FIRE_TREND, GDACS_CONTEXT } from '@geonerva/baselines';
 import type { HazardFamily } from '@geonerva/domain';
 
 import { PALETTE } from './palette.ts';
@@ -104,13 +105,18 @@ export const MAPPED_FAMILIES: readonly HazardFamily[] = FAMILY_ORDER.filter(
 );
 
 /**
- * Radius rings drawn around the location, per family, in km: the radius each family's context
- * is computed over (baselines and relevance bands). P9b takes these from the exported configs.
+ * Radius rings drawn around the location, per family, in km: the radius each family's context is
+ * computed over.
+ *
+ * Every value is the exported constant the engine itself uses, so a ring on the map and the
+ * radius `/methodology` states are the same number by construction rather than by agreement. The
+ * three GDACS families share `GDACS_CONTEXT.radiusKm` because that is the one radius their context
+ * metric is counted over (ARCHITECTURE §8.3).
  */
 export const FAMILY_RING_KM: Readonly<Partial<Record<HazardFamily, number>>> = {
-  EARTHQUAKES: 150,
-  FIRE_ACTIVITY: 100,
-  FLOODS: 300,
-  CYCLONES: 300,
-  OTHER: 300,
+  EARTHQUAKES: EARTHQUAKE_BASELINE.defaultRadiusKm,
+  FIRE_ACTIVITY: FIRE_TREND.radiusKm,
+  FLOODS: GDACS_CONTEXT.radiusKm,
+  CYCLONES: GDACS_CONTEXT.radiusKm,
+  OTHER: GDACS_CONTEXT.radiusKm,
 };
