@@ -7,9 +7,13 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./scenarios": "./scenarios/index.ts",
     "./sources/*": "./sources/*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@geonerva/db": "workspace:*"
   }
 }

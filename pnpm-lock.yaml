@@ -175,6 +175,9 @@ importers:
       '@geonerva/db':
         specifier: workspace:*
         version: link:packages/db
+      '@geonerva/test-fixtures':
+        specifier: workspace:*
+        version: link:packages/test-fixtures
       '@types/node':
         specifier: 24.13.5
         version: 24.13.5
@@ -217,12 +220,21 @@ importers:
 
   apps/web:
     dependencies:
+      '@geonerva/baselines':
+        specifier: workspace:*
+        version: link:../../packages/baselines
       '@geonerva/briefing':
         specifier: workspace:*
         version: link:../../packages/briefing
+      '@geonerva/changes':
+        specifier: workspace:*
+        version: link:../../packages/changes
       '@geonerva/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@geonerva/correlation':
+        specifier: workspace:*
+        version: link:../../packages/correlation
       '@geonerva/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -232,6 +244,9 @@ importers:
       '@geonerva/geocoding':
         specifier: workspace:*
         version: link:../../packages/geocoding
+      '@geonerva/relevance':
+        specifier: workspace:*
+        version: link:../../packages/relevance
       '@vis.gl/react-maplibre':
         specifier: 8.1.3
         version: 8.1.3(maplibre-gl@6.10.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -344,6 +359,9 @@ importers:
         specifier: workspace:*
         version: link:../relevance
     devDependencies:
+      '@geonerva/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
       kysely:
         specifier: 0.29.6
         version: 0.29.6
@@ -473,7 +491,11 @@ importers:
         specifier: workspace:*
         version: link:../test-fixtures
 
-  packages/test-fixtures: {}
+  packages/test-fixtures:
+    dependencies:
+      '@geonerva/db':
+        specifier: workspace:*
+        version: link:../db
 
 packages:
 

@@ -21,6 +21,7 @@
     "@geonerva/relevance": "workspace:*"
   },
   "devDependencies": {
+    "@geonerva/test-fixtures": "workspace:*",
     "kysely": "0.29.6"
   }
 }

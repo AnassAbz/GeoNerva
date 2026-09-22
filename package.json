@@ -27,13 +27,16 @@
     "db:up": "docker compose -f infra/docker-compose.yml up -d --wait db",
     "db:down": "docker compose -f infra/docker-compose.yml down",
     "db:check": "node scripts/db-check.ts",
+    "db:codegen": "node scripts/db-codegen.ts",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm depcruise && pnpm test:unit && pnpm test:components",
-    "build:canary": "node scripts/check-bundle-secrets.ts"
+    "build:canary": "node scripts/check-bundle-secrets.ts",
+    "db:seed:scenario": "node scripts/seed-scenario.ts"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
     "@geonerva/config": "workspace:*",
     "@geonerva/db": "workspace:*",
+    "@geonerva/test-fixtures": "workspace:*",
     "@types/node": "24.13.5",
     "@types/pg": "8.23.1",
     "dependency-cruiser": "18.3.1",
