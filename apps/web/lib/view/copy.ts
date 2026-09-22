@@ -728,6 +728,56 @@ export const COPY = {
     body: 'GeoNerva has no page at this address.',
     home: 'Go to the home page',
   },
+  /**
+   * What a route's skeleton announces while its data is being read.
+   *
+   * One sentence per route, naming the subject rather than the mechanism: a reader who cannot see
+   * the grey shapes learns which page is arriving, and nothing here states a value.
+   */
+  loading: {
+    briefing: 'Loading the briefing for this place…',
+    event: 'Loading this event…',
+    fire: 'Loading this fire activity cluster…',
+    dataStatus: 'Loading the health of every source…',
+  },
+  /**
+   * What a failed boundary says (PRODUCT §7).
+   *
+   * Two rules shape every sentence here. **A failure is GeoNerva's, and is said to be GeoNerva's**
+   * — never the reader's doing, and never a bare "something went wrong", which tells a reader
+   * nothing they can act on. **A failure is not an absence**: §6.7's distinction between "no data"
+   * and "no hazard" is exactly what a blank page destroys, so each body says what the blankness
+   * does *not* mean before it offers the retry.
+   *
+   * `retention*` is the one block that is not an error at all. `AS_OF_BEFORE_HORIZON` means the
+   * records for that instant were not kept that long (ADR-035), which is a fact about retention;
+   * wording it as a fault, or rendering it as a 404, would tell the reader something untrue about
+   * both GeoNerva and the past.
+   */
+  failure: {
+    retry: 'Try again',
+    home: 'Go to the home page',
+    dataStatusLink: 'See the health of every source',
+    pageTitle: 'This page could not be loaded',
+    pageBody:
+      'GeoNerva could not build this page just now. The fault is on GeoNerva’s side. Try again in a moment.',
+    briefingTitle: 'This briefing could not be loaded',
+    briefingBody:
+      'GeoNerva could not assemble the briefing for this place just now. The fault is on GeoNerva’s side; this is not an absence of hazard data and must not be read as a quiet place. Try again in a moment.',
+    eventTitle: 'This event could not be loaded',
+    eventBody:
+      'GeoNerva could not read this event just now. The fault is on GeoNerva’s side, and it is not a statement that the sources stopped reporting the event. Try again in a moment.',
+    fireTitle: 'This fire activity cluster could not be loaded',
+    fireBody:
+      'GeoNerva could not read this fire activity cluster just now. The fault is on GeoNerva’s side, and it is not a statement about what the satellites detected. Try again in a moment.',
+    dataStatusTitle: 'The data status could not be loaded',
+    dataStatusBody:
+      'GeoNerva could not read the health of its own sources just now. Until this page loads, treat every source’s freshness as unknown rather than current. Try again in a moment.',
+    retentionTitle: 'That time is outside what GeoNerva still holds',
+    retentionBody:
+      'GeoNerva did not keep the records that far back, so it cannot show what it knew at that moment. That is a limit on how long data is kept — not a gap in what happened, and not a mistake in what you asked for.',
+    retentionExit: 'Return to the present',
+  },
   families: {
     unavailableTitle: 'Data unavailable',
     notCoveredTitle: 'Not covered',

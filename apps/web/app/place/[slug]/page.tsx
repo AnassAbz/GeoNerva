@@ -6,7 +6,12 @@
  * is two columns with a sticky map on the right; mobile is one column in that order.
  */
 
-import type { HazardFamily, SubjectSummary } from '@geonerva/domain';
+import type {
+  HazardFamily,
+  HistoryResponse,
+  LocationBriefing,
+  SubjectSummary,
+} from '@geonerva/domain';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
@@ -18,6 +23,7 @@ import { NearbyTable, type NearbyRow } from '../../../components/nearby-table.ts
 import { ReplayBanner } from '../../../components/replay-banner.tsx';
 import { SituationStrip } from '../../../components/situation-strip.tsx';
 import { AttributionList, SourceHealthList } from '../../../components/source-health.tsx';
+import { FAILURE_ACTION_CLASS, FailureNotice } from '../../../components/ui/failure-notice.tsx';
 import { WhatChanged, type SubjectContext } from '../../../components/what-changed.tsx';
 import { parseMapStyleUrl } from '../../../lib/map-style.ts';
 import { COPY } from '../../../lib/view/copy.ts';
@@ -27,8 +33,10 @@ import {
   getHistories,
   getMapFeatures,
   getNow,
+  type BriefingQuery,
 } from '../../../lib/view/data.ts';
 import { FAMILY_ORDER } from '../../../lib/view/families.ts';
+import { failureKind } from '../../../lib/view/failure.ts';
 import { WINDOW_LABEL, formatAgo, formatClock } from '../../../lib/view/format.ts';
 import {
   PAGE_WINDOWS,
@@ -53,6 +61,42 @@ function isHighOrAbove(item: SubjectSummary): boolean {
   return item.relevance.level === 'HIGH' || item.relevance.level === 'CRITICAL';
 }
 
+/**
+ * The dashboard's first two reads, with a retention refusal separated from a failure **here**,
+ * on the server.
+ *
+ * `error.tsx` would be the natural home for it and cannot be: Next redacts a server component's
+ * error message before it reaches a client error boundary in a production build, replacing it with
+ * a fixed sentence and a digest. A boundary therefore cannot tell `AS_OF_BEFORE_HORIZON` from a
+ * database failure in the build that ships, and ADR-035 — retention loss is reported, never
+ * rendered as an absence — is a rule about what the reader is told, not about which file tells
+ * them. On this side of the boundary the error is still itself, so the refusal is classified where
+ * it is legible and the page renders the explanation as its own content, with a 200 and a way back
+ * to the present. `error.tsx` keeps the same wording for the development build and for a refusal
+ * raised by the reads that happen after this one.
+ *
+ * Everything that is not that refusal is rethrown, including Next's own control-flow signals,
+ * which `failureKind` classifies as `UNEXPECTED` and never swallows.
+ */
+async function loadBriefing(
+  slug: string,
+  query: BriefingQuery,
+): Promise<
+  | 'RETENTION'
+  | { readonly briefing: LocationBriefing | null; readonly histories: readonly HistoryResponse[] }
+> {
+  try {
+    const [briefing, histories] = await Promise.all([
+      getBriefing(slug, query),
+      getHistories(slug, query),
+    ]);
+    return { briefing, histories };
+  } catch (error) {
+    if (failureKind(error) !== 'RETENTION') throw error;
+    return 'RETENTION';
+  }
+}
+
 export default async function PlacePage({ params, searchParams }: PageProps) {
   const { slug } = await params;
   const search = await searchParams;
@@ -61,10 +105,17 @@ export default async function PlacePage({ params, searchParams }: PageProps) {
   const asOf = parseAsOfParam(search['as_of'], now);
   const query = { window, ...(asOf === undefined ? {} : { asOf }) };
 
-  const [briefing, histories] = await Promise.all([
-    getBriefing(slug, query),
-    getHistories(slug, query),
-  ]);
+  const loaded = await loadBriefing(slug, query);
+  if (loaded === 'RETENTION') {
+    return (
+      <FailureNotice title={COPY.failure.retentionTitle} body={COPY.failure.retentionBody}>
+        <a href={placeHref(slug, { window })} className={FAILURE_ACTION_CLASS}>
+          {COPY.failure.retentionExit}
+        </a>
+      </FailureNotice>
+    );
+  }
+  const { briefing, histories } = loaded;
   if (briefing === null) notFound();
 
   const { location, snapshot, changes } = briefing;
