@@ -1,14 +1,89 @@
 @import 'tailwindcss';
 
 /*
- * Design tokens are introduced by the Frontend phase (P9a). Until then only the base
- * colour scheme is set so the placeholder page is legible in light and dark mode.
+ * GeoNerva design tokens (P9a). A dark, restrained palette; every text pairing meets WCAG AA
+ * (checked by lib/view/palette.test.ts, which also checks that these values match
+ * lib/view/palette.ts — the map reads the same colours from there).
+ *
+ * Family colours (docs/PRODUCT.md §6.5): amber earthquakes, orange fire activity, blue floods,
+ * violet cyclones; red is reserved for CRITICAL. Colour never carries meaning alone.
  */
-:root {
-  color-scheme: dark light;
+@theme {
+  --color-canvas: #0b0f14;
+  --color-surface: #121821;
+  --color-raised: #1a2230;
+  --color-line: #2c3748;
+  --color-fg: #e6edf3;
+  --color-fg-muted: #b3bfcc;
+  --color-fg-subtle: #95a3b3;
+  --color-link: #8cc8ff;
+  --color-focus: #ffd166;
+
+  --color-eq: #f2b233;
+  --color-fire: #ff8a3d;
+  --color-flood: #5aa9ff;
+  --color-cyclone: #b69cff;
+  --color-other: #4fd1c5;
+  --color-weather: #a3b1c2;
+  --color-critical: #ff5c5c;
+
+  --color-fresh: #5fd38d;
+  --color-degraded: #f2cc60;
+  --color-stale: #ffa36c;
+  --color-unavailable: #c9d1db;
+
+  --color-rel-low: #a3b1c2;
+  --color-rel-moderate: #f2cc60;
+  --color-rel-high: #ff9b6a;
+  --color-rel-critical: #ff5c5c;
+
+  --color-derived: #9fc5ff;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
 }
 
-body {
-  background: #0b0f14;
-  color: #e6edf3;
+/*
+ * Base styles live in the base layer so that utilities (e.g. `no-underline`, `text-fg`) still win.
+ * Links are underlined: inside running text they must not be told apart by colour alone.
+ */
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--color-canvas);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+  }
+
+  a {
+    color: var(--color-link);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  /* A visible focus ring on every interactive element, never removed. */
+  :focus-visible {
+    outline: 3px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+}
+
+/* No flashing, no sweeps: honour reduced motion everywhere (docs/PRODUCT.md §6.5). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
 }

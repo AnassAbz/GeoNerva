@@ -1,9 +1,10 @@
 import { defineConfig } from 'vitest/config';
 
 /**
- * Two test projects (docs/TESTING.md §1):
+ * Three test projects (docs/TESTING.md §1):
  *  - unit:        pure, fast, no network, no database   (*.test.ts)
  *  - integration: real PostGIS via DATABASE_URL_TEST    (*.int.test.ts), run serially
+ *  - components:  apps/web React components in jsdom   (*.test.tsx), no network, no WebGL
  * E2E lives in apps/web (Playwright) and is not run by Vitest.
  */
 export default defineConfig({
@@ -48,6 +49,20 @@ export default defineConfig({
            * hook.
            */
           hookTimeout: 120_000,
+        },
+      },
+      {
+        /*
+         * Rooted at `apps/web` so that jsdom and Testing Library resolve from the web app's own
+         * dependencies rather than from the workspace root.
+         */
+        root: 'apps/web',
+        test: {
+          name: 'components',
+          environment: 'jsdom',
+          include: ['**/*.test.tsx'],
+          exclude: ['**/node_modules/**', '**/.next/**', 'e2e/**'],
+          setupFiles: ['./test/setup-components.ts'],
         },
       },
     ],
