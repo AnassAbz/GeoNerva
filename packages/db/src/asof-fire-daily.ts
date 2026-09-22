@@ -4,6 +4,8 @@
 
 import { sql, type Kysely } from 'kysely';
 
+import { FIRE_GRID } from '@geonerva/domain';
+
 import type { DB } from './generated/database.ts';
 
 /** One UTC day of the trend: what was read, and how much was detected within the radius. */
@@ -51,8 +53,8 @@ export async function fireProductsActiveThroughout(
  * `computed_at <= asOf`. A day counts as covered only when **every** feed recorded it `COVERED`:
  * one sensor's missing day is not a quiet day for the group.
  *
- * Cells are included when their centre lies within the radius. The grid is 0.25° (about 28 km at
- * the equator), so the edge of the circle is approximate by up to half a cell; the trend compares
+ * Cells are included when their centre lies within the radius, on `FIRE_GRID`'s one definition of
+ * that grid, so the edge of the circle is approximate by up to half a cell; the trend compares
  * one place with its own past through the same cells, which is what makes that acceptable.
  */
 export async function fireDailyAsOf(
@@ -87,8 +89,10 @@ export async function fireDailyAsOf(
         AND n.day BETWEEN ${options.from}::date AND ${options.to}::date
         AND ST_DWithin(
               ST_SetSRID(ST_MakePoint(
-                (n.cell_id % 1440) * 0.25 - 180 + 0.125,
-                (n.cell_id / 1440) * 0.25 - 90 + 0.125
+                (n.cell_id % ${sql.lit(FIRE_GRID.columns)}) * ${sql.lit(FIRE_GRID.degrees)}
+                  - 180 + ${sql.lit(FIRE_GRID.degrees / 2)},
+                (n.cell_id / ${sql.lit(FIRE_GRID.columns)}) * ${sql.lit(FIRE_GRID.degrees)}
+                  - 90 + ${sql.lit(FIRE_GRID.degrees / 2)}
               ), 4326)::geography,
               ST_SetSRID(ST_MakePoint(${options.point.lon}, ${options.point.lat}), 4326)::geography,
               ${options.radiusM})

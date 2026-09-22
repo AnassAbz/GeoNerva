@@ -141,3 +141,44 @@ export const radiusMetersSchema = z
   .int()
   .positive()
   .max(MAX_SEARCH_RADIUS_M, { message: 'exceeds the maximum search radius' });
+
+/**
+ * The regular lat/lon grid the fire aggregate counts on (ADR-011, ADR-040).
+ *
+ * It lives here, in the domain, rather than in `packages/geo` with the geodesy, for one practical
+ * reason: `packages/db` may depend on `domain` and `config` only, and the grid's arithmetic has to
+ * be spelled in SQL — `fire_daily_counts.cell_id` is computed by the writer and decomposed again
+ * by the as-of read. Three copies of `0.25` in two SQL strings is a silent disagreement waiting to
+ * happen: if the writer and the reader ever used different cell sizes, detections would be counted
+ * into cells the radius filter then measured in the wrong place, and nothing would fail loudly.
+ * One definition, interpolated into both queries and mirrored by the two functions below, which
+ * the tests check against the database's own answer.
+ *
+ * It is not geodesy: equal-area cells are unnecessary because a baseline compares a location with
+ * its own past through the same cells (ARCHITECTURE §7.6).
+ */
+export const FIRE_GRID = {
+  /** Cell size in degrees. 0.25° is about 28 km of longitude at the equator, less towards a pole. */
+  degrees: 0.25,
+  /** Columns in a row: 360° / 0.25°. `cell_id = row * columns + column`. */
+  columns: 1440,
+} as const;
+
+/** The grid cell a position falls in, identically to the SQL in `packages/db`. */
+export function fireCellId(point: LatLon): number {
+  const row = Math.floor((point.lat + 90) / FIRE_GRID.degrees);
+  const column = Math.floor((point.lon + 180) / FIRE_GRID.degrees);
+  return row * FIRE_GRID.columns + column;
+}
+
+/**
+ * The centre of a cell — the point a radius is measured to, which is why the edge of a circle is
+ * approximate by up to half a cell.
+ */
+export function fireCellCentre(cellId: number): LatLon {
+  const half = FIRE_GRID.degrees / 2;
+  return {
+    lat: Math.floor(cellId / FIRE_GRID.columns) * FIRE_GRID.degrees - 90 + half,
+    lon: (cellId % FIRE_GRID.columns) * FIRE_GRID.degrees - 180 + half,
+  };
+}

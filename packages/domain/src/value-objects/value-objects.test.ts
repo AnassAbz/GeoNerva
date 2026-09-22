@@ -16,6 +16,9 @@ import {
   isNormalizedLongitude,
   isNullIsland,
   isValidLatitude,
+  FIRE_GRID,
+  fireCellCentre,
+  fireCellId,
 } from './geography.ts';
 import {
   PUBLIC_ID_PREFIX_BY_HAZARD,
@@ -338,5 +341,33 @@ describe('hazardTypeOfPublicId', () => {
     for (const bad of ['', 'EQ', 'EQ-26', 'XX-26-7K3F9Q', 'eq-26-7K3F9Q', 'EQ-26-7K3F9QX']) {
       expect(hazardTypeOfPublicId(bad), bad).toBeNull();
     }
+  });
+});
+
+describe("the fire aggregate's grid (ADR-011, ADR-040)", () => {
+  /*
+   * The one number the SQL in `packages/db` interpolates. Spelled out here so that changing it is
+   * a deliberate act with a visible consequence, rather than an edit to a query nobody re-reads:
+   * 31.63 N falls in band floor((31.63 + 90) / 0.25) = 486 and 8.0 W in column
+   * floor((-8.0 + 180) / 0.25) = 688, so the cell is 486 x 1440 + 688. The integration tests for
+   * the aggregate assert the same number against the database's own arithmetic.
+   */
+  it('indexes a position the same way the database does', () => {
+    expect(fireCellId({ lat: 31.63, lon: -8.0 })).toBe(700_528);
+    // One column east, i.e. the next 0.25 degrees of longitude.
+    expect(fireCellId({ lat: 31.63, lon: -7.6 })).toBe(700_529);
+  });
+
+  it('puts the centre half a cell inside the cell, which is what a radius is measured to', () => {
+    const centre = fireCellCentre(700_528);
+    expect(centre).toEqual({ lat: 31.625, lon: -7.875 });
+    // The centre of a cell is in that cell: the two functions cannot disagree.
+    expect(fireCellId(centre)).toBe(700_528);
+  });
+
+  it('covers the whole world in rows of 360 degrees', () => {
+    expect(FIRE_GRID.columns * FIRE_GRID.degrees).toBe(360);
+    expect(fireCellId({ lat: -90, lon: -180 })).toBe(0);
+    expect(fireCellCentre(0)).toEqual({ lat: -89.875, lon: -179.875 });
   });
 });

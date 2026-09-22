@@ -17,12 +17,17 @@
 
 import { sql, type Kysely, type Transaction } from 'kysely';
 
+import { FIRE_GRID } from '@geonerva/domain';
+
 import type { DB } from '../generated/database.ts';
 
 type Db = Kysely<DB> | Transaction<DB>;
 
-/** The 0.25° grid of ADR-011, as SQL over a detection's own columns. */
-const CELL_ID = sql`(floor((d.lat + 90) / 0.25)::int * 1440 + floor((d.lon + 180) / 0.25)::int)`;
+/** ADR-011's grid, as SQL over a detection's own columns, from the one definition of it. */
+const CELL_ID = sql`(
+  floor((d.lat + 90) / ${sql.lit(FIRE_GRID.degrees)})::int * ${sql.lit(FIRE_GRID.columns)}
+  + floor((d.lon + 180) / ${sql.lit(FIRE_GRID.degrees)})::int
+)`;
 
 export type FireDayState = 'COVERED' | 'MISSING_DATA' | 'NOT_COVERED';
 

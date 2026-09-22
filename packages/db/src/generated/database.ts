@@ -203,6 +203,20 @@ export interface EventRelations {
   to_ref: string;
 }
 
+export interface FeedCoverageFrontier {
+  covered_from: Timestamp;
+  covered_to: Timestamp;
+  product_id: number;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface FeedCoverageHours {
+  hour: Timestamp;
+  min_magnitude: Numeric | null;
+  product_id: number;
+  recorded_at: Timestamp;
+}
+
 export interface FireClusterHeads {
   as_of: Timestamp;
   cluster_id: string;
@@ -241,13 +255,21 @@ export interface FireClusterVersions {
   product_ids: Generated<number[]>;
 }
 
-export interface FireDailyCells {
+export interface FireDailyCounts {
   cell_id: number;
+  computed_at: Timestamp;
   day: Timestamp;
   frp_sum: number | null;
   n: number;
   n_high_conf: Generated<number>;
-  product_group: string;
+  product_id: number;
+}
+
+export interface FireDailyCoverage {
+  computed_at: Timestamp;
+  day: Timestamp;
+  product_id: number;
+  state: string;
 }
 
 export interface FireDetections {
@@ -518,10 +540,13 @@ export interface DB {
   change_signals: ChangeSignals;
   correlation_candidates: CorrelationCandidates;
   event_relations: EventRelations;
+  feed_coverage_frontier: FeedCoverageFrontier;
+  feed_coverage_hours: FeedCoverageHours;
   fire_cluster_heads: FireClusterHeads;
   fire_cluster_versions: FireClusterVersions;
   fire_clusters: FireClusters;
-  fire_daily_cells: FireDailyCells;
+  fire_daily_counts: FireDailyCounts;
+  fire_daily_coverage: FireDailyCoverage;
   fire_detections: FireDetections;
   fire_missing_data_days: FireMissingDataDays;
   geocode_cache: GeocodeCache;
