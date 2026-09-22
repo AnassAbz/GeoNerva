@@ -43,6 +43,30 @@ export async function horizontalOverflow(page: Page): Promise<number> {
   );
 }
 
+/**
+ * Starts collecting browser console errors and uncaught page errors into the returned array.
+ * Call it before the first `goto`.
+ *
+ * This is how a Content-Security-Policy regression is caught (finding F-5): a blocked script is
+ * not a build error and not an HTTP error — the document still arrives with status 200, and the
+ * only signals are a `Refused to …` console error and a page that never hydrates.
+ */
+export function collectConsoleErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  page.on('pageerror', (error) => {
+    errors.push(`uncaught: ${error.message}`);
+  });
+  return errors;
+}
+
+/** The subset of collected console errors that the browser reported as a CSP violation. */
+export function cspViolations(errors: readonly string[]): string[] {
+  return errors.filter((text) => /content security policy|securitypolicyviolation/iu.test(text));
+}
+
 /** Makes `canvas.getContext('webgl2')` return null before any page script runs. */
 export async function disableWebGL2(page: Page): Promise<void> {
   await page.addInitScript(() => {

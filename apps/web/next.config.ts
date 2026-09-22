@@ -5,33 +5,26 @@ import { parseMapStyleUrl } from './lib/map-style.ts';
 /**
  * Where the basemap comes from (ADR-014). Only the parsed **origin** reaches the CSP, never the
  * raw configuration string (security finding F-16); an invalid value fails the build.
+ *
+ * The value is used at request time, in `proxy.ts`, because the Content-Security-Policy now
+ * carries a per-request nonce (finding F-5) and can no longer be a build-time constant. This call
+ * is what keeps F-16's second half true: a `MAP_STYLE_URL` that would inject a directive, or is
+ * not an `https://` URL, throws here and fails `next build` rather than the first request.
  */
-const mapStyle = parseMapStyleUrl(process.env['MAP_STYLE_URL']);
+parseMapStyleUrl(process.env['MAP_STYLE_URL']);
 
 /**
- * Baseline security headers (docs/SECURITY.md §6).
+ * Baseline security headers (docs/SECURITY.md §6) — every header that does not vary per request.
  *
- * The Content-Security-Policy is widened only as far as the map needs (P9a): MapLibre fetches the
- * style, tiles, glyphs and sprites from the basemap origin (`connect-src`), draws images from
- * `data:`/`blob:` URLs (`img-src`), and runs its tile workers from a `blob:` URL (`worker-src`).
- * The strict script policy of finding F-5 (`default-src 'self'` with hashes or `strict-dynamic`)
- * is a separate change and is not made here.
+ * `Content-Security-Policy` is deliberately absent: it is set in `proxy.ts`, which is the only
+ * place allowed to set it. Two CSP headers are enforced as an intersection, so a nonce-less copy
+ * here would block the inline scripts the nonce authorises.
  */
-const contentSecurityPolicy = [
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "object-src 'none'",
-  `connect-src 'self' ${mapStyle.origin}`,
-  `img-src 'self' data: blob: ${mapStyle.origin}`,
-  "worker-src 'self' blob:",
-].join('; ');
-
 const securityHeaders = [
   { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   { key: 'Permissions-Policy', value: 'geolocation=(self), camera=(), microphone=()' },
-  { key: 'Content-Security-Policy', value: contentSecurityPolicy },
 ];
 
 const nextConfig: NextConfig = {

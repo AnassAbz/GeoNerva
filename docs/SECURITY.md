@@ -109,15 +109,26 @@ CI uses no production secrets. Live smoke uses a dedicated FIRMS key stored as a
 
 ## 6. HTTP security headers (web)
 
-- `Content-Security-Policy`:
+- `Content-Security-Policy` — built per request in `apps/web/proxy.ts`, which is the only place
+  allowed to set this header (two CSP headers are enforced as an intersection). The directives and
+  the reasoning behind the script policy live in `apps/web/lib/csp.ts`:
   - `default-src 'self'`
-  - `script-src 'self' 'nonce-…'`
-  - `style-src 'self' 'unsafe-inline'` (MapLibre sets inline styles; revisit)
+  - `script-src 'self' 'strict-dynamic' 'nonce-…'` — no `unsafe-inline`, no `unsafe-eval`.
+    `'self'` is only the CSP Level 2 fallback; browsers that implement `'strict-dynamic'` ignore
+    it. The nonce is generated per request and Next.js stamps it onto the inline bootstrap and
+    flight-data scripts it injects, which is why `app/layout.tsx` declares `force-dynamic`: a
+    nonce cannot be baked into HTML that was prerendered at build time.
+  - `style-src 'self' 'unsafe-inline'` (React writes `style` props as inline attributes, which
+    `style-src-attr` inherits; MapLibre sets inline styles. Scripts only are the F-5 requirement)
+  - `font-src 'self'` (no third-party web font is loaded — no `next/font`, no Google Fonts)
   - `img-src 'self' data: blob: https://tiles.openfreemap.org`
   - `connect-src 'self' https://tiles.openfreemap.org`
   - `worker-src 'self' blob:`
-  - `frame-ancestors 'none'`
-  - Exact hosts are verified in Phase 1.
+  - `frame-ancestors 'none'`, `base-uri 'self'`, `object-src 'none'`, `form-action 'self'`
+  - The basemap host is never the raw `MAP_STYLE_URL`: only its parsed origin reaches the policy,
+    and an invalid value fails the build (finding F-16, `apps/web/lib/map-style.ts`).
+  - Asserted by `apps/web/lib/csp.test.ts` and, on the live headers of every route family, by
+    `apps/web/e2e/smoke.spec.ts`.
 - `Strict-Transport-Security: max-age=63072000; includeSubDomains`
 - `Referrer-Policy: strict-origin-when-cross-origin`
 - `Permissions-Policy: geolocation=(self), camera=(), microphone=()`
