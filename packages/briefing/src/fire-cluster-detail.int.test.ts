@@ -309,6 +309,30 @@ describe('buildFireClusterDetail: the cluster at a knowledge time', () => {
     // The nearest verified detection is no farther than the centroid is.
     expect(detail.nearestDetectionKm ?? 0).toBeLessThanOrEqual((detail.distanceKm ?? 0) + 0.1);
     expect(detail.relevance?.caveats).toContain(THERMAL_DETECTION_CAVEAT);
+    expect(detail.relevance?.reasons.find((entry) => entry.code === 'DISTANCE')?.text).toMatch(
+      /^The nearest detection is about \d+ km away\.$/u,
+    );
+  });
+
+  it('does not report a nearest detection it could not verify (P8 review H3)', async () => {
+    // Five counted, three stored, no hull: all that is known is the distance to the centre.
+    await cluster({ label: 'c7', publicId: 'FR-26-HHHHHH', nTotal: 5, detections: 3 });
+    const detail = await detailOf('FR-26-HHHHHH', hours(2), MARRAKECH);
+    expect(detail.relevance).not.toBeNull();
+    expect(detail.distanceKm).not.toBeNull();
+    expect(detail.nearestDetectionKm).toBeNull();
+    // The contract still refuses the converse: a nearest detection with no location to measure from.
+    expect(() =>
+      fireClusterDetailSchema.parse({
+        ...detail,
+        relevance: null,
+        distanceKm: null,
+        nearestDetectionKm: 1,
+      }),
+    ).toThrow(/nearest-detection distance exists only when a location was supplied/u);
+    expect(detail.relevance?.reasons.find((entry) => entry.code === 'DISTANCE')?.text).toMatch(
+      /^The centre of the cluster is about \d+ km away; the individual detections could not be checked\.$/u,
+    );
   });
 });
 

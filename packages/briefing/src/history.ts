@@ -25,6 +25,7 @@ import {
   BASELINE_METHOD_VERSION,
   EARTHQUAKE_BASELINE,
   GDACS_CONTEXT,
+  RETENTION_FLOOR_MAGNITUDE,
   earthquakeCountBaseline,
   estimateCompleteness,
   gdacsContext,
@@ -34,7 +35,7 @@ import {
 import {
   attributionsFor,
   derivationsAsOf,
-  earliestObservedAsOf,
+  catalogCoverageAsOf,
   linksAsOf,
   observationsAsOf,
   sourceCutoffsAsOf,
@@ -56,6 +57,7 @@ import type { Kysely } from 'kysely';
 
 import { resolveEvidenceManifest, toAttribution } from './briefing.ts';
 import { contentSha256 } from './content-hash.ts';
+import { coveredSince } from './coverage-span.ts';
 import { replayHorizonFor } from './replay-horizon.ts';
 import { asOfContextFor, memberSolutionsOf } from './snapshot.ts';
 
@@ -180,9 +182,31 @@ async function earthquakeHistory(base: Base, windowDays: number): Promise<Histor
     });
   }
 
-  const catalogStart = await earliestObservedAsOf(db, { asOf, hazardTypes: ['EARTHQUAKE'] });
+  /*
+   * The reference starts where GeoNerva's unbroken reading of the catalog starts — never at the
+   * oldest record it happens to hold (P8 review H1). Plans that fetched only above M4.5 do not
+   * count: every threshold this metric counts at over a reference older than 30 days is at least
+   * the retention floor, and a plan above it would leave M4.5-and-up windows short.
+   */
+  const coverageStart = coveredSince(
+    await catalogCoverageAsOf(db, {
+      asOf,
+      sourceIds: [...EARTHQUAKE_SOURCES],
+      maxMinMagnitude: RETENTION_FLOOR_MAGNITUDE,
+    }),
+    asOf,
+  );
+  if (coverageStart === null) {
+    return await unavailable(base, {
+      label,
+      interpretation:
+        'GeoNerva had not been reading the earthquake catalog up to this time, so the recent weeks cannot be counted.',
+      methodologyHref,
+      sourceIds: [...EARTHQUAKE_SOURCES],
+    });
+  }
   const tenYears = new Date(asOf.getTime() - EARTHQUAKE_BASELINE.referenceYears * YEAR_MS);
-  const referenceFrom = catalogStart !== null && catalogStart > tenYears ? catalogStart : tenYears;
+  const referenceFrom = coverageStart > tenYears ? coverageStart : tenYears;
 
   const events = await earthquakeEvents(db, {
     asOf,
@@ -338,24 +362,47 @@ async function gdacsHistory(base: Base): Promise<HistoryResponse> {
   const family = GDACS_FAMILIES[options.family];
   const label = 'GDACS events nearby';
   const methodologyHref = '/methodology#gdacs-context';
-  if (family === undefined || (base.cutoffs['gdacs'] ?? null) === null) {
+  /*
+   * The same refusal the earthquake metric makes, for the same reasons (P8 review H2): a count
+   * over five years GeoNerva never read, or over records no derivation had opened events for,
+   * would be a false zero. GDACS families are opened by `SEED`, not `CORRELATION`.
+   */
+  const coverageStart =
+    family === undefined
+      ? null
+      : coveredSince(
+          await catalogCoverageAsOf(options.db, {
+            asOf: options.asOf,
+            sourceIds: ['gdacs'],
+            maxMinMagnitude: null,
+          }),
+          options.asOf,
+        );
+  const seeded = (await derivationsAsOf(options.db, { asOf: options.asOf })).some(
+    (entry) => entry.kind === 'SEED' && entry.lastSucceededAt !== null,
+  );
+  if (family === undefined || coverageStart === null || !seeded) {
     return await unavailable(base, {
       label,
       interpretation:
-        'GeoNerva had not read GDACS by this time, so it has no events to count here.',
+        coverageStart === null
+          ? 'GeoNerva had not been reading GDACS up to this time, so it has no events to count here.'
+          : 'GeoNerva had not yet opened events for the GDACS records it holds, so it cannot count them.',
       methodologyHref,
       sourceIds: ['gdacs'],
     });
   }
 
   const catalogLimit = options.catalogLimit ?? DEFAULT_CATALOG_LIMIT;
-  const since = new Date(
+  const fiveYears = new Date(
     Date.UTC(
       options.asOf.getUTCFullYear() - GDACS_CONTEXT.years,
       options.asOf.getUTCMonth(),
       options.asOf.getUTCDate(),
     ),
   );
+  const recordStart = coverageStart > fiveYears ? coverageStart : null;
+  const since = recordStart ?? fiveYears;
   const rows = await observationsAsOf(options.db, {
     asOf: options.asOf,
     hazardTypes: family.types,
@@ -373,7 +420,7 @@ async function gdacsHistory(base: Base): Promise<HistoryResponse> {
     limit: catalogLimit,
   });
   const count = new Set(links.map((link) => link.canonical_event_id)).size;
-  const result = gdacsContext({ asOf: options.asOf, noun: family.noun, count });
+  const result = gdacsContext({ asOf: options.asOf, noun: family.noun, count, recordStart });
 
   const params = {
     radiusKm: GDACS_CONTEXT.radiusKm,

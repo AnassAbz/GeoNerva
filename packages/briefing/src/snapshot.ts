@@ -105,6 +105,7 @@ import {
   type AvailabilityVerdict,
   type DerivationStateInput,
   type SourceAvailabilityInput,
+  type FireDistanceBasis,
 } from '@geonerva/relevance';
 
 import { contentSha256 } from './content-hash.ts';
@@ -648,11 +649,14 @@ async function readFireSubjects(input: FamilyCardInput): Promise<FoundSubjects> 
   const items: SubjectSummary[] = [];
   for (const cluster of clusters) {
     const members = nearestByCluster.get(cluster.cluster_id);
-    const nearestM =
-      members?.count === cluster.n_total && members.nearest_m !== null
-        ? members.nearest_m
-        : (cluster.area_distance_m ?? null);
-    const item = buildFireSubject(input, cluster, nearestM);
+    const distance = fireDistanceOf({
+      verifiedNearestM:
+        members?.count === cluster.n_total && members.nearest_m !== null ? members.nearest_m : null,
+      areaDistanceM: cluster.area_distance_m ?? null,
+      hasHull: cluster.hull_geojson !== null,
+      nTotal: cluster.n_total,
+    });
+    const item = buildFireSubject(input, cluster, distance);
     if (item === null) {
       /*
        * A `DORMANT` cluster is not an *unassessed* subject. `assessFire` declines it because it is
@@ -778,10 +782,10 @@ function sortItems(items: SubjectSummary[]): void {
 function buildFireSubject(
   input: FamilyCardInput,
   cluster: ClusterVersionRow,
-  nearestM: number | null,
+  distance: FireDistance,
 ): SubjectSummary | null {
   // Unknown is `NaN`, which `assessFire` declines: never a distance of zero.
-  const nearestDetectionKm = (nearestM ?? Number.NaN) / 1000;
+  const nearestDetectionKm = (distance.meters ?? Number.NaN) / 1000;
 
   const evidenceIds: EvidenceId[] = [
     evidenceId.fireClusterVersion(cluster.cluster_version_id),
@@ -792,6 +796,7 @@ function buildFireSubject(
     asOf: input.asOf,
     lastDetectedAt: cluster.last_detected_at,
     nearestDetectionKm,
+    distanceBasis: distance.basis,
     n24h: cluster.n_24h,
     nTotal: cluster.n_total,
     overpasses24h: cluster.overpasses_24h,
@@ -853,11 +858,43 @@ function buildFireSubject(
   };
 }
 
+/** A distance from a place to a fire cluster, and what it was measured to. */
+export interface FireDistance {
+  readonly meters: number | null;
+  readonly basis: FireDistanceBasis;
+}
+
+/**
+ * The distance `assessFire` is given, and its honest name.
+ *
+ * Exact to the nearest detection when the members were verified. Otherwise the buffered hull,
+ * which every detection pixel lies inside and so is never farther than the nearest one. Without a
+ * hull a single-detection cluster's centroid *is* its detection, so that is still exact; for a
+ * larger cluster the centroid is only its centre — possibly farther than its nearest detection —
+ * and is named as such.
+ */
+export function fireDistanceOf(input: {
+  readonly verifiedNearestM: number | null;
+  readonly areaDistanceM: number | null;
+  readonly hasHull: boolean;
+  readonly nTotal: number;
+}): FireDistance {
+  if (input.verifiedNearestM !== null) {
+    return { meters: input.verifiedNearestM, basis: 'NEAREST_DETECTION' };
+  }
+  if (input.hasHull) return { meters: input.areaDistanceM, basis: 'CLUSTER_AREA' };
+  return {
+    meters: input.areaDistanceM,
+    basis: input.nTotal === 1 ? 'NEAREST_DETECTION' : 'CLUSTER_CENTRE',
+  };
+}
+
 export interface FireClusterAssessmentInput {
   readonly asOf: Date;
   readonly lastDetectedAt: Date;
-  /** Distance to the nearest detection, or a bound that is never larger than it. */
+  /** The distance `distanceBasis` names; see `fireDistanceOf`. */
   readonly nearestDetectionKm: number;
+  readonly distanceBasis: FireDistanceBasis;
   readonly n24h: number;
   readonly nTotal: number;
   readonly overpasses24h: number;
@@ -877,6 +914,7 @@ export function assessFireCluster(input: FireClusterAssessmentInput): RelevanceA
   const hoursSinceLastDetection = hoursSince(input.lastDetectedAt, input.asOf);
   const assessment = assessFire({
     nearestDetectionKm: input.nearestDetectionKm,
+    distanceBasis: input.distanceBasis,
     state: fireClusterState(hoursSinceLastDetection),
     n24h: input.n24h,
     nTotal: input.nTotal,

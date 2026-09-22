@@ -69,6 +69,18 @@ beforeEach(async () => {
 });
 
 async function earthquakesRead(): Promise<void> {
+  // Coverage the baseline can trust: a completed backfill of the last 62 weeks, then live polling.
+  await sql`
+    WITH plan AS (
+      INSERT INTO geonerva.backfill_plans
+        (id, source_id, mode, range_from, range_to, window_ms, min_window_ms, status, finished_at)
+      VALUES (gen_random_uuid(), 'usgs', 'HISTORICAL', ${daysAgo(62 * 7)}, ${daysAgo(0.01)},
+              ${DAY}, ${DAY}, 'COMPLETED', ${daysAgo(0.02)})
+      RETURNING id
+    )
+    INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
+    SELECT id, ${daysAgo(62 * 7)}, ${daysAgo(0.01)}, 'DONE', ${daysAgo(0.02)} FROM plan
+  `.execute(db);
   await seedRun(db, { sourceId: 'usgs', status: 'SUCCEEDED', startedAt: daysAgo(0.01) });
   await sql`
     INSERT INTO geonerva.analysis_runs (id, kind, engine_version, started_at, finished_at, status)

@@ -68,4 +68,4 @@ export {
   assessFire,
   fireClusterState,
 } from './fire.ts';
-export type { FireClusterState, FireInput } from './fire.ts';
+export type { FireClusterState, FireDistanceBasis, FireInput } from './fire.ts';

@@ -107,9 +107,51 @@ async function correlationRun(at: Date): Promise<void> {
   `.execute(db);
 }
 
-async function earthquakesRead(): Promise<void> {
+/**
+ * A completed historical backfill of `[from, to)` for a source, checkpointed at `completedAt`.
+ * Coverage is what the baseline trusts (P8 review H1), so every fixture states it explicitly.
+ */
+async function backfilled(
+  sourceId: string,
+  from: Date,
+  to: Date,
+  options: { readonly completedAt?: Date; readonly minMagnitude?: number | null } = {},
+): Promise<void> {
+  const completedAt = options.completedAt ?? new Date(AS_OF.getTime() - DAY);
+  await sql`
+    WITH plan AS (
+      INSERT INTO geonerva.backfill_plans
+        (id, source_id, mode, range_from, range_to, min_magnitude, window_ms, min_window_ms,
+         status, finished_at)
+      VALUES (gen_random_uuid(), ${sourceId}, 'HISTORICAL', ${from}, ${to},
+              ${options.minMagnitude ?? null}, ${DAY}, ${DAY}, 'COMPLETED', ${completedAt})
+      RETURNING id
+    )
+    INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
+    SELECT id, ${from}, ${to}, 'DONE', ${completedAt} FROM plan
+  `.execute(db);
+}
+
+/** The catalog GeoNerva had read: backfilled from `coveredFrom`, then polled live up to T. */
+async function earthquakesRead(
+  coveredFrom: Date = new Date(CURRENT_START.getTime() - 59.5 * WEEK),
+): Promise<void> {
+  await backfilled('usgs', coveredFrom, daysAgo(0.01));
   await committedRun('usgs', daysAgo(0.01));
   await correlationRun(daysAgo(0.01));
+}
+
+async function seedRan(at: Date): Promise<void> {
+  await sql`
+    INSERT INTO geonerva.analysis_runs (id, kind, engine_version, started_at, finished_at, status)
+    VALUES (gen_random_uuid(), 'SEED', 'history-test-1', ${at}, ${at}, 'SUCCEEDED')
+  `.execute(db);
+}
+
+async function gdacsRead(coveredFrom: Date = daysAgo(6 * 365)): Promise<void> {
+  await backfilled('gdacs', coveredFrom, daysAgo(0.01));
+  await committedRun('gdacs', daysAgo(0.01));
+  await seedRan(daysAgo(0.01));
 }
 
 let sequence = 0;
@@ -254,13 +296,13 @@ describe('EQ_COUNT_7D', () => {
     });
   });
 
-  it('does not reach back before the catalog GeoNerva holds', async () => {
+  it('does not reach back before the catalog GeoNerva read', async () => {
     /*
      * Thirty weeks of catalog. Over a ten-year reference this would be 521 windows and 30 events —
      * `OK`, with the empty years before the backfill counted as quiet ones. Clamped to the
-     * catalog's start it is 29 windows, which is not enough history to say anything.
+     * coverage's start it is 29 windows, which is not enough history to say anything.
      */
-    await earthquakesRead();
+    await earthquakesRead(new Date(CURRENT_START.getTime() - 29.5 * WEEK));
     await referenceCatalog(30);
     await quake({ observedAt: daysAgo(1) });
 
@@ -272,7 +314,7 @@ describe('EQ_COUNT_7D', () => {
   });
 
   it('is rare activity, stated as a count, when the windows exist but the events do not', async () => {
-    await earthquakesRead();
+    await earthquakesRead(new Date(CURRENT_START.getTime() - 60 * WEEK));
     // A catalog start 60 weeks back, far outside the radius, and only five events near.
     await quake({ observedAt: new Date(CURRENT_START.getTime() - 60 * WEEK), km: 280 });
     for (let k = 0; k < 5; k += 1) {
@@ -335,7 +377,7 @@ describe('EQ_COUNT_7D', () => {
 
 describe('GDACS_CONTEXT', () => {
   it('counts the GDACS events within 300 km in the last five years, as known at the time', async () => {
-    await committedRun('gdacs', daysAgo(0.01));
+    await gdacsRead();
     const flood = await quake({
       observedAt: daysAgo(400),
       hazardType: 'FLOOD',
@@ -387,6 +429,39 @@ describe('GDACS_CONTEXT', () => {
     expect(response.attribution.map((entry) => entry.sourceId)).toEqual(['gdacs']);
   });
 
+  it('counts only from where the GDACS record begins, and says so (P8 review H2)', async () => {
+    // A hundred days of GDACS read, not five years: an older flood is outside what was looked at.
+    await gdacsRead(daysAgo(100));
+    await quake({
+      observedAt: daysAgo(400),
+      hazardType: 'FLOOD',
+      sourceId: 'gdacs',
+      magnitude: null,
+      km: 100,
+    });
+    await quake({
+      observedAt: daysAgo(40),
+      hazardType: 'FLOOD',
+      sourceId: 'gdacs',
+      magnitude: null,
+      km: 100,
+    });
+
+    const response = await history({ family: 'FLOODS', metric: 'GDACS_CONTEXT', radiusKm: 300 });
+    expect(response.metric.observedValue).toEqual({ kind: 'count', value: 1 });
+    expect(response.metric.interpretation).toBe(
+      "1 GDACS flood event within 300 km since June 2026, when GeoNerva's GDACS record begins.",
+    );
+  });
+
+  it('refuses when no events had been opened for the GDACS records', async () => {
+    await backfilled('gdacs', daysAgo(6 * 365), daysAgo(0.01));
+    await committedRun('gdacs', daysAgo(0.01));
+    const response = await history({ family: 'FLOODS', metric: 'GDACS_CONTEXT', radiusKm: 300 });
+    expect(response.metric.status).toBe('INSUFFICIENT_COVERAGE');
+    expect(response.metric.interpretation).toContain('opened events');
+  });
+
   it('refuses when GDACS had not been read', async () => {
     const response = await history({ family: 'CYCLONES', metric: 'GDACS_CONTEXT', radiusKm: 300 });
     expect(response.metric.status).toBe('INSUFFICIENT_COVERAGE');
@@ -419,11 +494,97 @@ describe('the reads each answer depends on', () => {
     expect((await history()).metric.status).toBe('INSUFFICIENT_COVERAGE');
   });
 
-  it('dates the catalog start from what was known at the time', async () => {
-    // Thirty weeks known at the knowledge time; a five-year-old event backfilled only afterwards.
-    await earthquakesRead();
+  it('trusts only coverage checkpointed by the knowledge time', async () => {
+    // Thirty weeks covered at T; five more years backfilled only afterwards.
+    await earthquakesRead(new Date(CURRENT_START.getTime() - 29.5 * WEEK));
+    await backfilled('usgs', daysAgo(5 * 365), new Date(CURRENT_START.getTime() - 29.5 * WEEK), {
+      completedAt: new Date(AS_OF.getTime() + 60_000),
+    });
     await referenceCatalog(30);
-    await quake({ observedAt: daysAgo(5 * 365), ingestedAt: new Date(AS_OF.getTime() + 60_000) });
+    await quake({ observedAt: daysAgo(5 * 365), ingestedAt: daysAgo(4 * 365) });
+
+    expect((await history()).metric.status).toBe('INSUFFICIENT_HISTORY');
+    // Once that backfill is checkpointed the same catalog has a five-year reference.
+    expect((await history({ asOf: new Date(AS_OF.getTime() + 120_000) })).metric.status).toBe('OK');
+  });
+
+  it('never reaches across a gap in the catalog GeoNerva read (P8 review H1)', async () => {
+    /*
+     * A backfill that finished 2016–2017 and stopped. The records it fetched are there, and so is
+     * a busy recent year — but the eight years between were never read. Counting them as quiet
+     * weeks is what made an ordinary week "above typical"; the reference must start after the gap.
+     */
+    await backfilled('usgs', daysAgo(10 * 365), daysAgo(9 * 365));
+    await committedRun('usgs', daysAgo(0.01));
+    await correlationRun(daysAgo(0.01));
+    for (let k = 0; k < 30; k += 1) await quake({ observedAt: daysAgo(10 * 365 - k * 7) });
+    await referenceCatalog(60);
+    await quake({ observedAt: daysAgo(1) });
+    await quake({ observedAt: daysAgo(2) });
+
+    const response = await history();
+    expect(response.metric.status).toBe('INSUFFICIENT_HISTORY');
+    expect(response.metric.band).toBeNull();
+  });
+
+  it('counts only fetched historical windows as coverage', async () => {
+    /*
+     * Three things that look like coverage and are not: a window that was SPLIT (finished, but
+     * only because its children carry the work, and they are still pending), a deletion sweep
+     * (planned like a backfill, but it asks which records disappeared, not what happened), and a
+     * run triggered by a backfill (which fetched one window, not everything since).
+     */
+    await earthquakesRead(new Date(CURRENT_START.getTime() - 29.5 * WEEK));
+    const older = new Date(CURRENT_START.getTime() - 29.5 * WEEK);
+    await sql`
+      WITH plan AS (
+        INSERT INTO geonerva.backfill_plans
+          (id, source_id, mode, range_from, range_to, window_ms, min_window_ms, status)
+        VALUES (gen_random_uuid(), 'usgs', 'HISTORICAL', ${daysAgo(5 * 365)}, ${older},
+                ${DAY}, ${DAY}, 'RUNNING')
+        RETURNING id
+      )
+      INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
+      SELECT id, ${daysAgo(5 * 365)}::timestamptz, ${older}::timestamptz, 'SPLIT', ${daysAgo(2)}::timestamptz
+      FROM plan
+      UNION ALL
+      SELECT id, ${daysAgo(5 * 365)}::timestamptz, ${daysAgo(3 * 365)}::timestamptz, 'PENDING', NULL
+      FROM plan
+      UNION ALL
+      SELECT id, ${daysAgo(3 * 365)}::timestamptz, ${older}::timestamptz, 'PENDING', NULL FROM plan
+    `.execute(db);
+    await sql`
+      WITH plan AS (
+        INSERT INTO geonerva.backfill_plans
+          (id, source_id, mode, range_from, range_to, window_ms, min_window_ms, status, finished_at)
+        VALUES (gen_random_uuid(), 'usgs', 'DELETION_SWEEP', ${daysAgo(4 * 365)}, ${older},
+                ${DAY}, ${DAY}, 'COMPLETED', ${daysAgo(2)})
+        RETURNING id
+      )
+      INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
+      SELECT id, ${daysAgo(4 * 365)}, ${older}, 'DONE', ${daysAgo(2)} FROM plan
+    `.execute(db);
+    const { runId } = await seedRun(db, {
+      sourceId: 'usgs',
+      status: 'SUCCEEDED',
+      startedAt: daysAgo(3 * 365),
+    });
+    await sql`UPDATE geonerva.ingestion_runs SET trigger = 'BACKFILL' WHERE id = ${runId}::uuid`.execute(
+      db,
+    );
+    await referenceCatalog(30);
+    for (let k = 0; k < 150; k += 1) await quake({ observedAt: daysAgo(3 * 365 - k * 7) });
+
+    expect((await history()).metric.status).toBe('INSUFFICIENT_HISTORY');
+  });
+
+  it('does not count a backfill that fetched only above the magnitudes it counts', async () => {
+    await backfilled('usgs', new Date(CURRENT_START.getTime() - 59.5 * WEEK), daysAgo(0.01), {
+      minMagnitude: 5.5,
+    });
+    await committedRun('usgs', daysAgo(0.01));
+    await correlationRun(daysAgo(0.01));
+    await referenceCatalog(60, { magnitude: 5.6 });
 
     expect((await history()).metric.status).toBe('INSUFFICIENT_HISTORY');
   });
@@ -525,7 +686,7 @@ describe('the reads each answer depends on', () => {
   });
 
   it('reads GDACS as of the time: a later revision into the radius is not counted', async () => {
-    await committedRun('gdacs', daysAgo(0.01));
+    await gdacsRead();
     await quake({
       observedAt: daysAgo(30),
       hazardType: 'FLOOD',

@@ -66,7 +66,7 @@ import type { Kysely } from 'kysely';
 import { resolveEvidenceManifest, toAttribution } from './briefing.ts';
 import { relatedView } from './event-detail.ts';
 import { replayHorizonFor } from './replay-horizon.ts';
-import { asOfContextFor, assessFireCluster } from './snapshot.ts';
+import { asOfContextFor, assessFireCluster, fireDistanceOf } from './snapshot.ts';
 
 /** Detections in the sample. The total is always the version's own count. */
 export const DETECTION_SAMPLE_CAP = 500;
@@ -155,15 +155,24 @@ export async function buildFireClusterDetail(
   const setCite = evidenceId.detectionSet(latest.cluster_version_id, latest.n_total);
   const citations: EvidenceId[] = [versionCite, setCite].sort(compare);
 
-  const nearestM =
-    point === undefined ? null : verified ? reconstruction.nearest_m : latest.area_distance_m;
+  const distance =
+    point === undefined
+      ? null
+      : fireDistanceOf({
+          verifiedNearestM: verified ? reconstruction.nearest_m : null,
+          areaDistanceM: latest.area_distance_m,
+          hasHull: latest.hull_geojson !== null,
+          nTotal: latest.n_total,
+        });
+  const nearestM = distance?.meters ?? null;
   const relevance =
-    point === undefined || nearestM === null
+    distance === null || nearestM === null
       ? null
       : assessFireCluster({
           asOf,
           lastDetectedAt: latest.last_detected_at,
           nearestDetectionKm: nearestM / 1000,
+          distanceBasis: distance.basis,
           n24h: latest.n_24h,
           nTotal: latest.n_total,
           overpasses24h: latest.overpasses_24h,
@@ -213,7 +222,11 @@ export async function buildFireClusterDetail(
     centroid: { type: 'Point', coordinates: [latest.centroid_lon, latest.centroid_lat] },
     relevance,
     distanceKm,
-    nearestDetectionKm: distanceKm === null || nearestM === null ? null : round(nearestM / 1000, 1),
+    // Only a measured distance to a detection is reported under that name; a bound is not one.
+    nearestDetectionKm:
+      distanceKm === null || nearestM === null || distance?.basis !== 'NEAREST_DETECTION'
+        ? null
+        : round(nearestM / 1000, 1),
     versions: versionViews(versions),
     detections: {
       total: latest.n_total,

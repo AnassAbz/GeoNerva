@@ -69,9 +69,22 @@ export const FIRE_OFFICIAL_ALERT_KM = 10;
 /** `GROWING` requires both: at least double the previous 24 hours, and at least this many. */
 export const FIRE_GROWTH_FLOOR = 10;
 
+/**
+ * What `nearestDetectionKm` actually measured.
+ *
+ * `NEAREST_DETECTION` is exact. When the cluster's members cannot be verified — their partitions
+ * pruned, or a merge — the caller can only measure to the buffered hull (`CLUSTER_AREA`, never
+ * larger than the nearest detection) or, without a hull, to the centre (`CLUSTER_CENTRE`). The
+ * level is judged on the same number either way, which errs towards "closer"; what changes is the
+ * sentence, which must not state a distance to a detection nobody measured (P8 review H3).
+ */
+export type FireDistanceBasis = 'NEAREST_DETECTION' | 'CLUSTER_AREA' | 'CLUSTER_CENTRE';
+
 export interface FireInput {
-  /** Distance to the **nearest detection** in the cluster, in km. Not to the centroid. */
+  /** Distance to the **nearest detection** in the cluster, in km — or see `distanceBasis`. */
   readonly nearestDetectionKm: number;
+  /** Defaults to `NEAREST_DETECTION`. */
+  readonly distanceBasis?: FireDistanceBasis;
   readonly state: FireClusterState;
   /** Detections in the last 24 hours. */
   readonly n24h: number;
@@ -96,6 +109,30 @@ export interface FireInput {
   readonly persistentHeatSource: boolean;
 }
 
+function distanceReason(km: number, basis: FireDistanceBasis): Reason {
+  const rounded = Math.round(km);
+  switch (basis) {
+    case 'NEAREST_DETECTION':
+      return reason('DISTANCE', `The nearest detection is about ${String(rounded)} km away.`, {
+        nearestDetectionKm: rounded,
+      });
+    case 'CLUSTER_AREA':
+      return reason(
+        'DISTANCE',
+        rounded === 0
+          ? 'This location is inside the area where the cluster was detected; the individual detections could not be checked.'
+          : `The area where the cluster was detected is about ${String(rounded)} km away; the individual detections could not be checked.`,
+        { areaDistanceKm: rounded },
+      );
+    case 'CLUSTER_CENTRE':
+      return reason(
+        'DISTANCE',
+        `The centre of the cluster is about ${String(rounded)} km away; the individual detections could not be checked.`,
+        { centreDistanceKm: rounded },
+      );
+  }
+}
+
 export function assessFire(input: FireInput): Assessment | null {
   if (!Number.isFinite(input.nearestDetectionKm) || input.nearestDetectionKm < 0) return null;
   // A dormant cluster is history, not activity. §9.2's bands all require ACTIVE or COOLING.
@@ -103,11 +140,7 @@ export function assessFire(input: FireInput): Assessment | null {
   if (input.nearestDetectionKm > FIRE_OUTER_KM) return null;
 
   const reasons: Reason[] = [
-    reason(
-      'DISTANCE',
-      `The nearest detection is about ${Math.round(input.nearestDetectionKm)} km away.`,
-      { nearestDetectionKm: Math.round(input.nearestDetectionKm) },
-    ),
+    distanceReason(input.nearestDetectionKm, input.distanceBasis ?? 'NEAREST_DETECTION'),
     reason(
       'DETECTION_COUNT',
       `${input.n24h} detection${input.n24h === 1 ? '' : 's'} in the last 24 hours (${input.nTotal} in total).`,

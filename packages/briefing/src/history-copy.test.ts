@@ -131,6 +131,12 @@ describe('baseline copy', () => {
       fireTrend(days(5, 5, false)).interpretation,
       gdacsContext({ asOf: AS_OF, noun: ['flood event', 'flood events'], count: 1 }).interpretation,
       gdacsContext({ asOf: AS_OF, noun: ['flood event', 'flood events'], count: 0 }).interpretation,
+      gdacsContext({
+        asOf: AS_OF,
+        noun: ['flood event', 'flood events'],
+        count: 3,
+        recordStart: AS_OF,
+      }).interpretation,
     ];
     for (const text of all) {
       expect(isLexiconClean(text, { thermalContext: true }), text).toBe(true);

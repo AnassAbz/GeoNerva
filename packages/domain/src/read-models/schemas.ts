@@ -1521,11 +1521,18 @@ export const fireClusterDetailSchema = z
         message: 'relevance and distanceKm exist only together, when a location was supplied',
       });
     }
-    if ((detail.distanceKm === null) !== (detail.nearestDetectionKm === null)) {
+    /*
+     * An implication, not an equivalence. A nearest detection needs a location; but a location does
+     * not guarantee one. When a cluster's members cannot be verified — partitions pruned, a merge —
+     * only the distance to its area or centre is known, and the interface's `number | null` is how
+     * the contract says "not measured". The equivalence this replaced (written in P8, not at G2)
+     * forced the builder to publish a bound under this field's name (P8 review H3).
+     */
+    if (detail.nearestDetectionKm !== null && detail.distanceKm === null) {
       ctx.addIssue({
         code: 'custom',
         path: ['nearestDetectionKm'],
-        message: 'both distances exist only together, when a location was supplied',
+        message: 'a nearest-detection distance exists only when a location was supplied',
       });
     }
     if (!isNewestFirst(detail.versions, (version) => version.asOf)) {

@@ -277,3 +277,39 @@ describe('reasons', () => {
     );
   });
 });
+
+describe('assessFire: the distance sentence names what was measured (P8 review H3)', () => {
+  const distance = (input: FireInput) =>
+    assessFire(input)?.reasons.find((entry) => entry.code === 'DISTANCE');
+
+  it('states a nearest detection only when one was measured', () => {
+    expect(distance(fire({ nearestDetectionKm: 4 }))?.text).toBe(
+      'The nearest detection is about 4 km away.',
+    );
+    expect(distance(fire({ nearestDetectionKm: 4, distanceBasis: 'CLUSTER_AREA' }))).toEqual({
+      code: 'DISTANCE',
+      text: 'The area where the cluster was detected is about 4 km away; the individual detections could not be checked.',
+      params: { areaDistanceKm: 4 },
+    });
+    expect(distance(fire({ nearestDetectionKm: 4, distanceBasis: 'CLUSTER_CENTRE' }))).toEqual({
+      code: 'DISTANCE',
+      text: 'The centre of the cluster is about 4 km away; the individual detections could not be checked.',
+      params: { centreDistanceKm: 4 },
+    });
+  });
+
+  it('never says "about 0 km" of a place inside the cluster area', () => {
+    expect(distance(fire({ nearestDetectionKm: 0, distanceBasis: 'CLUSTER_AREA' }))?.text).toBe(
+      'This location is inside the area where the cluster was detected; the individual detections could not be checked.',
+    );
+  });
+
+  it('judges the level on the same distance whatever it was measured to', () => {
+    for (const km of [0, 5, 10, 11, 30, 31, 150]) {
+      const levels = (['NEAREST_DETECTION', 'CLUSTER_AREA', 'CLUSTER_CENTRE'] as const).map(
+        (basis) => assessFire(fire({ nearestDetectionKm: km, distanceBasis: basis }))?.level,
+      );
+      expect(new Set(levels).size, String(km)).toBe(1);
+    }
+  });
+});

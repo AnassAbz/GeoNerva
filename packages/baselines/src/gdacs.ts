@@ -19,13 +19,43 @@ export function gdacsContext(input: {
   readonly noun: readonly [string, string];
   /** Events within the radius observed in the last five years, as known at `asOf`. */
   readonly count: number;
+  /**
+   * Where GeoNerva's unbroken GDACS record begins, when that is less than five years back. The
+   * count then covers only that span, and the sentence says so rather than claiming five years.
+   */
+  readonly recordStart?: Date | null;
 }): GdacsContextResult {
-  const sinceYear = input.asOf.getUTCFullYear() - GDACS_CONTEXT.years;
   const noun = input.count === 1 ? input.noun[0] : input.noun[1];
+  const recordStart = input.recordStart ?? null;
+  const within = `${String(input.count)} GDACS ${noun} within ${String(GDACS_CONTEXT.radiusKm)} km`;
+  if (recordStart !== null) {
+    return {
+      methodVersion: BASELINE_METHOD_VERSION,
+      count: input.count,
+      sinceYear: recordStart.getUTCFullYear(),
+      interpretation: `${within} since ${MONTHS[recordStart.getUTCMonth()] ?? ''} ${String(recordStart.getUTCFullYear())}, when GeoNerva's GDACS record begins.`,
+    };
+  }
+  const sinceYear = input.asOf.getUTCFullYear() - GDACS_CONTEXT.years;
   return {
     methodVersion: BASELINE_METHOD_VERSION,
     count: input.count,
     sinceYear,
-    interpretation: `${String(input.count)} GDACS ${noun} within ${String(GDACS_CONTEXT.radiusKm)} km since ${String(sinceYear)}.`,
+    interpretation: `${within} since ${String(sinceYear)}.`,
   };
 }
+
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];

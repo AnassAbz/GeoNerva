@@ -1072,6 +1072,10 @@ describe('fire proximity is to the nearest detection, not to the centroid (P7 de
     return snapshot.families.FIRE_ACTIVITY.items[0];
   }
 
+  function distanceReason(item: Awaited<ReturnType<typeof fireItem>>): string | undefined {
+    return item?.relevance.reasons.find((entry) => entry.code === 'DISTANCE')?.text;
+  }
+
   beforeEach(async () => {
     await healthySource('firms', 'VIIRS_NOAA20_NRT');
     await derivationRan('CLUSTERING', new Date(INGEST.getTime() + 60_000));
@@ -1090,6 +1094,7 @@ describe('fire proximity is to the nearest detection, not to the centroid (P7 de
     });
     const item = await fireItem();
     expect(item?.distanceKm).toBeCloseTo(3, 0);
+    expect(distanceReason(item)).toBe('The nearest detection is about 3 km away.');
   });
 
   it('falls back to the hull, never the centroid, when the members cannot be verified', async () => {
@@ -1104,6 +1109,10 @@ describe('fire proximity is to the nearest detection, not to the centroid (P7 de
     const item = await fireItem();
     expect(item?.distanceKm).toBeLessThan(3.5);
     expect(item?.distanceKm).toBeGreaterThanOrEqual(2.5);
+    // A bound is not a measured distance to a detection, and the sentence must not say it is.
+    expect(distanceReason(item)).toBe(
+      'The area where the cluster was detected is about 3 km away; the individual detections could not be checked.',
+    );
   });
 
   it('does not trust a reconstruction whose count disagrees with the version', async () => {
@@ -1120,6 +1129,7 @@ describe('fire proximity is to the nearest detection, not to the centroid (P7 de
     const item = await fireItem();
     // The hull's bound (about 1 km), not the unverified member's 3.
     expect(item?.distanceKm).toBeLessThan(1.5);
+    expect(distanceReason(item)).toContain('The area where the cluster was detected is about 1 km');
   });
 
   /**
