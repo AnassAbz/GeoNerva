@@ -304,6 +304,12 @@ describe('assessFire: the distance sentence names what was measured (P8 review H
     );
   });
 
+  it('does not call a place 400 m outside the area "inside" it', () => {
+    expect(distance(fire({ nearestDetectionKm: 0.4, distanceBasis: 'CLUSTER_AREA' }))?.text).toBe(
+      'The area where the cluster was detected is less than 1 km away; the individual detections could not be checked.',
+    );
+  });
+
   it('judges the level on the same distance whatever it was measured to', () => {
     for (const km of [0, 5, 10, 11, 30, 31, 150]) {
       const levels = (['NEAREST_DETECTION', 'CLUSTER_AREA', 'CLUSTER_CENTRE'] as const).map(

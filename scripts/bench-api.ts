@@ -199,6 +199,21 @@ async function seed(db: Kysely<DB>): Promise<Seeded> {
     }
   }
 
+  // Ninety days of scheduled polls at each source's own interval: what the lean profile keeps
+  // (ADR-033), and what health, sources/status and /history's coverage read actually scan.
+  await sql`
+    INSERT INTO geonerva.ingestion_runs
+      (id, source_id, trigger, started_at, finished_at, committed_at, status)
+    SELECT gen_random_uuid(), s.id, 'SCHEDULE', t, t, t, 'SUCCEEDED'
+    FROM geonerva.sources s,
+         generate_series(
+           ${new Date(NOW.getTime() - 90 * DAY)}::timestamptz,
+           ${new Date(NOW.getTime() - 10 * 60_000)}::timestamptz,
+           make_interval(secs => (s.policy -> 'polling' ->> 'intervalS')::double precision)
+         ) AS t
+    WHERE s.id IN ('usgs', 'emsc', 'gdacs', 'firms')
+  `.execute(db);
+
   // Completed historical backfills up to the first live run, so /history reads its full reference
   // rather than refusing: coverage, not the oldest record, is what a baseline trusts.
   for (const [source, years] of [

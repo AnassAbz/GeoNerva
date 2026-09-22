@@ -22,6 +22,7 @@ import {
   parseAsOf,
   parseFamilies,
   parseFiniteNumber,
+  containsPreciseCoordinate,
   parseHistory,
   parseLimit,
   parseLocation,
@@ -839,5 +840,38 @@ describe('parseQuery: a coordinate is a position (ADR-015)', () => {
     for (const q of ['48.86,2.35', 'Marrakech', 'Route 66', 'Apt 12, 3.5 km', 'Paris 75001']) {
       expect(reasonFor(q), q).toBeUndefined();
     }
+  });
+});
+
+describe('containsPreciseCoordinate: the spellings a geocoder understands', () => {
+  it.each([
+    '48.856614,2.352222',
+    '48.856614N 2.352222E',
+    'N48.856614 E2.352222',
+    '48.856614° 2.352222°',
+    `48°51'23.8"N 2°21'08.0"E`,
+    '48,856614 2,352222',
+    '48.856614/2.352222',
+    'lat 48.856614 lon 2.352222',
+    '４８.８５６６１４,２.３５２２２２',
+    '-33.868;151.21',
+    '48.85 2.352',
+  ])('finds a precise position in %s', (query) => {
+    expect(containsPreciseCoordinate(query)).toBe(true);
+  });
+
+  it.each([
+    'Av. Paulista 1.578, 01310-200 São Paulo',
+    'Rua Augusta 2.690, 3 andar',
+    '48.86,2.35',
+    '48.86 N 2.35 E',
+    'Marrakech',
+    'Route 66',
+    'Apt 12, 3.5 km',
+    'Paris 75001',
+    // A digit between two decimals means they are not a pair.
+    'Line 1.5, 2 stops, 4.125 km',
+  ])('lets %s through', (query) => {
+    expect(containsPreciseCoordinate(query)).toBe(false);
   });
 });

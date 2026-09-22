@@ -119,9 +119,12 @@ function distanceReason(km: number, basis: FireDistanceBasis): Reason {
     case 'CLUSTER_AREA':
       return reason(
         'DISTANCE',
-        rounded === 0
+        // Inside only at exactly zero: a point 400 m outside the area is not inside it.
+        km === 0
           ? 'This location is inside the area where the cluster was detected; the individual detections could not be checked.'
-          : `The area where the cluster was detected is about ${String(rounded)} km away; the individual detections could not be checked.`,
+          : rounded === 0
+            ? 'The area where the cluster was detected is less than 1 km away; the individual detections could not be checked.'
+            : `The area where the cluster was detected is about ${String(rounded)} km away; the individual detections could not be checked.`,
         { areaDistanceKm: rounded },
       );
     case 'CLUSTER_CENTRE':

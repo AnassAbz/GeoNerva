@@ -333,6 +333,16 @@ describe('GET /api/v1/places/reverse', () => {
      * the provider saw ten.
      */
     const caller = '192.0.2.150';
+    /*
+     * The per-key window is fixed and epoch-aligned, and eleven requests a second apart take about
+     * eleven seconds. Started late in a minute they straddle the boundary and the eleventh lands in
+     * a fresh window — which is what the second full run of the suite did. So start with at least
+     * twenty seconds of the window left.
+     */
+    const intoMinute = Date.now() % 60_000;
+    if (intoMinute > 40_000) {
+      await new Promise((resolve) => setTimeout(resolve, 60_000 - intoMinute + 100));
+    }
     const statuses: number[] = [];
     for (let index = 0; index < 11; index += 1) {
       if (index > 0) await new Promise((resolve) => setTimeout(resolve, 1_050));
@@ -351,7 +361,7 @@ describe('GET /api/v1/places/reverse', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 1_050));
     expect((await reverse(request('/api/v1/places/reverse?lat=40.00&lon=20'))).status).toBe(200);
-  }, 30_000);
+  }, 60_000);
 });
 
 describe('a p: key in a briefing', () => {

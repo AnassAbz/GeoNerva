@@ -117,7 +117,8 @@ async function backfilled(
   to: Date,
   options: { readonly completedAt?: Date; readonly minMagnitude?: number | null } = {},
 ): Promise<void> {
-  const completedAt = options.completedAt ?? new Date(AS_OF.getTime() - DAY);
+  // A window is read by the time its interval completes, and not before: default to its end.
+  const completedAt = options.completedAt ?? to;
   await sql`
     WITH plan AS (
       INSERT INTO geonerva.backfill_plans
@@ -268,6 +269,10 @@ describe('EQ_COUNT_7D', () => {
     const atAsOf = await history();
     expect(atAsOf.metric.observedValue).toEqual({ kind: 'count', value: 1 });
 
+    // Still polling two hours on, as a live deployment would be; USGS is stale after one hour.
+    for (let minutes = 30; minutes <= 114; minutes += 28) {
+      await committedRun('usgs', new Date(AS_OF.getTime() + minutes * 60_000));
+    }
     const later = await history({ asOf: new Date(AS_OF.getTime() + 2 * 3_600_000) });
     expect(later.metric.observedValue).toEqual({ kind: 'count', value: 3 });
   });
@@ -515,6 +520,8 @@ describe('the reads each answer depends on', () => {
      * weeks is what made an ordinary week "above typical"; the reference must start after the gap.
      */
     await backfilled('usgs', daysAgo(10 * 365), daysAgo(9 * 365));
+    // The last thirty days read, so the refusal below is about the gap, not the current window.
+    await backfilled('usgs', daysAgo(30), daysAgo(0.01));
     await committedRun('usgs', daysAgo(0.01));
     await correlationRun(daysAgo(0.01));
     for (let k = 0; k < 30; k += 1) await quake({ observedAt: daysAgo(10 * 365 - k * 7) });
@@ -582,6 +589,8 @@ describe('the reads each answer depends on', () => {
     await backfilled('usgs', new Date(CURRENT_START.getTime() - 59.5 * WEEK), daysAgo(0.01), {
       minMagnitude: 5.5,
     });
+    // A complete read of the last thirty days alongside it, so only the M5.5 plan is in question.
+    await backfilled('usgs', daysAgo(30), daysAgo(0.01));
     await committedRun('usgs', daysAgo(0.01));
     await correlationRun(daysAgo(0.01));
     await referenceCatalog(60, { magnitude: 5.6 });
@@ -709,5 +718,113 @@ describe('the reads each answer depends on', () => {
     expect(
       (await history({ ...flood, asOf: new Date(AS_OF.getTime() + 120_000) })).metric.observedValue,
     ).toEqual({ kind: 'count', value: 1 });
+  });
+});
+
+describe('live coverage is unbroken, successful, scheduled polling (fix-verification review)', () => {
+  /** A committed run of the given trigger and status, at `at`. */
+  async function run(
+    at: Date,
+    options: {
+      readonly trigger?: string;
+      readonly status?: 'SUCCEEDED' | 'FAILED' | 'PARTIAL';
+    } = {},
+  ): Promise<void> {
+    const { runId } = await seedRun(db, {
+      sourceId: 'usgs',
+      status: options.status ?? 'SUCCEEDED',
+      startedAt: at,
+    });
+    if (options.trigger !== undefined) {
+      await sql`UPDATE geonerva.ingestion_runs SET trigger = ${options.trigger} WHERE id = ${runId}::uuid`.execute(
+        db,
+      );
+    }
+  }
+
+  /** Scheduled polls every 30 minutes over `[from, to]`: an unbroken chain for USGS (stale at 1 h). */
+  async function polled(from: Date, to: Date): Promise<void> {
+    for (let at = from.getTime(); at <= to.getTime(); at += 30 * 60_000) await run(new Date(at));
+  }
+
+  const backfillEnd = daysAgo(60);
+
+  beforeEach(async () => {
+    // Sixty weeks backfilled up to sixty days ago, a catalog inside it, and correlation run.
+    await backfilled('usgs', new Date(CURRENT_START.getTime() - 59.5 * WEEK), backfillEnd);
+    await correlationRun(daysAgo(0.01));
+    await referenceCatalog(60);
+  });
+
+  it('is OK when polling picks up where the backfill stopped and never lapses', async () => {
+    await polled(backfillEnd, daysAgo(0.01));
+    expect((await history()).metric.status).toBe('OK');
+  });
+
+  /** Polls every 30 minutes over a two-hour stretch forty days ago, of one kind only. */
+  async function onlyDuringGap(options: {
+    readonly trigger?: string;
+    readonly status?: 'SUCCEEDED' | 'FAILED' | 'PARTIAL';
+  }): Promise<void> {
+    const gapStart = daysAgo(40).getTime();
+    for (let minutes = 30; minutes < 120; minutes += 30) {
+      await run(new Date(gapStart + minutes * 60_000), options);
+    }
+  }
+
+  it('does not bridge a lapse with failed or partial polls', async () => {
+    // Scheduled throughout, but for two hours every poll failed or was partial: not a read.
+    await polled(backfillEnd, daysAgo(40));
+    await onlyDuringGap({ status: 'FAILED' });
+    await run(new Date(daysAgo(40).getTime() + 100 * 60_000), { status: 'PARTIAL' });
+    await polled(new Date(daysAgo(40).getTime() + 2 * 3_600_000), daysAgo(0.01));
+
+    expect((await history()).metric.status).toBe('INSUFFICIENT_HISTORY');
+  });
+
+  it('does not bridge a lapse with manual or reconciling runs', async () => {
+    // Successful, but one-off and deletion-sweep runs: neither follows the feed.
+    await polled(backfillEnd, daysAgo(40));
+    await onlyDuringGap({ trigger: 'MANUAL' });
+    await run(new Date(daysAgo(40).getTime() + 100 * 60_000), { trigger: 'RECONCILE' });
+    await polled(new Date(daysAgo(40).getTime() + 2 * 3_600_000), daysAgo(0.01));
+
+    expect((await history()).metric.status).toBe('INSUFFICIENT_HISTORY');
+  });
+
+  it('breaks coverage where polling lapsed for longer than the source is stale after', async () => {
+    // Polled throughout, except for two hours forty days ago: USGS is stale after one hour.
+    await polled(backfillEnd, daysAgo(40));
+    await polled(new Date(daysAgo(40).getTime() + 2 * 3_600_000), daysAgo(0.01));
+
+    expect((await history()).metric.status).toBe('INSUFFICIENT_HISTORY');
+  });
+
+  it('does not reach the knowledge time from a poll older than the stale bound', async () => {
+    await polled(backfillEnd, daysAgo(1));
+    const response = await history();
+    expect(response.metric.status).toBe('INSUFFICIENT_COVERAGE');
+    expect(response.metric.observedValue.kind).toBe('unavailable');
+  });
+
+  it('refuses a count over a current window it read only part of', async () => {
+    // Polling began three days ago, after the backfill had long stopped.
+    await polled(daysAgo(3), daysAgo(0.01));
+    const response = await history();
+    expect(response.metric.status).toBe('INSUFFICIENT_COVERAGE');
+    expect(response.metric.interpretation).toContain('less than 7 days');
+  });
+
+  it('does not let a backfill claim time past the moment it finished', async () => {
+    /*
+     * A plan whose `--to` lay a week in the future, completed sixty days ago: it read up to its
+     * completion and not a minute beyond. Taken at its word it would bridge the fifty-nine days
+     * before polling began.
+     */
+    await backfilled('usgs', backfillEnd, new Date(AS_OF.getTime() + 7 * DAY), {
+      completedAt: backfillEnd,
+    });
+    await polled(daysAgo(1), daysAgo(0.01));
+    expect((await history()).metric.status).toBe('INSUFFICIENT_COVERAGE');
   });
 });

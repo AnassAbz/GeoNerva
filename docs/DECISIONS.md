@@ -635,3 +635,18 @@ Turborepo is not adopted until build times justify it.
 
 - **Until this is decided**, `/history?family=FIRE_ACTIVITY&metric=FIRE_TREND` answers `200` with `status: INSUFFICIENT_COVERAGE`, no series and no band, and an interpretation that states the data is not held — never a trend computed from nothing, and never "stable".
 - **Relation to ADR-039:** both are the same defect in the fire tables — a derived value keyed without the knowledge time it became true. Deciding them together would let one migration fix both.
+
+## ADR-041 — Proposed: catalog coverage needs a record that outlives the runs it is derived from
+- **Date:** 2026-09-22 (G8, found by the review of the fix for the P8 correctness review's H1)
+- **Status:** **Proposed.** Awaiting product-owner input. Nothing is blocked today: run pruning is not scheduled yet, and until it is the rule below answers correctly.
+- **Context — a baseline is a claim that every window in its reference was read.**
+
+  After the P8 review, `/history` stopped trusting the oldest record held and started trusting *coverage* (`catalogCoverageAsOf`): completed historical backfill intervals, plus chains of successful scheduled polls that never lapse for longer than the source's own `fetchStaleAfterS`. That is the right evidence, and it is derived from `ingestion_runs`.
+
+  ADR-033 keeps `ingestion_runs` for **90 days** on the lean profile. Once the retention sweep is scheduled, the polling chains older than 90 days are deleted, the live span starts at `now − 90 d`, it no longer meets the end of the backfill, and every location's baseline refuses with `INSUFFICIENT_HISTORY` for good. Replays at an old knowledge time would change their answer after the sweep, which is a replay-stability failure even though it is in the refusing direction.
+
+- **Alternatives:**
+  - *Keep `ingestion_runs` for ten years* — rejected: roughly 100,000 rows a year per five-minute source, kept only to be summarized.
+  - *Treat live polling as continuous from the first run* — rejected; the fix-verification review showed it recreates H1's false zero across polling outages, failed first polls and one-off manual runs.
+  - **Recommended: an append-only coverage ledger.** A worker step, on each successful scheduled poll, extends the source's open span or opens a new one when the gap since the previous success exceeds `fetchStaleAfterS`; spans carry `recorded_at` (knowledge time) and are closed, never rewritten. Backfill intervals write to the same ledger when they complete. `catalogCoverageAsOf` then reads spans with `recorded_at <= T`. A few rows per source per outage, kept as long as the facts they vouch for.
+- **Until this is decided**, coverage is derived from `ingestion_runs` and `backfill_intervals` as above, and the retention sweep for `ingestion_runs` must not be scheduled without it — the P10 retention work inherits that constraint.

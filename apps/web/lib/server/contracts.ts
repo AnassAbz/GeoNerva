@@ -126,8 +126,8 @@ export const ENDPOINT_CONTRACTS: readonly EndpointContract[] = [
     path: '/api/v1/places/reverse',
     summary: 'A label for a rounded coordinate pair.',
     response: placeSearchResponseSchema,
-
-    rateLimit: 'placesSearch',
+    // The route's own limit is the default; its provider misses are held by `placesProviderMiss`.
+    rateLimit: 'default',
     cache: [CACHE_POLICIES.places],
     implemented: true,
   },

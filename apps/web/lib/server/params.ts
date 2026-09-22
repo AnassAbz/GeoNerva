@@ -418,20 +418,53 @@ export function parseQuery(search: URLSearchParams, name = 'q'): string {
   }
   /*
    * A coordinate pair typed into the search box is a position, and ADR-015 applies to it exactly as
-   * it does to `lat`/`lon`: "48.856614,2.352222" would otherwise reach Nominatim, the CDN key and
-   * the access log unrounded (P8 review). Refused, not rounded, for the reason S-1 gave: the URL
-   * has already reached the edge by the time this runs. Two decimals pass, as they do everywhere.
+   * it does to `lat`/`lon`: "48.856614,2.352222" would otherwise reach Nominatim and the geocode
+   * cache key unrounded (P8 review). What this cannot do is keep it out of the platform's access
+   * log — the URL reached the edge before any of this ran, the residual S-1 already records.
+   * Refused rather than rounded for that reason, and two decimals pass, as they do everywhere.
    */
-  if (PRECISE_COORDINATE_PAIR.test(value)) {
+  if (containsPreciseCoordinate(value)) {
     collector.fail(name, 'must not contain a coordinate with more than 2 decimals');
   }
   collector.assertValid();
   return value;
 }
 
-/** Two numbers that read as a latitude/longitude pair, either with 3 or more decimals. */
-const PRECISE_COORDINATE_PAIR =
-  /[-+]?\d{1,3}\.\d{3,}\s*[,;\s]\s*[-+]?\d{1,3}(?:\.\d+)?|[-+]?\d{1,3}(?:\.\d+)?\s*[,;\s]\s*[-+]?\d{1,3}\.\d{3,}/u;
+/**
+ * Whether a search term carries a position finer than two decimals.
+ *
+ * A scan rather than one pattern, because the fix-verification review walked straight past the
+ * first pattern with the spellings Nominatim itself understands: hemisphere letters
+ * (`48.856614N 2.352222E`), degree signs, a slash or words between the numbers, comma decimals,
+ * fullwidth digits, and degrees-minutes-seconds. So:
+ *
+ *  - NFKC first, which folds fullwidth digits and compatibility forms into ASCII;
+ *  - any degrees-minutes-seconds form with seconds (about 30 m) is precise on its own;
+ *  - otherwise, two decimal numbers of latitude/longitude size, separated by at most a dozen
+ *    characters with no digit in them, with at least one of the two carrying three or more
+ *    decimals.
+ *
+ * Both numbers must be decimals. An address like "Av. Paulista 1.578, 01310-200", where "1.578" is
+ * a house number with a thousands separator, has one decimal number and passes.
+ */
+export function containsPreciseCoordinate(raw: string): boolean {
+  const text = raw.normalize('NFKC');
+  if (/\d{1,3}\s*°\s*\d{1,2}\s*['′]\s*\d{1,2}(?:[.,]\d+)?\s*(?:["″]|'')/u.test(text)) return true;
+
+  // Not after a digit or a dot, so a match never starts inside another number; after a comma is
+  // fine, since "48.856614,2.352222" separates its pair with one.
+  const numbers = [...text.matchAll(/(?<![\d.])[-+]?\d{1,3}[.,](\d+)(?![\d])/gu)];
+  for (let index = 1; index < numbers.length; index += 1) {
+    const previous = numbers[index - 1];
+    const current = numbers[index];
+    if (previous === undefined || current === undefined) continue;
+    const between = text.slice(previous.index + previous[0].length, current.index);
+    if (between.length > 12 || /\d/u.test(between)) continue;
+    const decimals = Math.max(previous[1]?.length ?? 0, current[1]?.length ?? 0);
+    if (decimals >= 3) return true;
+  }
+  return false;
+}
 
 /**
  * A public id, checked against the format GeoNerva mints — and against the kind of subject the

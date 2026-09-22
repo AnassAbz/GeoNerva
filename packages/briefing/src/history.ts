@@ -196,11 +196,17 @@ async function earthquakeHistory(base: Base, windowDays: number): Promise<Histor
     }),
     asOf,
   );
-  if (coverageStart === null) {
+  /*
+   * The current window must be read whole, as well as reached: a seven-day count over the three
+   * days since polling resumed is a count of three days presented as seven (P8 fix review).
+   */
+  if (coverageStart === null || coverageStart.getTime() > asOf.getTime() - windowDays * DAY_MS) {
     return await unavailable(base, {
       label,
       interpretation:
-        'GeoNerva had not been reading the earthquake catalog up to this time, so the recent weeks cannot be counted.',
+        coverageStart === null
+          ? 'GeoNerva had not been reading the earthquake catalog up to this time, so the recent weeks cannot be counted.'
+          : `GeoNerva had been reading the earthquake catalog for less than ${String(windowDays)} days at this time, so it cannot count a whole period.`,
       methodologyHref,
       sourceIds: [...EARTHQUAKE_SOURCES],
     });

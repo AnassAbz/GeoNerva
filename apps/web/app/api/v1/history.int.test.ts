@@ -75,11 +75,11 @@ async function earthquakesRead(): Promise<void> {
       INSERT INTO geonerva.backfill_plans
         (id, source_id, mode, range_from, range_to, window_ms, min_window_ms, status, finished_at)
       VALUES (gen_random_uuid(), 'usgs', 'HISTORICAL', ${daysAgo(62 * 7)}, ${daysAgo(0.01)},
-              ${DAY}, ${DAY}, 'COMPLETED', ${daysAgo(0.02)})
+              ${DAY}, ${DAY}, 'COMPLETED', ${daysAgo(0.01)})
       RETURNING id
     )
     INSERT INTO geonerva.backfill_intervals (plan_id, interval_from, interval_to, status, completed_at)
-    SELECT id, ${daysAgo(62 * 7)}, ${daysAgo(0.01)}, 'DONE', ${daysAgo(0.02)} FROM plan
+    SELECT id, ${daysAgo(62 * 7)}, ${daysAgo(0.01)}, 'DONE', ${daysAgo(0.01)} FROM plan
   `.execute(db);
   await seedRun(db, { sourceId: 'usgs', status: 'SUCCEEDED', startedAt: daysAgo(0.01) });
   await sql`
