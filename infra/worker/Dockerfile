@@ -69,7 +69,23 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     sh -c 'if [ -s /run/secrets/extra_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/extra_ca; fi; pnpm install --frozen-lockfile --ignore-scripts --prod --filter=@geonerva/worker...'
 
 COPY apps/worker apps/worker
-COPY packages packages
+
+# Only the packages the worker actually imports — its workspace dependency closure, which
+# `scripts/infra-consistency.test.ts` recomputes from the manifests and asserts against this
+# list, so adding a dependency without adding it here fails a test rather than the container.
+#
+# `COPY packages packages` was the first version and shipped all fifteen, including 4.6 MB of
+# captured provider payloads in `test-fixtures` that nothing in the image links to. Test
+# fixtures in a production image are not merely weight: they are provider data with its own
+# licensing, sitting somewhere nobody expects to find it.
+COPY packages/config packages/config
+COPY packages/correlation packages/correlation
+COPY packages/db packages/db
+COPY packages/domain packages/domain
+COPY packages/geo packages/geo
+COPY packages/http packages/http
+COPY packages/pipeline packages/pipeline
+COPY packages/sources packages/sources
 
 # ── runtime ──────────────────────────────────────────────────────────────────────────────────
 FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS runtime

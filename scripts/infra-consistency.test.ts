@@ -8,7 +8,7 @@
  * covers the worker image's base (P10), because a base image resolved by tag at build time is the
  * same silent drift one layer down.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -65,5 +65,56 @@ describe('the worker image base', () => {
   it('matches the Node version the repository pins everywhere else', () => {
     const major = read('.nvmrc').trim();
     expect(bases[0]).toContain(`node:${major}-`);
+  });
+});
+
+describe('the worker image ships the dependency closure and no more', () => {
+  /*
+   * A production image should contain what the process imports and nothing else. The first version
+   * copied the whole `packages` directory, which put 4.6 MB of captured provider payloads
+   * (`test-fixtures`) into it — weight, but also provider data with its own licensing, sitting
+   * somewhere nobody would think to look for it.
+   *
+   * The closure is recomputed from the manifests rather than restated here, so adding a workspace
+   * dependency to the worker fails this test instead of failing the container.
+   */
+  function workspaceClosure(): string[] {
+    const manifests = new Map<string, { dir: string; deps: string[] }>();
+    for (const dir of readdirSync(fileURLToPath(new URL('packages', repoRoot)))) {
+      const parsed = JSON.parse(read(`packages/${dir}/package.json`)) as {
+        name: string;
+        dependencies?: Record<string, string>;
+      };
+      manifests.set(parsed.name, { dir, deps: Object.keys(parsed.dependencies ?? {}) });
+    }
+
+    const worker = JSON.parse(read('apps/worker/package.json')) as {
+      dependencies?: Record<string, string>;
+    };
+    const seen = new Set<string>();
+    const queue = Object.keys(worker.dependencies ?? {});
+    while (queue.length > 0) {
+      const name = queue.shift();
+      if (name === undefined || !name.startsWith('@geonerva/') || seen.has(name)) continue;
+      seen.add(name);
+      queue.push(...(manifests.get(name)?.deps ?? []));
+    }
+    return [...seen]
+      .map((name) => manifests.get(name)?.dir)
+      .filter((dir): dir is string => dir !== undefined)
+      .sort();
+  }
+
+  const dockerfile = read('infra/worker/Dockerfile');
+  const copied = [...dockerfile.matchAll(/^COPY packages\/([\w-]+) packages\/\1$/gmu)]
+    .map((match) => match[1] ?? '')
+    .sort();
+
+  it('copies exactly the packages the worker depends on, transitively', () => {
+    expect(copied).toEqual(workspaceClosure());
+  });
+
+  it('does not copy the whole packages directory', () => {
+    expect(dockerfile).not.toMatch(/^COPY packages packages$/mu);
   });
 });
