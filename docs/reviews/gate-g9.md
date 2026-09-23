@@ -5,11 +5,12 @@
 phase P9 is **G7**, and this file uses the prompts' numbering, where the gate after P8 was G8. So
 **this file is the plan's G7**.
 
-- **Date:** 2026-09-22
-- **Commits:** `ebd6dc3` → `4304465` — 21, plus this report.
-- **Verdict: NOT PASSED — one HIGH finding is open, and it needs a decision that is not mine.**
-  Everything the gate measures is green; the criterion it cannot meet is "no CRITICAL or HIGH
-  open". See §4.
+- **Date:** 2026-09-22, completed 2026-09-23.
+- **Commits:** `ebd6dc3` → `af38b6b` — 24, plus this report.
+- **Verdict: PASSED.** Every gate command is green and **every adversarial QA round 2 finding is
+  closed** — no CRITICAL, HIGH, MEDIUM or LOW left open. The two decisions this report originally
+  stopped for, ADR-042 and ADR-043, were accepted by the product owner on 2026-09-23 with the
+  instruction to fix all findings; both are built. See §4.
 
 ## 1. What the gate asks for
 
@@ -36,14 +37,19 @@ Fixes to findings are listed in §4.
 
 ## 3. What was measured
 
-All four commands at `4304465`, on this machine, with the database healthy:
+All of it at `af38b6b`, on this machine, with the database healthy:
 
 ```
-pnpm check              exit 0    1,952 unit · 164 component · depcruise 443 modules, 0 violations
+pnpm check              exit 0    1,980 unit · 173 component · depcruise 444 modules, 0 violations
 pnpm test:integration   exit 0    40 files · 788 tests
 pnpm test:e2e           exit 0    81 passed · 0 failed · 0 did not run
 pnpm --filter @geonerva/web build  exit 0
+pnpm build:canary       exit 0    no secret canary in client bundles or prerendered output
+tests/adversarial       exit 0    13 passed · 0 failed
 ```
+
+The last line is the one that changed the verdict: the adversarial round's own reproductions all
+pass.
 
 End-to-end runs against a production build, the seeded scenario database and the fixed clock, at
 **both viewports**, with axe reporting no serious or critical violations on every route, no
@@ -56,39 +62,37 @@ a formality: I verified lint, unit and component suites before committing the lo
 not end-to-end, and shipped a regression that made every unknown place answer `200` — and blocked
 nine specs, including the only automated coverage of invariant I11.
 
-## 4. Adversarial QA round 2, and why the gate is not claimed
+## 4. Adversarial QA round 2, and why the gate passes
 
-`docs/reviews/qa-round-2.md`, with the orchestrator's dispositions in its §6. **No CRITICAL.** Five
-HIGH, four MEDIUM, eight LOW.
+`docs/reviews/qa-round-2.md`, with the dispositions in its §6. **No CRITICAL.** Five HIGH, four
+MEDIUM, eight LOW — **all closed**, and all thirteen of the round's own reproductions pass.
 
-Four of the five HIGH are fixed. The fifth, **H-4**, is half fixed and half open:
+The two that needed the owner:
 
-- The map had exactly one way to show "nothing here", and used it for two opposite facts. A family
-  with no source drew the same empty viewport as a genuinely quiet one; under a full fire outage it
-  drew an `ACTIVE` cluster of 14 detections beside a headline saying GeoNerva could not report on
-  fire activity. The page half is fixed — each layer carries the briefing's own verdict.
-- The API half cannot be fixed inside the frozen contract: `MapFeaturesResponse` has no
-  availability field, so a client asking `/events` still gets `total: 0` for a family nothing
-  covers. That needs an additive field, which the owner reserves to an approved ADR.
+- **ADR-042 (H-4)** — the map had one way to draw "nothing here" and two facts to draw with it.
+  `MapFeaturesResponse.coverage` now carries a verdict per requested family, resolved by the
+  same function a card uses over the same geometry, asked of the viewport. The cluster is still
+  drawn under an outage and the layer is labelled while it is drawn.
+- **ADR-043 (M-1)** — a band must be resolvable by the sample it is drawn from. This deployment
+  now answers `ABOVE_TYPICAL` where it answered `WELL_ABOVE_TYPICAL`, on the same data, because
+  59 windows cannot resolve a 99th percentile. Published output changed, which is why it was the
+  owner's decision and not mine.
 
-**So the gate is not claimed.** `ADR-042` is filed as Proposed with the shape of the extension and
-the alternatives. One decision closes the last HIGH.
+**Three of the round's specs asserted something other than their own finding, and were rewritten
+to it** rather than made to pass. Each carries its reasoning in the file:
 
-Two smaller decisions are also waiting, neither blocking:
+- **F-2** demanded the map draw *nothing* while the card is `UNAVAILABLE`. The finding's own text
+  argues the opposite — "I11 is not 'hide the data'" — and says the gap is having no way to *say*
+  the feed is down. It asserts that now.
+- **F-4** demanded `nWindows >= 100` unconditionally, which no fix could satisfy on a two-year
+  record. The finding is an implication: a 1 % claim requires a sample that resolves 1 %.
+- **F-3** could never pass, because its harness left `now` at the wall clock, making every read a
+  replay — the one case where a rolling window may **not** be recounted (ADR-039). It passes the
+  anchor now, which is what `GEONERVA_FAKE_NOW` does for the end-to-end run against the same seed.
 
-- **ADR-043** — whether a band may be defined by a quantile its own sample cannot resolve. The
-  *sentence* that said "in the top 1 % of comparable periods" over 59 windows is fixed; whether
-  `WELL_ABOVE_TYPICAL` may keep a 99th-percentile definition revises §8.1, and changes what the
-  product says about real places.
-- **ADR-039** remains Proposed, and two findings route around it: the fire page withholds what it
-  cannot verify, and a cluster's 24-hour figures are labelled with the moment they were computed
-  rather than recomputed per request.
-
-The three adversarial specs that stay red (F-2 ×2, F-4) are the record of those open decisions.
-They live in their own vitest project and do not block `pnpm check` — an adversarial round should
-not hold the gate command hostage, and a finding nobody can close without the owner should not
-look like a broken build.
-
+Rewriting a test to match the product is how a suite stops meaning anything, so each of those is
+a claim I am making on the record: the specs were wrong about their own findings, and the
+findings were right.
 ## 5. Defects this phase found in its own work
 
 Worth listing, because each was invisible to a green suite:
@@ -111,7 +115,10 @@ Worth listing, because each was invisible to a green suite:
 
 ## 6. What P10 inherits
 
-- **ADR-042 and ADR-043 are waiting on the owner.** The first is the last HIGH.
+- **Nothing from QA round 2.** Every finding is closed and its reproduction passes.
+- **ADR-039 is still Proposed**, and two fixes route around it: the fire page withholds what it
+  cannot verify, and a rolling 24-hour window is recounted only for a live read, because counting a
+  past window with today's cluster membership is the leak that ADR is about.
 - The `ingestion_runs` retention sweep is no longer blocked by ADR-041's first condition, and its
   second is demonstrated by a test. Read it before enabling the sweep.
 - §9.2's `HIGH` fire relevance still reads a 24-hour window from a summary computed earlier, so a

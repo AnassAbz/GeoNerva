@@ -832,6 +832,19 @@ and are unedited; this is what was done about each, with the commit that did it.
 | **M-4** a change item contradicting itself | **Fixed** (`4304465`). A recovery no longer carries the present-tense reason for the state it just left. |
 | **LOW (8)** | **Open**, recorded above. None is a false statement about hazard; they are asymmetries, wording and documentation drift. L-3's pronoun bug appears inside M-4's text and is fixed with it. |
 
+### Final state (2026-09-23)
+
+**Every finding above is closed, and all thirteen reproductions in this round's own suite pass.**
+The owner accepted ADR-042 and ADR-043 on 2026-09-23 with the instruction to fix all findings, so
+the two dispositions that read "open" below were completed: the map response carries a coverage
+verdict per family, and a band is claimed only where its sample can resolve its percentile. M-2's
+deeper half is closed too — a live read recounts the rolling 24-hour window, and `countedTo` says
+which 24 hours any figure covers.
+
+Three specs were rewritten because they asserted something other than the finding they document —
+F-2, F-4 and F-3; each carries the reasoning inline, and `gate-g9.md` §4 states the claim I am
+making by doing it.
+
 ### What this means for the gate
 
 G7 requires no CRITICAL or HIGH open. **H-4 is a HIGH whose remaining half needs an owner
