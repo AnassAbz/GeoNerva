@@ -21,7 +21,12 @@ export function eventMapFeatures(detail: EventDetail): MapFeature[] {
     href: '',
     evidenceIds: detail.headline.evidenceIds,
   };
-  const magnitude = detail.headline.facts.find((fact) => fact.code === 'magnitude');
+  /*
+   * `MAGNITUDE`, the code `factsOf` emits. This was `'magnitude'`, so the lookup missed on every
+   * event and the detail map sized every marker as if no magnitude had been reported — the same
+   * case mismatch as QA round 2's H-2, in a second reader of the same vocabulary.
+   */
+  const magnitude = detail.headline.facts.find((fact) => fact.code === 'MAGNITUDE');
   const magnitudeValue = magnitude?.value.kind === 'number' ? magnitude.value.value : null;
   const areas = detail.geometries
     .filter((geometry) => geometry.geometry.type !== 'Point')

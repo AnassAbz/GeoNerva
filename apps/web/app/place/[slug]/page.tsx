@@ -4,16 +4,33 @@
  * Regions, in the order of the questions they answer: header → situation → What Changed →
  * family cards → map → nearby list → historical context → sources & evidence. Desktop (≥ 1024 px)
  * is two columns with a sticky map on the right; mobile is one column in that order.
+ *
+ * ### Where the response is allowed to start
+ *
+ * A status line is sent once, with the first flush, and cannot be taken back. So the page is split
+ * at the one question whose answer changes the status: **does this place exist**. `getBriefing` is
+ * awaited by `PlacePage` itself, outside every Suspense boundary, and a `null` becomes `notFound()`
+ * while the response has not begun — which is the only way a 404 is a 404 rather than a 200 with a
+ * "Not found" body. That is also why this route has no `loading.tsx`: a segment-level boundary is a
+ * boundary *above* the page, and it flushes before the page has asked anything.
+ *
+ * Everything the briefing does not already answer — the histories, the map's features, the cited
+ * evidence — is read by `PlaceDashboard` inside a `<Suspense>` whose fallback is `skeleton.tsx`.
+ * Those reads cannot change the status (the subject exists by then), so they stream, and a slow
+ * one shows the skeleton instead of a blank screen.
  */
 
 import type {
+  ChangeWindow,
   HazardFamily,
   HistoryResponse,
   LocationBriefing,
+  MapFeaturesResponse,
   SubjectSummary,
 } from '@geonerva/domain';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { Suspense } from 'react';
 
 import { EvidenceButton, EvidenceProvider } from '../../../components/evidence.tsx';
 import { HazardCard, leadItem } from '../../../components/hazard-card.tsx';
@@ -45,6 +62,7 @@ import {
   type SearchParams,
 } from '../../../lib/view/query.ts';
 import { placeHref, subjectHref } from '../../../lib/view/routes.ts';
+import PlaceSkeleton from './skeleton.tsx';
 
 interface PageProps {
   readonly params: Promise<{ slug: string }>;
@@ -62,8 +80,7 @@ function isHighOrAbove(item: SubjectSummary): boolean {
 }
 
 /**
- * The dashboard's first two reads, with a retention refusal separated from a failure **here**,
- * on the server.
+ * A read, with a retention refusal separated from a failure **here**, on the server.
  *
  * `error.tsx` would be the natural home for it and cannot be: Next redacts a server component's
  * error message before it reaches a client error boundary in a production build, replacing it with
@@ -72,29 +89,40 @@ function isHighOrAbove(item: SubjectSummary): boolean {
  * rendered as an absence — is a rule about what the reader is told, not about which file tells
  * them. On this side of the boundary the error is still itself, so the refusal is classified where
  * it is legible and the page renders the explanation as its own content, with a 200 and a way back
- * to the present. `error.tsx` keeps the same wording for the development build and for a refusal
- * raised by the reads that happen after this one.
+ * to the present. `error.tsx` keeps the same wording for the development build.
+ *
+ * Both of this page's reads go through it: the briefing, which `PlacePage` awaits, and the three
+ * that `PlaceDashboard` streams. The second of those is new — before the split, a refusal raised
+ * by the map's viewport read reached `error.tsx` and was reported in production as a fault. It is
+ * classified here now for the same reason the first one is.
  *
  * Everything that is not that refusal is rethrown, including Next's own control-flow signals,
  * which `failureKind` classifies as `UNEXPECTED` and never swallows.
  */
-async function loadBriefing(
-  slug: string,
-  query: BriefingQuery,
-): Promise<
-  | 'RETENTION'
-  | { readonly briefing: LocationBriefing | null; readonly histories: readonly HistoryResponse[] }
-> {
+async function retentionOr<T>(read: () => Promise<T>): Promise<'RETENTION' | T> {
   try {
-    const [briefing, histories] = await Promise.all([
-      getBriefing(slug, query),
-      getHistories(slug, query),
-    ]);
-    return { briefing, histories };
+    return await read();
   } catch (error) {
     if (failureKind(error) !== 'RETENTION') throw error;
     return 'RETENTION';
   }
+}
+
+/** ADR-035's report: what was refused, why it is not an absence, and the way back to the present. */
+function RetentionNotice({
+  slug,
+  window,
+}: {
+  readonly slug: string;
+  readonly window: ChangeWindow;
+}) {
+  return (
+    <FailureNotice title={COPY.failure.retentionTitle} body={COPY.failure.retentionBody}>
+      <a href={placeHref(slug, { window })} className={FAILURE_ACTION_CLASS}>
+        {COPY.failure.retentionExit}
+      </a>
+    </FailureNotice>
+  );
 }
 
 export default async function PlacePage({ params, searchParams }: PageProps) {
@@ -105,32 +133,63 @@ export default async function PlacePage({ params, searchParams }: PageProps) {
   const asOf = parseAsOfParam(search['as_of'], now);
   const query = { window, ...(asOf === undefined ? {} : { asOf }) };
 
-  const loaded = await loadBriefing(slug, query);
-  if (loaded === 'RETENTION') {
-    return (
-      <FailureNotice title={COPY.failure.retentionTitle} body={COPY.failure.retentionBody}>
-        <a href={placeHref(slug, { window })} className={FAILURE_ACTION_CLASS}>
-          {COPY.failure.retentionExit}
-        </a>
-      </FailureNotice>
-    );
-  }
-  const { briefing, histories } = loaded;
+  /*
+   * The one await that decides the status, and the last thing that happens before the response is
+   * allowed to begin. `notFound()` below this line still sets a 404; below a Suspense boundary it
+   * would not (see the file header).
+   */
+  const briefing = await retentionOr(() => getBriefing(slug, query));
+  if (briefing === 'RETENTION') return <RetentionNotice slug={slug} window={window} />;
   if (briefing === null) notFound();
 
+  return (
+    <Suspense fallback={<PlaceSkeleton />}>
+      <PlaceDashboard briefing={briefing} slug={slug} now={now} query={query} />
+    </Suspense>
+  );
+}
+
+/**
+ * Everything the briefing did not already answer, streamed behind the skeleton.
+ *
+ * The map's features come after the briefing rather than beside it: a viewport needs the
+ * location's coordinates, and only the briefing has resolved them (`lib/view/data.ts`, note 3).
+ * The evidence details are bounded there too, and keyed off the manifest this response carried.
+ */
+async function PlaceDashboard({
+  briefing,
+  slug,
+  now,
+  query,
+}: {
+  readonly briefing: LocationBriefing;
+  readonly slug: string;
+  readonly now: string;
+  readonly query: BriefingQuery;
+}) {
+  const { window, asOf } = query;
   const { location, snapshot, changes } = briefing;
-  /*
-   * After the briefing rather than beside it: a viewport needs the location's coordinates, and
-   * only the briefing has resolved them (`lib/view/data.ts`, note 3). The evidence details are
-   * bounded there too, and keyed off the manifest this response carried.
-   */
-  const [mapFeatures, evidenceDetails] = await Promise.all([
-    getMapFeatures(location, asOf === undefined ? {} : { asOf }),
-    getEvidenceDetails(
-      briefing.evidenceManifest.map((item) => item.id),
-      asOf === undefined ? {} : { asOf },
-    ),
-  ]);
+
+  const loaded = await retentionOr(
+    async (): Promise<{
+      readonly histories: readonly HistoryResponse[];
+      readonly mapFeatures: MapFeaturesResponse | null;
+      readonly evidenceDetails: Awaited<ReturnType<typeof getEvidenceDetails>>;
+    }> => {
+      const [histories, mapFeatures, evidenceDetails] = await Promise.all([
+        getHistories(slug, query),
+        getMapFeatures(location, asOf === undefined ? {} : { asOf }),
+        getEvidenceDetails(
+          briefing.evidenceManifest.map((item) => item.id),
+          asOf === undefined ? {} : { asOf },
+        ),
+      ]);
+      return { histories, mapFeatures, evidenceDetails };
+    },
+  );
+  if (loaded === 'RETENTION') return <RetentionNotice slug={slug} window={window} />;
+  const { histories, mapFeatures, evidenceDetails } = loaded;
+
   const timeZone = location.timezone;
   const families = snapshot.families;
   const mapStyle = parseMapStyleUrl(process.env['MAP_STYLE_URL']);

@@ -148,13 +148,28 @@ test('"Return to the present" clears the replay banner', async ({ page }) => {
 test.describe('desktop only', () => {
   test.skip(({ isMobile }) => isMobile, 'desktop flows (docs/TESTING.md §5)');
 
-  test('not-covered state (weather) and insufficient-history state', async ({ page }) => {
+  test('not-covered state (weather) and the refusal states beside a real one', async ({ page }) => {
     await page.goto(PLACE);
     await expect(
       page.getByText('Weather warnings are not covered for this location.'),
     ).toBeVisible();
+
+    /*
+     * The fire card names the reason it cannot compare, and it is coverage, not history: the
+     * aggregate needs 35 read days (ADR-040) and the seeded world has days it did not read. This
+     * used to read "Not enough history to establish a baseline" on *every* card, including one
+     * the same page gave 259 reference windows — QA round 2's H-1.
+     */
     const fire = page.getByRole('article', { name: /Fire activity/iu });
-    await expect(fire.getByText('Not enough history to establish a baseline.')).toBeVisible();
+    // The sentence appears in the card's context row and again in its disclosure; either will do.
+    await expect(
+      fire.getByText('Not enough satellite coverage in the last five weeks').first(),
+    ).toBeVisible();
+
+    /* And the other half of that finding: a card with a baseline states it, on the card. */
+    const quakes = page.getByRole('article', { name: /Earthquakes/iu });
+    await expect(quakes.getByText(/above typical/iu).first()).toBeVisible();
+    await expect(quakes.getByText('Not enough history to establish a baseline.')).toHaveCount(0);
   });
 
   /**

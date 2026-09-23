@@ -5,6 +5,16 @@
  * family's history, the map's features and the cited evidence — four round trips to the database,
  * two of them sequential because a viewport needs the coordinates the briefing resolved.
  *
+ * ### Why this is a component and not `loading.tsx`
+ *
+ * A `loading.tsx` is a Suspense boundary around the **whole** segment, so Next flushes the shell —
+ * the status line with it — before `page.tsx` has decided anything. A `notFound()` raised after
+ * that flush can no longer set a status: the boundary catches it in-stream, renders this route's
+ * "Not found" page and adds `<meta name="robots" content="noindex">`, and the response is a 200
+ * whose body says the place does not exist. So the boundary moved **into** `page.tsx`, below the
+ * one `await` that answers "does this subject exist" — this file is that boundary's fallback, and
+ * nothing is flushed until the lookup has answered.
+ *
  * The eight regions are laid out in the order §6.2 gives them and in the grid `page.tsx` uses —
  * `max-w-7xl`, then twelve columns from `lg` with the left five holding regions 2–4 and 6–8 and
  * the right seven holding the map from row 1. The map's box repeats the panel's own
@@ -21,7 +31,7 @@ import { LoadingRegion, SkeletonBlock, SkeletonCard } from '../../../components/
 import { COPY } from '../../../lib/view/copy.ts';
 import { FAMILY_ORDER } from '../../../lib/view/families.ts';
 
-export default function LoadingPlace() {
+export default function PlaceSkeleton() {
   return (
     <LoadingRegion label={COPY.loading.briefing}>
       <main id="main" className="mx-auto max-w-7xl px-4 pb-8">

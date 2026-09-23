@@ -5,10 +5,17 @@
  * failure explains itself, offers a retry that calls `reset`, and never puts the thrown error on
  * the page; and that the retention refusal gets its own wording rather than the failure's.
  *
- * What only E2E can prove is listed in the handoff: that Next actually mounts each `loading.tsx`
- * during a real navigation, that the skeleton and the content occupy the same box, that focus is
- * still where the reader left it after the content streams in, and that a production build's
- * redaction never reaches the reader as a retention sentence.
+ * Three of the four skeletons are no longer `loading.tsx` modules. A `loading.tsx` wraps the whole
+ * segment, so Next flushes the status line before the page has looked its subject up and a later
+ * `notFound()` answers 200; on the routes that can 404 the boundary therefore lives inside
+ * `page.tsx`, below that lookup, and these files are its fallback. `/data-status` cannot 404 and
+ * keeps its `loading.tsx`. The rules the cases below assert are the same either way — which is the
+ * point of testing the component rather than the convention it is wired into.
+ *
+ * What only E2E can prove is listed in the handoff: that each skeleton is actually mounted during
+ * a real navigation, that the skeleton and the content occupy the same box, that focus is still
+ * where the reader left it after the content streams in, and that a production build's redaction
+ * never reaches the reader as a retention sentence.
  */
 
 import { render, screen } from '@testing-library/react';
@@ -22,11 +29,11 @@ import DataStatusError from './data-status/error.tsx';
 import LoadingDataStatus from './data-status/loading.tsx';
 import AppError from './error.tsx';
 import EventError from './event/[publicId]/error.tsx';
-import LoadingEvent from './event/[publicId]/loading.tsx';
+import EventSkeleton from './event/[publicId]/skeleton.tsx';
 import FireError from './fire/[publicId]/error.tsx';
-import LoadingFire from './fire/[publicId]/loading.tsx';
+import FireSkeleton from './fire/[publicId]/skeleton.tsx';
 import PlaceError from './place/[slug]/error.tsx';
-import LoadingPlace from './place/[slug]/loading.tsx';
+import PlaceSkeleton from './place/[slug]/skeleton.tsx';
 
 /* The boundary reads the current path from the router to offer "return to the present". */
 vi.mock('next/navigation', () => ({ usePathname: () => '/place/marrakech-ma-2542997' }));
@@ -40,9 +47,9 @@ interface SkeletonCase {
 }
 
 const SKELETONS: readonly SkeletonCase[] = [
-  { name: 'the dashboard', Component: LoadingPlace, label: COPY.loading.briefing },
-  { name: 'an event', Component: LoadingEvent, label: COPY.loading.event },
-  { name: 'a fire activity cluster', Component: LoadingFire, label: COPY.loading.fire },
+  { name: 'the dashboard', Component: PlaceSkeleton, label: COPY.loading.briefing },
+  { name: 'an event', Component: EventSkeleton, label: COPY.loading.event },
+  { name: 'a fire activity cluster', Component: FireSkeleton, label: COPY.loading.fire },
   { name: 'data status', Component: LoadingDataStatus, label: COPY.loading.dataStatus },
 ];
 
@@ -79,7 +86,7 @@ describe.each(SKELETONS)('the skeleton for $name', ({ Component, label }) => {
 
 describe('the dashboard skeleton', () => {
   it('lays out the regions of PRODUCT §6.2 in the grid the page uses', () => {
-    const { container } = render(<LoadingPlace />);
+    const { container } = render(<PlaceSkeleton />);
     expect(container.querySelector('main')?.className).toContain('max-w-7xl');
     for (const heading of [
       COPY.changes.title,
@@ -93,12 +100,12 @@ describe('the dashboard skeleton', () => {
   });
 
   it('reserves one card per hazard family, so the column does not grow under the reader', () => {
-    const { container } = render(<LoadingPlace />);
+    const { container } = render(<PlaceSkeleton />);
     expect(container.querySelectorAll('section.space-y-3 > div')).toHaveLength(FAMILY_ORDER.length);
   });
 
   it('reserves the map panel’s own box at both viewports', () => {
-    const { container } = render(<LoadingPlace />);
+    const { container } = render(<PlaceSkeleton />);
     const box = container.querySelector('[class*="70vh"]');
     expect(box).not.toBeNull();
     expect(box?.className).toContain('h-[200px]');

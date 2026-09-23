@@ -25,11 +25,24 @@
  * here at zoom ≥ 8, which leaves docs/PRODUCT.md §6.5's "detections at zoom ≥ 8" stale pending the
  * owner's decision on ADR-039 — a documentation gap, not a silent omission: the map never claims
  * to show detections.
+ *
+ * ### Where the response is allowed to start
+ *
+ * `getFireCluster` is awaited by `FirePage` itself, outside every Suspense boundary, because two
+ * of its outcomes are the response's status line and not its body: a `null` is `notFound()`, and a
+ * superseded public id is a `permanentRedirect`. Neither can be honoured once a byte has been
+ * flushed — a boundary would catch both in-stream and the reader would get a 200 whose body says
+ * the cluster is missing, or a page that never redirects. That is why this route has no
+ * `loading.tsx`: a segment-level boundary flushes before `page.tsx` has asked anything.
+ *
+ * The raw-record metadata for the cited observations cannot change the status — the cluster exists
+ * by then — so it is read inside a `<Suspense>` whose fallback is `skeleton.tsx`.
  */
 
 import type { FireClusterDetail } from '@geonerva/domain';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { Suspense } from 'react';
 
 import { EvidenceButton, EvidenceProvider } from '../../../components/evidence.tsx';
 import { MapPanel } from '../../../components/map/map-panel.tsx';
@@ -42,6 +55,7 @@ import { fireMapFeatures, pointOf } from '../../../lib/view/detail-map.ts';
 import { formatDateTime, formatDistanceKm, formatNumber } from '../../../lib/view/format.ts';
 import { first, type SearchParams } from '../../../lib/view/query.ts';
 import { placeHref } from '../../../lib/view/routes.ts';
+import FireSkeleton from './skeleton.tsx';
 
 interface PageProps {
   readonly params: Promise<{ publicId: string }>;
@@ -62,12 +76,31 @@ export default async function FirePage({ params, searchParams }: PageProps) {
   const { publicId } = await params;
   const search = await searchParams;
   const placeSlug = first(search['place']);
+  /*
+   * The one await that decides the status, and the last thing that happens before the response is
+   * allowed to begin: `notFound()` and the redirect this can raise both need an unflushed status
+   * line (see the file header).
+   */
   const detail = await getFireCluster(
     decodeURIComponent(publicId),
     placeSlug === undefined ? {} : { placeSlug },
   );
   if (detail === null) notFound();
 
+  return (
+    <Suspense fallback={<FireSkeleton />}>
+      <FireClusterView detail={detail} placeSlug={placeSlug} />
+    </Suspense>
+  );
+}
+
+async function FireClusterView({
+  detail,
+  placeSlug,
+}: {
+  readonly detail: FireClusterDetail;
+  readonly placeSlug: string | undefined;
+}) {
   /* ADR-038's "Raw record", for the observations this response cites (bounded in `data.ts`). */
   const evidenceDetails = await getEvidenceDetails(detail.evidenceManifest.map((item) => item.id));
 

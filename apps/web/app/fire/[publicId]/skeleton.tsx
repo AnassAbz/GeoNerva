@@ -6,12 +6,17 @@
  * and the engine's wording, not the UI's (`lib/view/copy.ts`'s header rule). The UI must not
  * compose a stand-in for it, and rendering a remembered one would be the UI authoring a caveat.
  * The box is sized for it so the sections below do not move when the real sentence lands.
+ *
+ * It is a component rather than a `loading.tsx` because a segment-level boundary flushes the
+ * status line before `page.tsx` has looked the cluster up, which turns a missing cluster into a
+ * 200 (`app/place/[slug]/skeleton.tsx` has the full note). `page.tsx` awaits the lookup and then
+ * uses this as the fallback of its own `<Suspense>`.
  */
 
 import { LoadingRegion, SkeletonBlock, SkeletonCard } from '../../../components/ui/skeleton.tsx';
 import { COPY } from '../../../lib/view/copy.ts';
 
-export default function LoadingFire() {
+export default function FireSkeleton() {
   return (
     <LoadingRegion label={COPY.loading.fire}>
       <main id="main" className="mx-auto max-w-4xl px-4 pb-8">

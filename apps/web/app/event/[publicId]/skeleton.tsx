@@ -9,12 +9,17 @@
  * The per-source table is a box rather than an empty grid: an empty table with headers invites the
  * reader to believe the columns are the sources this event actually has, and the count of sources
  * is not known until the detail arrives.
+ *
+ * It is a component rather than a `loading.tsx` because a segment-level boundary flushes the
+ * status line before `page.tsx` has looked the event up, which turns a missing event into a 200
+ * (`app/place/[slug]/skeleton.tsx` has the full note). `page.tsx` awaits the lookup and then uses
+ * this as the fallback of its own `<Suspense>`.
  */
 
 import { LoadingRegion, SkeletonBlock, SkeletonCard } from '../../../components/ui/skeleton.tsx';
 import { COPY } from '../../../lib/view/copy.ts';
 
-export default function LoadingEvent() {
+export default function EventSkeleton() {
   return (
     <LoadingRegion label={COPY.loading.event}>
       <main id="main" className="mx-auto max-w-4xl px-4 pb-8">

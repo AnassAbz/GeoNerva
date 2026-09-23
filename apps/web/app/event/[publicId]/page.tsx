@@ -3,10 +3,24 @@
  * per-source values side by side with the spread and the agreement; relevance for the place the
  * reader came from; the version timeline; why these reports are one event; the geometry; the
  * official links; the evidence.
+ *
+ * ### Where the response is allowed to start
+ *
+ * `getEventDetail` is awaited by `EventPage` itself, outside every Suspense boundary, because two
+ * of its outcomes are the response's status line and not its body: a `null` is `notFound()`, and a
+ * superseded public id is a `permanentRedirect`. Neither can be honoured once a byte has been
+ * flushed — a boundary would catch both in-stream and the reader would get a 200 whose body says
+ * the event is missing, or a page that never redirects. That is why this route has no
+ * `loading.tsx`: a segment-level boundary flushes before `page.tsx` has asked anything.
+ *
+ * The raw-record metadata for the cited observations cannot change the status — the event exists
+ * by then — so it is read inside a `<Suspense>` whose fallback is `skeleton.tsx`.
  */
 
+import type { EventDetail } from '@geonerva/domain';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { Suspense } from 'react';
 
 import { EvidenceButton, EvidenceProvider } from '../../../components/evidence.tsx';
 import { MapPanel } from '../../../components/map/map-panel.tsx';
@@ -26,6 +40,7 @@ import {
 import { first, type SearchParams } from '../../../lib/view/query.ts';
 import { placeHref } from '../../../lib/view/routes.ts';
 import { sourceName } from '../../../lib/view/sources.ts';
+import EventSkeleton from './skeleton.tsx';
 
 interface PageProps {
   readonly params: Promise<{ publicId: string }>;
@@ -44,12 +59,31 @@ export default async function EventPage({ params, searchParams }: PageProps) {
   const { publicId } = await params;
   const search = await searchParams;
   const placeSlug = first(search['place']);
+  /*
+   * The one await that decides the status, and the last thing that happens before the response is
+   * allowed to begin: `notFound()` and the redirect this can raise both need an unflushed status
+   * line (see the file header).
+   */
   const detail = await getEventDetail(
     decodeURIComponent(publicId),
     placeSlug === undefined ? {} : { placeSlug },
   );
   if (detail === null) notFound();
 
+  return (
+    <Suspense fallback={<EventSkeleton />}>
+      <EventDetailView detail={detail} placeSlug={placeSlug} />
+    </Suspense>
+  );
+}
+
+async function EventDetailView({
+  detail,
+  placeSlug,
+}: {
+  readonly detail: EventDetail;
+  readonly placeSlug: string | undefined;
+}) {
   /* ADR-038's "Raw record", for the observations this response cites (bounded in `data.ts`). */
   const evidenceDetails = await getEvidenceDetails(detail.evidenceManifest.map((item) => item.id));
 
