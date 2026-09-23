@@ -48,6 +48,8 @@
  */
 
 import { createDatabase, webPoolOptions, type DatabaseHandle } from '@geonerva/db/client';
+
+import { webConfig } from './config.ts';
 import type { DB } from '@geonerva/db/schema';
 import type { Kysely as KyselyType } from 'kysely';
 
@@ -114,30 +116,22 @@ let handle: DatabaseHandle | null = null;
 export function database(): DatabaseHandle {
   if (handle !== null) return handle;
 
-  const connectionString = process.env['DATABASE_URL'];
-  if (connectionString === undefined || connectionString.trim() === '') {
-    /*
-     * A configuration failure, raised as a plain error rather than a problem document. It happens
-     * at startup on the first request, the message names the variable and never its value, and
-     * the API layer turns it into a generic `INTERNAL_ERROR` — a caller must not be able to
-     * distinguish "misconfigured" from "broken", because the difference tells them about the
-     * deployment.
-     */
-    throw new Error('DATABASE_URL is not set');
-  }
-
   /*
-   * Destructured rather than accessed.
+   * Through the validated configuration, not around it.
    *
-   * `process.env.NODE_ENV` and `process.env['NODE_ENV']` are each valid in one of this
-   * repository's two TypeScript programs and rejected by the other: the web program has Next's
-   * `ProcessEnv` augmentation, which declares `NODE_ENV` and so makes eslint's `dot-notation`
-   * require the dot, while the root program sees it through the index signature, where
-   * `noPropertyAccessFromIndexSignature` forbids exactly that. Destructuring is the one form both
-   * accept.
+   * This used to read `process.env['DATABASE_URL']` directly and check it for emptiness, which
+   * made it the one part of the web process that could run on an environment `packages/config`
+   * had never seen: a URL with the wrong scheme reached the driver, and `NODE_ENV` was taken raw
+   * rather than parsed, so the production TLS policy keyed off an unvalidated string. The config
+   * is memoized, so this costs nothing per request, and `instrumentation.ts` has already parsed it
+   * before the first one arrives.
+   *
+   * A failure is still a plain `Error` rather than a problem document: the API layer turns it into
+   * a generic `INTERNAL_ERROR`, because a caller must not be able to distinguish "misconfigured"
+   * from "broken" — that difference is information about the deployment.
    */
-  const { NODE_ENV } = process.env;
-  handle = createDatabase(webPoolOptions(connectionString, NODE_ENV));
+  const config = webConfig();
+  handle = createDatabase(webPoolOptions(config.DATABASE_URL, config.NODE_ENV));
   return handle;
 }
 
