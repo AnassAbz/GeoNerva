@@ -32,6 +32,16 @@ dist
 .turbo
 .pnpm-store
 
+# Test sources and helpers. A production image should not carry the code that creates databases,
+# nor 83 test files that import a fixtures package the image deliberately no longer contains —
+# dead source that cannot even resolve. The Dockerfile's COPYs are path-specific, so this file is
+# the right lever for cutting across them.
+**/*.test.ts
+**/*.test.tsx
+**/*.int.test.ts
+packages/db/src/testing
+tests
+
 # Test and tooling artefacts.
 coverage
 playwright-report

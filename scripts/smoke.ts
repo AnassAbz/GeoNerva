@@ -122,19 +122,35 @@ function asRecord(value: unknown, check: number, what: string): Record<string, u
   return value as Record<string, unknown>;
 }
 
-/** 1. `/` 200 in under 2 s. */
+/**
+ * 1. `/` 200 in under 2 s — **warm**.
+ *
+ * The first request of the day to an idle serverless deployment pays for a cold function *and* a
+ * cold database connection, and `force-dynamic` means no HTML is served from a cache. Two seconds
+ * is a budget for what a second reader experiences, not for what the nightly cron happens to
+ * trigger; holding a cold start to it would make the cron red for a reason that is not a
+ * regression. So the first request is made and discarded, and the budget is applied to the second.
+ * The cold time is reported, because it is worth knowing and should never be silently dropped.
+ */
 async function checkHome(base: string): Promise<string> {
+  const cold = await get(base);
+  if (cold.response.status !== 200) {
+    throw new CheckFailed(1, `/ answered ${String(cold.response.status)}, expected 200`);
+  }
+  await cold.response.arrayBuffer();
+
   const { response, elapsedMs } = await get(base);
   if (response.status !== 200) {
-    throw new CheckFailed(1, `/ answered ${String(response.status)}, expected 200`);
+    throw new CheckFailed(1, `/ answered ${String(response.status)} when warm, expected 200`);
   }
   if (elapsedMs > HOME_BUDGET_MS) {
     throw new CheckFailed(
       1,
-      `/ took ${String(elapsedMs)} ms, over the ${String(HOME_BUDGET_MS)} ms budget`,
+      `/ took ${String(elapsedMs)} ms warm, over the ${String(HOME_BUDGET_MS)} ms budget ` +
+        `(${String(cold.elapsedMs)} ms cold)`,
     );
   }
-  return `/ answered 200 in ${String(elapsedMs)} ms`;
+  return `/ answered 200 in ${String(elapsedMs)} ms warm (${String(cold.elapsedMs)} ms cold)`;
 }
 
 /** 2. Each scheduled P0 source ≠ UNAVAILABLE, or an explicitly declared outage. */
@@ -145,16 +161,24 @@ async function checkSources(base: string): Promise<string> {
     throw new CheckFailed(2, 'the deployment reports no sources at all');
   }
   const unavailable: string[] = [];
+  let checked = 0;
   for (const entry of sources) {
     const source = asRecord(entry, 2, 'a source');
     const enabled = source['enabled'];
+    if (enabled !== false) checked += 1;
     /*
      * A source the deployment has switched off is the "explicit known outage" §10 allows for: it
      * is a declared decision, visible on /data-status, not a deployment that has quietly stopped
      * working. A source that is enabled and UNAVAILABLE is the failure this check exists for.
      */
     if (enabled === false) continue;
-    if (source['status'] === 'UNAVAILABLE') {
+    /*
+     * `health.status`, not `status`. The first version of this check read a top-level field that
+     * `sourceStatusEntrySchema` does not have, so `unavailable` was always empty and the check
+     * reported every source healthy even when all of them were dead.
+     */
+    const health = asRecord(source['health'], 2, 'a source health');
+    if (health['status'] === 'UNAVAILABLE') {
       const id = source['sourceId'];
       unavailable.push(typeof id === 'string' ? id : 'an unnamed source');
     }
@@ -162,7 +186,7 @@ async function checkSources(base: string): Promise<string> {
   if (unavailable.length > 0) {
     throw new CheckFailed(2, `enabled sources are UNAVAILABLE: ${unavailable.join(', ')}`);
   }
-  return `${String(sources.length)} sources reported, none enabled-and-unavailable`;
+  return `${String(sources.length)} sources reported, ${String(checked)} enabled, none unavailable`;
 }
 
 /** 3. A briefing for the curated places returns 200 with a manifest. */
@@ -196,38 +220,75 @@ async function checkBriefings(base: string, places: readonly string[]): Promise<
   return `${String(served.length)} of ${String(places.length)} curated places briefed (${served.join(', ')})`;
 }
 
-/** 4 and 5. An event page resolves, and the evidence behind it resolves too. */
-async function checkEventAndEvidence(base: string, places: readonly string[]): Promise<string[]> {
-  let publicId: string | null = null;
-  let evidenceId: string | null = null;
-
+/**
+ * Collects every subject the curated briefings carry.
+ *
+ * Where a briefing's subjects actually live: `snapshot.families` is a record keyed by hazard
+ * family, and each card carries `items` (`locationBriefingSchema` → `locationSnapshotViewSchema`
+ * → `familyCardSchema`). The first version of checks 4 and 5 looked for a top-level `items` array
+ * that the contract has never had, found nothing every time, and reported "a quiet world" — so
+ * neither check ever issued a request. Read against
+ * `packages/domain/src/read-models/schemas.ts`, not against memory.
+ */
+async function collectSubjects(
+  base: string,
+  places: readonly string[],
+): Promise<Record<string, unknown>[]> {
+  const subjects: Record<string, unknown>[] = [];
   for (const place of places) {
     const { response } = await get(`${base}/api/v1/briefing?place=${encodeURIComponent(place)}`);
     if (response.status !== 200) continue;
     const body = asRecord(await response.json(), 4, 'a briefing');
-    const items = body['items'];
-    if (!Array.isArray(items)) continue;
-    for (const entry of items) {
-      const item = asRecord(entry, 4, 'a briefing item');
-      const ref = item['subjectRef'];
-      const ids = item['evidenceIds'];
-      if (typeof ref === 'string' && ref.startsWith('EQ:') && publicId === null) {
-        publicId = ref.slice(3);
-      }
-      if (Array.isArray(ids) && ids.length > 0 && evidenceId === null) {
-        evidenceId = String(ids[0]);
+    const snapshot = asRecord(body['snapshot'], 4, 'the snapshot');
+    const families = asRecord(snapshot['families'], 4, 'the families');
+
+    for (const card of Object.values(families)) {
+      const items: unknown = asRecord(card, 4, 'a family card')['items'];
+      if (!Array.isArray(items)) continue;
+      for (const entry of items as unknown[]) {
+        subjects.push(asRecord(entry, 4, 'a briefing item'));
       }
     }
-    if (publicId !== null && evidenceId !== null) break;
   }
+  return subjects;
+}
+
+/** 4 and 5. An event page resolves, and the evidence behind it resolves too. */
+async function checkEventAndEvidence(base: string, places: readonly string[]): Promise<string[]> {
+  const subjects = await collectSubjects(base, places);
+
+  /*
+   * `CE:` is a *canonical event*; `EQ` is the prefix of its public id, which is a different thing
+   * and is what the first version matched on. `publicId` is a field in its own right, so the ref
+   * only decides which kind of page the subject has.
+   */
+  const event = subjects.find((subject) => {
+    const ref = subject['subjectRef'];
+    return typeof ref === 'string' && ref.startsWith('CE:');
+  });
+  const publicId = typeof event?.['publicId'] === 'string' ? event['publicId'] : null;
+
+  const withEvidence = subjects.find((subject) => {
+    const ids = subject['evidenceIds'];
+    return Array.isArray(ids) && ids.length > 0 && typeof ids[0] === 'string';
+  });
+  const evidenceIds = withEvidence?.['evidenceIds'];
+  const evidenceId =
+    Array.isArray(evidenceIds) && typeof evidenceIds[0] === 'string' ? evidenceIds[0] : null;
 
   const lines: string[] = [];
+
   if (publicId === null) {
     /*
      * A quiet world is a legitimate answer, and inventing an identifier to test with would be
-     * testing the test. Said out loud rather than passed silently.
+     * testing the test. But it is reported as a **warning**, carrying the number of subjects seen,
+     * so that "nothing to resolve" can never again read the same as "resolved". A check that only
+     * ever prints the same reassuring line is not a check.
      */
-    lines.push('4. no event in any curated briefing to resolve — a quiet world, not a failure');
+    lines.push(
+      `4. \u26a0 no canonical event among ${String(subjects.length)} subjects in the curated ` +
+        'briefings — nothing to resolve, so nothing was proved',
+    );
   } else {
     const { response } = await get(`${base}/event/${encodeURIComponent(publicId)}`);
     if (response.status !== 200) {
@@ -237,15 +298,32 @@ async function checkEventAndEvidence(base: string, places: readonly string[]): P
   }
 
   if (evidenceId === null) {
-    lines.push('5. no evidence id in any curated briefing to resolve');
+    lines.push(`5. \u26a0 no evidence id among ${String(subjects.length)} subjects to resolve`);
   } else {
     const url = `${base}/api/v1/evidence/${encodeURIComponent(evidenceId)}`;
-    const body = asRecord(await json(url, 5), 5, 'the evidence item');
-    if (body['id'] === undefined && body['kind'] === undefined) {
-      throw new CheckFailed(5, `evidence ${evidenceId} resolved to something without a kind`);
+    const body = asRecord(await json(url, 5), 5, 'the evidence detail');
+    /*
+     * `evidenceDetailSchema` is `{ schemaVersion, item, detail, attribution }` — the id and kind
+     * are on `item`, not at the top level, and the contract's own refinement is that the manifest
+     * entry and the payload describe the same kind of evidence. Asserting that is worth more than
+     * asserting a field exists. The first version checked the top level, and would have failed
+     * every time had it ever run.
+     */
+    const item = asRecord(body['item'], 5, 'the evidence manifest entry');
+    const detail = asRecord(body['detail'], 5, 'the evidence payload');
+    const kind = item['kind'];
+    if (typeof kind !== 'string') {
+      throw new CheckFailed(5, `evidence ${evidenceId} resolved without a kind`);
     }
-    lines.push(`5. evidence ${evidenceId} resolved`);
+    if (kind !== detail['kind']) {
+      throw new CheckFailed(
+        5,
+        `evidence ${evidenceId}: the manifest says ${kind} and the payload says ${String(detail['kind'])}`,
+      );
+    }
+    lines.push(`5. evidence ${evidenceId} resolved as ${kind}`);
   }
+
   return lines;
 }
 
@@ -255,22 +333,43 @@ async function checkHeaders(base: string): Promise<string> {
   const { response } = await get(base);
   const headers = response.headers;
   const csp = headers.get('content-security-policy');
-  if (!csp?.includes("default-src 'self'")) {
-    throw new CheckFailed(6, 'no Content-Security-Policy with a self default on /');
+  if (csp === null) throw new CheckFailed(6, 'no Content-Security-Policy on /');
+
+  /*
+   * Parsed into directives rather than searched as a string. A substring test for
+   * `default-src 'self'` matches a policy of `default-src 'self' 'unsafe-inline'`, and a test for
+   * `'unsafe-inline'` guarded by `csp.includes('script-src')` skips the policy that has no
+   * `script-src` at all — where scripts inherit `default-src` and inline script is permitted.
+   * That is exactly the shape a botched header merge produces, and it is the regression this
+   * check exists for, so the *effective* script sources are what gets asserted.
+   */
+  const directives = new Map<string, string[]>();
+  for (const part of csp.split(';')) {
+    const [name, ...values] = part.trim().split(/\s+/u);
+    if (name !== undefined && name !== '') directives.set(name.toLowerCase(), values);
   }
-  if (csp.includes("'unsafe-inline'") && csp.includes('script-src')) {
-    const scriptSrc = csp.split(';').find((part) => part.trim().startsWith('script-src')) ?? '';
-    if (scriptSrc.includes("'unsafe-inline'")) {
-      throw new CheckFailed(6, "the script policy allows 'unsafe-inline'");
-    }
+
+  const defaultSrc = directives.get('default-src');
+  if (!defaultSrc?.includes("'self'")) {
+    throw new CheckFailed(6, "the policy has no default-src 'self'");
   }
-  if (headers.get('strict-transport-security') === null) {
-    throw new CheckFailed(6, 'no Strict-Transport-Security');
+  // Exactly the fallback chain a browser applies: script-src-elem, then script-src, then default.
+  const scriptSrc = directives.get('script-src-elem') ?? directives.get('script-src') ?? defaultSrc;
+  if (scriptSrc.includes("'unsafe-inline'")) {
+    throw new CheckFailed(6, "the effective script policy allows 'unsafe-inline'");
+  }
+
+  const hsts = headers.get('strict-transport-security');
+  if (hsts === null) throw new CheckFailed(6, 'no Strict-Transport-Security');
+  // `max-age=0` is a header that switches HSTS *off* while looking like it is present.
+  const maxAge = Number(/max-age=(\d+)/u.exec(hsts)?.[1] ?? '0');
+  if (maxAge <= 0) {
+    throw new CheckFailed(6, `Strict-Transport-Security has max-age=${String(maxAge)}`);
   }
   if (headers.get('x-powered-by') !== null) {
     throw new CheckFailed(6, 'x-powered-by is present');
   }
-  return 'CSP, HSTS present; x-powered-by absent';
+  return 'CSP with no inline script, HSTS with a real max-age, no x-powered-by';
 }
 
 /** 7. Worker heartbeat < 3 min old. */

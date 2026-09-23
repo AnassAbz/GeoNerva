@@ -345,6 +345,36 @@ describe('GEONERVA_FAKE_NOW', () => {
   });
 });
 
+/*
+ * `apps/worker/src/cli/startup-error.ts` shows a `ConfigError` to the operator unredacted, on the
+ * grounds that its message names variables and never values. That is a property of what the schema
+ * produces, not something the class enforces — one `.refine(…, { message: `got ${value}` })` added
+ * in a later phase would quietly turn the whitelist into a value printer. So it is pinned here,
+ * where such a refinement would be written.
+ */
+describe('a configuration failure never echoes a value (startup-error.ts depends on this)', () => {
+  it('names the variable and the rule, for every way each one can be wrong', () => {
+    const poison = 'hunter2-SUPERSECRET';
+    const cases: Record<string, string>[] = [
+      { ...validWorker, DATABASE_URL_WORKER: `mysql://user:${poison}@host/db` },
+      { ...validWorker, GEONERVA_BUILD: `built by ${poison}` },
+      { ...validWorker, AI_MODE: poison },
+      { ...validWorker, AI_DAILY_BUDGET_USD: poison },
+      { ...validWeb, RATE_LIMIT_SECRET: poison },
+      { ...validWeb, MAP_STYLE_URL: `http://insecure.example/${poison}` },
+      { ...validWeb, NOMINATIM_CONTACT: '' },
+    ];
+
+    for (const env of cases) {
+      const issues = issuesOf(() =>
+        'DATABASE_URL_WORKER' in env ? loadWorkerConfig(env) : loadWebConfig(env),
+      );
+      expect(issues.length).toBeGreaterThan(0);
+      for (const issue of issues) expect(issue).not.toContain(poison);
+    }
+  });
+});
+
 describe('secret inventory (docs/reviews/security-p1.md R-3)', () => {
   it('lists every declared variable whose name implies a credential', () => {
     const sensitive = ENV_VAR_NAMES.filter((name) =>

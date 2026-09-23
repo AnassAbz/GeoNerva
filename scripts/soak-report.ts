@@ -7,9 +7,10 @@
  *
  * ### What counts, and why — the rulings from `docs/reviews/p10-plan.md` §2
  *
- *  - **Scheduled live polls only.** `isLivePoll` already draws this line for source health: a
- *    backfill running alongside a broken feed must not stand in for it. A soak measures the thing
- *    that runs unattended, so `BACKFILL` and `RECONCILE` are out, and so is `MANUAL`.
+ *  - **Scheduled polls only.** Source health draws a nearby line with `isLivePoll`
+ *    (`SCHEDULE | MANUAL`) so that a backfill running alongside a broken feed cannot stand in for
+ *    it. This is one step stricter: a soak measures what runs *unattended*, so `MANUAL` is out
+ *    too, along with `BACKFILL` and `RECONCILE`.
  *  - **Provider failures are excluded from the denominator entirely**, so a provider outage during
  *    the soak can neither pass it nor fail it. The split is `PROVIDER_ERROR_CLASSES`, and it runs
  *    the *opposite* way from source health, which deliberately counts `CONFIG_ERROR` as a failure
@@ -30,6 +31,11 @@
  * this container did on the machine where it was first run. So the report fails when there are
  * fewer than `--min-runs` non-provider runs to judge, and it always prints the provider-failure
  * count beside the rate rather than quietly dropping it.
+ *
+ * Note what the two defaults imply together: at `--min-runs 24` and `--threshold 0.99`, any
+ * denominator below 100 has to be **perfect**, because 23 of 24 is 95.8 %. A 24-run pass means
+ * "nothing failed", not "99 % was achieved". Over a real day at the USGS cadence the denominator
+ * is nearer 288, where the threshold means what it says.
  *
  * Exit codes are the contract a workflow relies on: **0** the soak passes, **1** it fails (rate
  * below the threshold, or too few runs to tell), **2** the arguments or environment are wrong.
@@ -64,6 +70,13 @@ export function parseArgs(argv: readonly string[]): Options | string {
       if (value === undefined) return `${flag} needs a value`;
       const parsed = Number(value);
       if (!Number.isFinite(parsed) || parsed <= 0) return `${flag} must be a positive number`;
+      /*
+       * `--hours` reaches `make_interval(hours => …)`, which takes an integer: accepting 1.5 here
+       * would defer the complaint to PostgreSQL and report it as an environment failure.
+       */
+      if (flag === '--hours' && !Number.isInteger(parsed)) {
+        return '--hours must be a whole number of hours';
+      }
       if (flag === '--hours') hours = parsed;
       else if (flag === '--min-runs') minRuns = parsed;
       else threshold = parsed;

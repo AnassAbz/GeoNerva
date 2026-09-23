@@ -1,8 +1,12 @@
 /**
- * The smoke script's arguments. The checks themselves are HTTP against a running deployment and
- * are exercised by running them (see `docs/reviews/gate-p10.md`); what is worth pinning here is
- * the part that decides *what* gets smoked, because getting it wrong means testing the wrong
- * deployment — or testing one over plaintext and believing the headers it reports.
+ * The smoke script's arguments.
+ *
+ * The nine checks are HTTP against a running deployment, so the only way to exercise them is to
+ * run them against one — which is exactly how three of them were found to be dead: written against
+ * an imagined response shape, they could not fail, and no unit test over a mocked `fetch` would
+ * have said so either. What is worth pinning *here* is the part that decides **what** gets smoked,
+ * because getting that wrong means testing the wrong deployment — or testing one over plaintext
+ * and believing the headers it reports.
  */
 
 import { describe, expect, it } from 'vitest';

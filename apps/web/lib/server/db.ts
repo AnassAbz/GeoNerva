@@ -123,8 +123,7 @@ export function database(): DatabaseHandle {
    * made it the one part of the web process that could run on an environment `packages/config`
    * had never seen: a URL with the wrong scheme reached the driver, and `NODE_ENV` was taken raw
    * rather than parsed, so the production TLS policy keyed off an unvalidated string. The config
-   * is memoized, so this costs nothing per request, and `instrumentation.ts` has already parsed it
-   * before the first one arrives.
+   * is memoized, so this costs nothing per request beyond the first.
    *
    * A failure is still a plain `Error` rather than a problem document: the API layer turns it into
    * a generic `INTERNAL_ERROR`, because a caller must not be able to distinguish "misconfigured"

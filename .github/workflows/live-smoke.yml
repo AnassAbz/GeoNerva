@@ -32,9 +32,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      # Lifted to the job so a *step* can test whether it is set: the `secrets` context is not
-      # available in a step-level `if`, and `env` is.
-      SOAK_DATABASE_URL: ${{ secrets.GEONERVA_SOAK_DATABASE_URL }}
+      # A *sentinel*, not the secret. A step-level `if` cannot read the `secrets` context but can
+      # read `env`, and the obvious shortcut — lifting the secret itself to job scope — would put a
+      # production database URL in the environment of every step, including `pnpm install` and any
+      # postinstall script it runs. The boolean says whether the secret exists; the secret itself
+      # appears only in the one step that uses it.
+      HAS_SOAK_DATABASE: ${{ secrets.GEONERVA_SOAK_DATABASE_URL != '' }}
     # A repository with no deployment yet should not have a red nightly cron. The step below skips
     # cleanly when the URL is unset, rather than failing to describe a deployment that is not there.
     steps:
@@ -46,7 +49,9 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      # `--ignore-scripts`, as the worker image does: nothing here needs a postinstall to run,
+      # and a scheduled job on a public repository is a poor place to execute one.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Resolve the target
         id: target
@@ -58,9 +63,17 @@ jobs:
           if [ -z "$url" ]; then
             echo "No GEONERVA_SMOKE_URL set and no url input given; nothing to smoke." >&2
             echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "url=$url" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          # The dispatch API accepts any string, newlines included, and `$GITHUB_OUTPUT` is a
+          # newline-delimited file: an unvalidated value can write step outputs of its own. A URL
+          # has no whitespace in it, so anything that does is refused here rather than obeyed.
+          case "$url" in
+            *[![:graph:]]*) echo "the url must not contain whitespace" >&2; exit 1 ;;
+            http://*|https://*) ;;
+            *) echo "the url must be http(s)" >&2; exit 1 ;;
+          esac
+          echo "url=$url" >> "$GITHUB_OUTPUT"
 
       # Through the environment, not through `${{ }}` inside `run:`. The URL originates in a
       # workflow_dispatch input, which GitHub expands into the script before bash sees it.
@@ -74,8 +87,8 @@ jobs:
       # only have if the owner deliberately gave it one. Skipped when the secret is absent, and
       # never fatal: the smoke is the check, this is the context around it.
       - name: Soak rate over the last 24 h
-        if: steps.target.outputs.skip != 'true' && env.SOAK_DATABASE_URL != ''
+        if: steps.target.outputs.skip != 'true' && env.HAS_SOAK_DATABASE == 'true'
         continue-on-error: true
         env:
-          DATABASE_URL_WORKER: ${{ env.SOAK_DATABASE_URL }}
+          DATABASE_URL_WORKER: ${{ secrets.GEONERVA_SOAK_DATABASE_URL }}
         run: pnpm soak --hours 24

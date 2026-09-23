@@ -52,7 +52,7 @@ accounts, and they are created by the person who owns them.
 5. **Import the gazetteer.** Place search and the named `place=` parameter are empty without it:
 
    ```sh
-   pnpm geonames:import path/to/cities15000.txt
+   DATABASE_URL_WORKER='postgresql://…?sslmode=verify-full'      pnpm geonames:import path/to/cities15000.txt
    ```
 
    Exit codes are a contract: `0` every line loaded, `2` some lines refused, `1` anything else.
@@ -130,9 +130,12 @@ Vercel, from the repository root, with `apps/web` as the app. Environment variab
 | `MAP_STYLE_URL` | optional; must be `https:` |
 | `RETENTION_PROFILE` | `lean` |
 
-The process now **refuses to start** on an invalid environment (`apps/web/instrumentation.ts`)
-rather than booting and answering `INTERNAL_ERROR` to the first reader. A failed deploy naming
-`RATE_LIMIT_SECRET` is the intended behaviour. On success it writes one line:
+`apps/web/instrumentation.ts` parses the environment once per process, before the first request.
+Be precise about what that buys on each platform: a **self-hosted** `next start` fails to prepare
+and the process dies, while on **Vercel** the hook runs at lambda cold start rather than during
+`next build` — so the build succeeds, the deployment goes green, and every request to that instance
+fails with the reason in the function logs. **Run `pnpm smoke` immediately after a deploy**; check 1
+is what turns a poisoned instance into a red light. On success the process writes one line:
 `{"event":"web.starting","detail":"NODE_ENV=production retention=lean"}`.
 
 Two things not to do to the web app:
@@ -168,9 +171,19 @@ counts scheduled live polls, excludes provider-side failures from the denominato
 provider-side class, a deployment whose egress is broken would otherwise report 100 % success while
 ingesting nothing. Read the provider-failure count beside the rate, always.
 
-The nightly `live-smoke` workflow runs the same two commands. It needs a repository variable
-`GEONERVA_SMOKE_URL`, and optionally a secret `GEONERVA_SOAK_DATABASE_URL`; with neither it skips
-rather than failing, so a repository without a deployment does not carry a red cron.
+The nightly `live-smoke` workflow runs the same two commands, and `backfill` is the button for a
+historical range. What they need in GitHub, none of which is inferable from the code:
+
+| Kind | Name | Used by | Without it |
+|---|---|---|---|
+| Variable | `GEONERVA_SMOKE_URL` | `live-smoke` | the job skips rather than failing |
+| Secret | `GEONERVA_SOAK_DATABASE_URL` | `live-smoke` | the soak step is skipped; the smoke still runs |
+| Secret | `GEONERVA_WORKER_DATABASE_URL` | `backfill` | `check-config` fails and nothing is written |
+| Secret | `GEONERVA_FIRMS_MAP_KEY` | `backfill` | FIRMS falls back to its keyless 24-hour window |
+| Environment | `production` | `backfill` | the job cannot start |
+
+The `production` environment is what makes a backfill an approval gate rather than a button
+anybody with write access can press; configure its reviewers when you create it.
 
 ---
 

@@ -65,7 +65,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --ignore-scripts
 
       # Fails before touching anything if the environment is wrong, and prints a redacted summary
       # so the log says which database and which build this was.
