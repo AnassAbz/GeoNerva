@@ -144,3 +144,47 @@ describe('HazardCard — mobile accordion', () => {
     );
   });
 });
+
+/*
+ * QA round 2's two LOW findings that live on this card.
+ *
+ * L-3 is grammar: the family's verb comes from the family's own number, so a card can no longer
+ * say "Fire activity are not covered". L-5 is the distance basis: "144 km away" is measured to
+ * something, that something differs by family, and for an event two agencies located differently
+ * it moves when the preferred solution does. The event page said both; the card said neither.
+ */
+describe('HazardCard — QA round 2, L-3 and L-5', () => {
+  it('L-3: the not-covered verb agrees with the family, not with the sentence', () => {
+    const briefing = marrakechBriefing({ scenario: 'all-fresh' });
+    const { article } = renderCard('FIRE_ACTIVITY', {
+      card: {
+        ...briefing.snapshot.families.FIRE_ACTIVITY,
+        availability: 'NOT_COVERED',
+        items: [],
+        itemsTotal: 0,
+        coverage: {
+          level: 'NOT_COVERED',
+          note: 'No fire-detection source covers this location.',
+        },
+      },
+    });
+    expect(
+      within(article).getByText('Fire activity is not covered for this location.'),
+    ).toBeInTheDocument();
+    expect(article.textContent).not.toMatch(/Fire activity are/u);
+  });
+
+  it('L-5: states what the distance is measured to, and that it can move', () => {
+    const { article } = renderCard('EARTHQUAKES');
+    const basis = article.querySelector('[data-distance-basis="EARTHQUAKES"]');
+    expect(basis?.textContent).toMatch(/^Measured to the epicentre\./u);
+    expect(basis?.textContent).toMatch(/follows the solution GeoNerva currently prefers/u);
+  });
+
+  it('L-5: does not claim the distance can move when one source placed the item', () => {
+    const { article } = renderCard('FLOODS');
+    const basis = article.querySelector('[data-distance-basis="FLOODS"]');
+    expect(basis?.textContent).toBe('Measured to the flood area GDACS modelled.');
+    expect(article.textContent).not.toMatch(/currently prefers/u);
+  });
+});

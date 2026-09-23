@@ -60,8 +60,11 @@ import type { IsoTimestamp } from '../value-objects/time.ts';
  *
  * 2 — ADR-038: `ObservationEvidenceDetail.rawPayload`, the raw-payload lifecycle state.
  * 3 — ADR-040: `BaselineMetricView.trendBand`, the fire trend's direction.
+ * 4 — ADR-042: `MapFeaturesResponse.coverage`, so the map can say what it could not see.
+ * 5 — QA round 2 (M-2): `FireClusterSummaryView.countedTo`, the end of the rolling window its
+ *     24-hour figures actually cover.
  */
-export const READ_MODEL_SCHEMA_VERSION = 3;
+export const READ_MODEL_SCHEMA_VERSION = 5;
 
 export type ReadModelSchemaVersion = typeof READ_MODEL_SCHEMA_VERSION;
 

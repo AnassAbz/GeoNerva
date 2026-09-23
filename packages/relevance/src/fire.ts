@@ -23,13 +23,18 @@
  * has never been run against real clustered data. That is recorded rather than implied.
  */
 
-import type { RelevanceLevel } from '@geonerva/domain';
+import { INITIAL_FRESHNESS_POLICIES, type RelevanceLevel } from '@geonerva/domain';
 
 import type { Assessment, Reason } from './assessment.ts';
 import { reason } from './assessment.ts';
 import { THERMAL_DETECTION_CAVEAT } from './gdacs-families.ts';
 
-export const FIRE_MODEL_VERSION = 'fire-1';
+/**
+ * `fire-2` since QA round 2, M-2: the `HIGH` rule gained the staleness condition below, so an
+ * assessment stamped `fire-1` and one stamped `fire-2` are not the same computation and must not
+ * be recorded under one name.
+ */
+export const FIRE_MODEL_VERSION = 'fire-2';
 
 /** A cluster's activity state, from `fire_cluster_versions`. */
 export type FireClusterState = 'ACTIVE' | 'COOLING' | 'DORMANT';
@@ -63,6 +68,59 @@ export const FIRE_OUTER_KM = 150;
 export const FIRE_HIGH_DETECTIONS_24H = 5;
 export const FIRE_HIGH_OVERPASSES_24H = 2;
 
+/**
+ * How old a cluster summary may be and still stand in for the *current* 24 hours (QA round 2,
+ * M-2). Ninety minutes, and the number is read from the FIRMS freshness policy rather than chosen
+ * here.
+ *
+ * ### Why the level needs an age at all
+ *
+ * `n24h` and `overpasses24h` are rolling-window counts computed **when the worker last summarized
+ * the cluster**, not when the request was served. They only ever fall as time passes without new
+ * detections — a detection leaving the trailing edge of the window is silent — so a summary that
+ * has stopped being rewritten reports the busiest version of a window that may since have
+ * emptied. QA round 2 measured exactly that: a summary computed at 05:20 said 8 detections on 2
+ * overpasses; at 13:06 the rows held 5 on 1. Recomputing per request is not available (ADR-039:
+ * cluster membership is not knowable as of a time, and detections are pruned at 72 h), so the only
+ * honest move left is to stop treating a stale window as a current one.
+ *
+ * ### Why ninety minutes, from the data rather than from taste
+ *
+ * The summary's cadence *is* the FIRMS cadence: §7.4 runs clustering "after each FIRMS batch", and
+ * §6 polls FIRMS every 30 minutes. A new version is written whenever the summary's hash changes —
+ * and a rolling 24-hour count changes at nearly every batch of a live cluster, because detections
+ * enter and leave the window continuously. So for an `ACTIVE` cluster a summary is expected at
+ * every poll, and an old one is not a summary that had nothing to say: it is a summary that was
+ * never computed.
+ *
+ * The boundary is therefore taken from `firms:VIIRS_*`'s own `fetchFreshWithinS` — 90 minutes,
+ * three poll intervals, the point at which GeoNerva itself stops calling the FIRMS feed `FRESH`
+ * and starts calling it `POLL_AGEING`. Choosing that constant rather than writing a fourth number
+ * beside it is deliberate, and it is the lesson of L-6 in the same round: a threshold copied by
+ * hand drifts away from the thing it was copied from. If the FIRMS policy is retuned, this moves
+ * with it — and `fire.test.ts`'s "it is the FIRMS poll-freshness boundary" spec fails, so that the
+ * model version is reconsidered rather than changed silently.
+ *
+ * `fetchStaleAfterS` (3 h) was the other candidate and is the wrong one: a `HIGH` resting on a
+ * 24-hour count should require a feed GeoNerva would call fresh, not merely one it has not yet
+ * given up on.
+ */
+export const FIRE_SUMMARY_VOUCHABLE_HOURS =
+  INITIAL_FRESHNESS_POLICIES['firms:VIIRS_*'].fetchFreshWithinS / 3600;
+
+/**
+ * True when the 24-hour figures may be read as a statement about the current 24 hours.
+ *
+ * An unmeasured age (`null`/`undefined`) is **not** vouchable: "the caller did not tell me" is not
+ * "it is fresh", and the same rule is already applied to an unmeasured distance and an unmeasured
+ * detection age, both of which make `assessFire` decline outright. A negative age — a summary
+ * stamped after the knowledge time — is a clock or as-of fault and is not vouchable either.
+ */
+export function fireSummaryIsCurrent(summaryAgeHours: number | null | undefined): boolean {
+  if (typeof summaryAgeHours !== 'number' || !Number.isFinite(summaryAgeHours)) return false;
+  return summaryAgeHours >= 0 && summaryAgeHours <= FIRE_SUMMARY_VOUCHABLE_HOURS;
+}
+
 /** An official GDACS WF alert area within this distance can justify `CRITICAL`. */
 export const FIRE_OFFICIAL_ALERT_KM = 10;
 
@@ -95,6 +153,16 @@ export interface FireInput {
    * until ADR-039 is resolved, and the detections are pruned at 72 h.
    */
   readonly n24h: number;
+  /**
+   * How long before the assessment's knowledge time the cluster was last summarized, in hours —
+   * the age of `n24h`, `overpasses24h` and `frpSum24h`.
+   *
+   * Optional because it is additive to an engine that already has callers, and `null` and absent
+   * mean the same thing: **nobody measured it**. Both are treated as not current, which is what
+   * `fireSummaryIsCurrent` is for; a caller that wants the `HIGH` band has to say how old its
+   * numbers are. See `FIRE_SUMMARY_VOUCHABLE_HOURS` for why the level depends on this at all.
+   */
+  readonly summaryAgeHours?: number | null;
   /** Detections over the cluster's whole life. */
   readonly nTotal: number;
   /** Distinct satellite overpasses in the last 24 hours. Two is much stronger than one. */
@@ -210,12 +278,24 @@ export function assessFire(input: FireInput): Assessment | null {
    * overpasses in 24 hours. The overpass condition is the interesting one — two independent looks
    * at the same place is much stronger evidence than five pixels from one pass, which can be a
    * single large hot object smeared across a swath.
+   *
+   * And a fourth, which §9.2 leaves implicit and QA round 2 (M-2) showed cannot be: the 24-hour
+   * figures must still be a statement about the current 24 hours. They are a rolling window
+   * computed when the worker last summarized the cluster, so a cluster whose feed went quiet would
+   * otherwise hold a `HIGH` on a window that has since emptied — the level outliving its evidence.
+   * The distance and state conditions are untouched by this: `d` is measured at request time and
+   * `state` comes from the age of the newest detection, so both are current by construction. It is
+   * only the counts that are historical, so it is only the counts that need vouching for.
    */
+  const summaryIsCurrent = fireSummaryIsCurrent(input.summaryAgeHours);
+  const countsMeetHighThreshold =
+    input.n24h >= FIRE_HIGH_DETECTIONS_24H || input.overpasses24h >= FIRE_HIGH_OVERPASSES_24H;
   let level: RelevanceLevel;
   if (
     input.nearestDetectionKm <= FIRE_NEAR_KM &&
     input.state === 'ACTIVE' &&
-    (input.n24h >= FIRE_HIGH_DETECTIONS_24H || input.overpasses24h >= FIRE_HIGH_OVERPASSES_24H)
+    countsMeetHighThreshold &&
+    summaryIsCurrent
   ) {
     level = 'HIGH';
   } else if (
@@ -225,6 +305,59 @@ export function assessFire(input: FireInput): Assessment | null {
     level = 'MODERATE';
   } else {
     level = 'LOW';
+  }
+
+  /*
+   * A withheld raise is stated, never silent.
+   *
+   * Only when the staleness is the thing that kept the cluster out of `HIGH` — everything else
+   * about the band held. A reader looking at "6 detections on 2 overpasses" beside a `MODERATE`
+   * would otherwise have no way to tell whether the model had misread its own rule, and an
+   * unexplained demotion is the mirror image of the finding this fixes: a data gap presented as
+   * less hazard. The counts themselves are left in place and stay qualified by their own wording
+   * ("the most recent 24-hour window counted"); what this sentence adds is why they did not lift
+   * the level.
+   */
+  if (
+    !summaryIsCurrent &&
+    countsMeetHighThreshold &&
+    input.state === 'ACTIVE' &&
+    input.nearestDetectionKm <= FIRE_NEAR_KM
+  ) {
+    /*
+     * A negative age takes the unmeasured wording, not "about −1 hours ago".
+     *
+     * A summary stamped after the knowledge time means the clock or the as-of is wrong, and what
+     * GeoNerva then knows about the window's age is nothing. Stating a negative number as though
+     * it were a measurement would dress that up as one.
+     */
+    const statedAge =
+      typeof input.summaryAgeHours === 'number' &&
+      Number.isFinite(input.summaryAgeHours) &&
+      input.summaryAgeHours >= 0
+        ? Math.round(input.summaryAgeHours)
+        : null;
+    reasons.push(
+      statedAge !== null
+        ? reason(
+            'SUMMARY_NOT_CURRENT',
+            'Those counts were computed when this cluster was last summarized, about ' +
+              `${String(statedAge)} hour${statedAge === 1 ? '' : 's'} ` +
+              'before this reading, so GeoNerva does not treat them as a count for the current ' +
+              '24 hours and does not raise this cluster on them.',
+            {
+              summaryAgeHours: statedAge,
+              vouchableWithinHours: FIRE_SUMMARY_VOUCHABLE_HOURS,
+            },
+          )
+        : reason(
+            'SUMMARY_NOT_CURRENT',
+            'GeoNerva cannot tell how long ago this cluster was last summarized, so it does not ' +
+              'treat those counts as a count for the current 24 hours and does not raise this ' +
+              'cluster on them.',
+            { summaryAgeHours: null, vouchableWithinHours: FIRE_SUMMARY_VOUCHABLE_HOURS },
+          ),
+    );
   }
 
   /*

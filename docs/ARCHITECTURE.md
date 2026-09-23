@@ -427,10 +427,12 @@ Principles:
 | Output | Definition |
 |---|---|
 | `percentile` | Mid-rank percentile of the observed count among reference windows (ties handled; zero-heavy distributions handled) |
-| `band` | `TYPICAL` below p90. `ABOVE_TYPICAL` at ≥ p90 **and** observed ≥ 2. `WELL_ABOVE_TYPICAL` at ≥ p99 **and** observed ≥ 3. No `BELOW_TYPICAL` for earthquakes, because quiet periods are not reportable signals |
+| `band` | `TYPICAL` below p90. `ABOVE_TYPICAL` at ≥ p90 **and** observed ≥ 2 **and** ≥ 10 reference windows. `WELL_ABOVE_TYPICAL` at ≥ p99 **and** observed ≥ 3 **and** ≥ 100 reference windows. No `BELOW_TYPICAL` for earthquakes, because quiet periods are not reportable signals |
 | `activity_ratio` | observed / mean-per-window, **shown only when mean ≥ 1**. This avoids "7× the baseline" artifacts from tiny denominators |
 | `largest_recent` | Largest M in the last 30 d vs the reference period: "largest within 150 km since 2019" |
 | `sequence_context` | If a canonical event with M ≥ Mc + 1.5 occurred within R in the last 30 d: "Activity follows the M6.1 earthquake on 12 Sep; aftershocks commonly follow large earthquakes." (a well-established observation, not a forecast) |
+
+**A band must be resolvable by its own sample** (ADR-043). The finest quantile `n` observations resolve is `1/n`, so the 90th percentile needs ten reference windows and the 99th needs a hundred; below that the percentile is an extrapolation, and §8's third principle forbids reporting a statistic the data cannot support. A band whose percentile the sample cannot carry is capped one step down rather than dropped — the count is still high against the periods GeoNerva holds. The window minimum of 52 above governs `status: OK`, which is a different question.
 
 **Mandatory caveat** whenever band ≥ ABOVE_TYPICAL: "Elevated recent activity does not by itself indicate that a larger earthquake will occur."
 
@@ -510,7 +512,7 @@ P1: an intensity-prediction-equation "possibly felt here" indicator, labelled as
 | Level | Rule |
 |---|---|
 | CRITICAL | An official alert covers the location (P0: GDACS WF `Orange`/`Red` area within 10 km; P1: ECCC/NWS fire-weather or evacuation products) |
-| HIGH | d ≤ 10 km, cluster `ACTIVE` (detection ≤ 24 h), and (n_24h ≥ 5 or overpasses_24h ≥ 2) |
+| HIGH | d ≤ 10 km, cluster `ACTIVE` (detection ≤ 24 h), (n_24h ≥ 5 or overpasses_24h ≥ 2), **and the summary those counts come from is current** — within the window GeoNerva calls the FIRMS feed fresh. `n_24h` and `overpasses_24h` are a rolling window the worker computed when it last clustered; without the fourth condition a cluster whose feed went quiet kept a HIGH on twenty-four hours that had since emptied (QA round 2, M-2). The withheld raise is stated as a reason, never silent: a data gap rendered as less hazard is the same error in the other direction |
 | MODERATE | d ≤ 30 km & `ACTIVE` · d ≤ 10 km & `COOLING` |
 | LOW | d ≤ 150 km & `ACTIVE`/`COOLING` |
 

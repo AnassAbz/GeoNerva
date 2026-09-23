@@ -1227,12 +1227,43 @@ export const mapFeaturesResponseSchema = z
     truncated: z.boolean(),
     cap: z.number().int().positive(),
     total: z.number().int().nonnegative(),
+    /* `partialRecord`, because a request names the families it wants and gets those. */
+    coverage: z.partialRecord(
+      z.enum(HAZARD_FAMILIES),
+      z.object({
+        availability: z.enum(FAMILY_AVAILABILITIES),
+        note: z.string().min(1).nullable(),
+      }),
+    ),
     attribution: z.array(attributionSchema),
   })
   .refine((response) => response.features.length <= response.cap, {
     message: 'the response returned more features than its own cap',
     path: ['features'],
   })
+  /*
+   * A statement for every family asked about and for no other. A map that quietly omitted one
+   * would be back where ADR-042 started: `total: 0` meaning two different things.
+   */
+  .refine(
+    (response) =>
+      response.families.every((family) => response.coverage[family] !== undefined) &&
+      Object.keys(response.coverage).length === new Set(response.families).size,
+    {
+      message: 'coverage must carry exactly the families the request asked about (ADR-042)',
+      path: ['coverage'],
+    },
+  )
+  .refine(
+    (response) =>
+      response.features.every(
+        (feature) => response.coverage[feature.family]?.availability !== 'NOT_COVERED',
+      ),
+    {
+      message: 'a family with features on the map cannot also be reported as not covered',
+      path: ['coverage'],
+    },
+  )
   .refine((response) => response.truncated === response.total > response.features.length, {
     message: 'truncated must be true exactly when features were dropped',
     path: ['truncated'],
@@ -1487,6 +1518,7 @@ export type EventDetailMatches = Expect<Exact<z.infer<typeof eventDetailSchema>,
 export const fireClusterSummaryViewSchema = z.object({
   clusterVersionId: z.string().regex(/^\d+$/u),
   asOf: isoTimestamp,
+  countedTo: isoTimestamp,
   detectionCountTotal: z.number().int().nonnegative(),
   detectionCount24h: z.number().int().nonnegative(),
   distinctOverpasses24h: z.number().int().nonnegative(),

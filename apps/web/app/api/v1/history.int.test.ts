@@ -183,14 +183,21 @@ describe('GET /api/v1/history', () => {
     expect(body.metric.observedValue.kind).toBe('unavailable');
   });
 
-  it('refuses as_of, which §13.1 does not give this endpoint', async () => {
+  /*
+   * `as_of` is accepted now (QA round 2, L-1). It used to be refused while the 200 response still
+   * carried a full `asOfContext` and a replay horizon it could not honour — and the
+   * `/place?as_of=` page replayed its historical section through this same service, so the page
+   * could ask a question the API refused and no client could reproduce a page GeoNerva serves.
+   */
+  it('accepts as_of and answers as of it', async () => {
     const response = await historyRoute(
       request(
         `/api/v1/history?lat=${String(LAT)}&lon=${String(LON)}&family=EARTHQUAKES&as_of=${NOW.toISOString()}`,
       ),
     );
-    expect(response.status).toBe(400);
-    expect((await problemOf(response)).code).toBe('UNKNOWN_PARAMETER');
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { asOfContext: { asOf: string } };
+    expect(body.asOfContext.asOf).toBe(NOW.toISOString());
   });
 
   it('refuses a missing family and an uncalibrated radius', async () => {

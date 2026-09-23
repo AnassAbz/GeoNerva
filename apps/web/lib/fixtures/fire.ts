@@ -94,6 +94,7 @@ export function fireClusterDetail(
     summary: {
       clusterVersionId: '7781',
       asOf: T.fcv3,
+      countedTo: T.fcv3,
       detectionCountTotal: 14,
       detectionCount24h: 8,
       distinctOverpasses24h: 2,

@@ -6,6 +6,7 @@
  * are about the *caveat* and the *cap* rather than about the level.
  */
 
+import { INITIAL_FRESHNESS_POLICIES } from '@geonerva/domain';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -13,8 +14,10 @@ import {
   FIRE_HIGH_DETECTIONS_24H,
   FIRE_HIGH_OVERPASSES_24H,
   FIRE_MID_KM,
+  FIRE_MODEL_VERSION,
   FIRE_NEAR_KM,
   FIRE_OUTER_KM,
+  FIRE_SUMMARY_VOUCHABLE_HOURS,
   THERMAL_DETECTION_CAVEAT,
   assessFire,
   type FireInput,
@@ -30,6 +33,10 @@ function fire(overrides: Partial<FireInput> = {}): FireInput {
     nPrevious24h: 6,
     frpSum24h: 42.5,
     hoursSinceLastDetection: 3,
+    // Summarized half an hour ago — one FIRMS poll interval — so the 24-hour counts below are a
+    // statement about the current 24 hours and the bands below read as §9.2 writes them. The
+    // staleness rule this default satisfies has its own describe block at the end of the file.
+    summaryAgeHours: 0.5,
     officialAlertNearby: false,
     relatedGdacsEventId: null,
     persistentHeatSource: false,
@@ -317,5 +324,126 @@ describe('assessFire: the distance sentence names what was measured (P8 review H
       );
       expect(new Set(levels).size, String(km)).toBe(1);
     }
+  });
+});
+
+describe('a stale summary cannot hold a HIGH (QA round 2, M-2)', () => {
+  /*
+   * The finding: `n24h` and `overpasses24h` are a rolling window computed when the worker last
+   * summarized the cluster. A summary measured at 05:20 said 8 detections on 2 overpasses; by
+   * 13:06 the rows held 5 on 1. §9.2's `HIGH` rule reads those numbers, so a cluster whose feed
+   * went quiet held a level its evidence no longer supported.
+   */
+  const near = { nearestDetectionKm: 1, state: 'ACTIVE', n24h: 8, overpasses24h: 2 } as const;
+  const summaryReason = (input: Partial<FireInput>) =>
+    assessFire(fire(input))?.reasons.find((entry) => entry.code === 'SUMMARY_NOT_CURRENT');
+
+  it('is 90 minutes, and it is the FIRMS poll-freshness boundary rather than a new number', () => {
+    // Three 30-minute poll intervals: `firms:VIIRS_*`'s own `fetchFreshWithinS`. If the policy is
+    // retuned this fails, so the relevance model's behaviour cannot change without a decision.
+    expect(FIRE_SUMMARY_VOUCHABLE_HOURS).toBe(1.5);
+    expect(FIRE_SUMMARY_VOUCHABLE_HOURS * 3600).toBe(
+      INITIAL_FRESHNESS_POLICIES['firms:VIIRS_*'].fetchFreshWithinS,
+    );
+  });
+
+  it('raises on a summary GeoNerva would call fresh, and not one minute later', () => {
+    expect(levelOf({ ...near, summaryAgeHours: FIRE_SUMMARY_VOUCHABLE_HOURS })).toBe('HIGH');
+    expect(levelOf({ ...near, summaryAgeHours: FIRE_SUMMARY_VOUCHABLE_HOURS + 1 / 60 })).toBe(
+      'MODERATE',
+    );
+  });
+
+  it('refuses the raise at M-2’s own measurement: an eight-hour-old window', () => {
+    // 05:20 to 13:06 is 7 h 46 min, and three of the eight detections had left the window.
+    expect(levelOf({ ...near, summaryAgeHours: 7.77 })).toBe('MODERATE');
+  });
+
+  it('treats an unmeasured age as not current, never as fresh', () => {
+    expect(levelOf({ ...near, summaryAgeHours: null })).toBe('MODERATE');
+    expect(levelOf({ ...near, summaryAgeHours: undefined })).toBe('MODERATE');
+    expect(levelOf({ ...near, summaryAgeHours: Number.NaN })).toBe('MODERATE');
+    // A summary stamped after the knowledge time is an as-of fault, not a very fresh summary.
+    expect(levelOf({ ...near, summaryAgeHours: -1 })).toBe('MODERATE');
+  });
+
+  it('withholds only the raise, never the cluster and never its distance band', () => {
+    // Still listed, still at the band its distance and state earn: less attention, not none.
+    const stale = assessFire(fire({ ...near, summaryAgeHours: 8 }));
+    expect(stale).not.toBeNull();
+    expect(stale?.level).toBe('MODERATE');
+    expect(stale?.reasons.map((entry) => entry.code)).toContain('DETECTION_COUNT');
+    expect(stale?.caveats).toStrictEqual([THERMAL_DETECTION_CAVEAT]);
+    // A cooling cluster at 40 km was never HIGH-eligible, so nothing about it changes.
+    expect(levelOf({ nearestDetectionKm: 40, state: 'COOLING', summaryAgeHours: null })).toBe(
+      'LOW',
+    );
+  });
+
+  it('states the withheld raise instead of demoting silently', () => {
+    expect(summaryReason({ ...near, summaryAgeHours: 8 })?.text).toBe(
+      'Those counts were computed when this cluster was last summarized, about 8 hours before ' +
+        'this reading, so GeoNerva does not treat them as a count for the current 24 hours and ' +
+        'does not raise this cluster on them.',
+    );
+    expect(summaryReason({ ...near, summaryAgeHours: 8 })?.params).toStrictEqual({
+      summaryAgeHours: 8,
+      vouchableWithinHours: FIRE_SUMMARY_VOUCHABLE_HOURS,
+    });
+    /*
+     * The shortest sentence the rule can produce. "1 hour" is unreachable while the boundary is
+     * 1.5 h — anything past it rounds to 2 or more — but the singular is written anyway, because
+     * the boundary is read from a policy that may be retuned.
+     */
+    expect(summaryReason({ ...near, summaryAgeHours: 1.51 })?.text).toContain('about 2 hours');
+    expect(summaryReason({ ...near, summaryAgeHours: null })?.text).toBe(
+      'GeoNerva cannot tell how long ago this cluster was last summarized, so it does not treat ' +
+        'those counts as a count for the current 24 hours and does not raise this cluster on them.',
+    );
+    expect(summaryReason({ ...near, summaryAgeHours: null })?.params).toStrictEqual({
+      summaryAgeHours: null,
+      vouchableWithinHours: FIRE_SUMMARY_VOUCHABLE_HOURS,
+    });
+  });
+
+  it('says nothing when the staleness changed nothing', () => {
+    // Fresh: no sentence. Far away, or below the count thresholds: the level never depended on
+    // the window, so explaining a raise that was never available would be noise.
+    expect(summaryReason({ ...near, summaryAgeHours: 0.5 })).toBeUndefined();
+    expect(summaryReason({ ...near, nearestDetectionKm: 40, summaryAgeHours: 8 })).toBeUndefined();
+    expect(
+      summaryReason({ ...near, n24h: 1, overpasses24h: 1, summaryAgeHours: 8 }),
+    ).toBeUndefined();
+    expect(summaryReason({ ...near, state: 'COOLING', summaryAgeHours: 8 })).toBeUndefined();
+  });
+
+  it('does not let a stale window keep an authority quiet', () => {
+    // `CRITICAL` comes from a GDACS alert area, which is an authority's statement about the
+    // region and not a count in a window GeoNerva computed.
+    expect(levelOf({ ...near, summaryAgeHours: null, officialAlertNearby: true })).toBe('CRITICAL');
+  });
+
+  it('is a different computation, so it is a different model version', () => {
+    expect(FIRE_MODEL_VERSION).toBe('fire-2');
+  });
+});
+
+describe('a summary stamped after the knowledge time', () => {
+  /*
+   * A negative age is a clock or as-of fault, and what GeoNerva knows about the window's age is
+   * then nothing. It must not be dressed up as a measurement — "about -1 hours before this
+   * reading" would read as one.
+   */
+  it('says it cannot tell, rather than stating a negative number of hours', () => {
+    const stale = assessFire(
+      fire({ nearestDetectionKm: 1, n24h: 8, overpasses24h: 2, summaryAgeHours: -1 }),
+    );
+    const sentence = stale?.reasons.find((entry) => entry.code === 'SUMMARY_NOT_CURRENT');
+    expect(stale?.level).toBe('MODERATE');
+    expect(sentence?.text).toBe(
+      'GeoNerva cannot tell how long ago this cluster was last summarized, so it does not treat ' +
+        'those counts as a count for the current 24 hours and does not raise this cluster on them.',
+    );
+    expect(sentence?.params['summaryAgeHours']).toBeNull();
   });
 });

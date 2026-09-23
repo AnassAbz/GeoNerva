@@ -522,6 +522,15 @@ export interface HistoryRequest {
   readonly location: LocationParam;
   readonly history: HistoryParam;
   readonly now: Date;
+  /**
+   * The knowledge time to answer as of, when the caller is replaying. Defaults to `now`.
+   *
+   * §13.1 listed no `as_of` for this endpoint, and the endpoint shipped a full `asOfContext` with
+   * a replay horizon it could not honour — while the `/place?as_of=` page *did* replay its
+   * historical section through this same service, so no API client could reproduce a page
+   * GeoNerva serves (QA round 2, L-1).
+   */
+  readonly asOf?: Date;
 }
 
 /**
@@ -539,7 +548,7 @@ export async function getHistory(db: Kysely, request: HistoryRequest): Promise<H
     family: request.history.family,
     metric: request.history.metric,
     radiusKm: request.history.radiusKm,
-    asOf: request.now,
+    asOf: request.asOf ?? request.now,
     now: request.now,
     retentionProfile: RETENTION_PROFILE,
   });

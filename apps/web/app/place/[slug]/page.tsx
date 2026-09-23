@@ -331,14 +331,15 @@ async function PlaceDashboard({
                 placeSlug={slug}
                 features={mapFeatures?.features ?? []}
                 /*
-                 * The briefing's own verdicts, so the map cannot contradict the cards beside it:
-                 * a family with no source, or one whose feeds are down, is labelled rather than
-                 * drawn as an empty viewport (QA round 2, H-4).
+                 * The map response's own verdicts (ADR-042), not the briefing's: they answer
+                 * different questions — what is on screen versus what covers the reader's place —
+                 * and the map must say what *it* could not see. A family with no source, or one
+                 * whose feeds are down, is labelled rather than drawn as an empty viewport.
                  */
                 availability={Object.fromEntries(
-                  Object.entries(briefing.snapshot.families).map(([family, card]) => [
+                  Object.entries(mapFeatures?.coverage ?? {}).map(([family, statement]) => [
                     family,
-                    card.availability,
+                    statement.availability,
                   ]),
                 )}
               />

@@ -21,7 +21,7 @@ import type {
 import type { ReactNode } from 'react';
 
 import { COPY } from '../lib/view/copy.ts';
-import { FAMILY_META } from '../lib/view/families.ts';
+import { FAMILY_META, familySubject } from '../lib/view/families.ts';
 import { WINDOW_LABEL, formatDistanceKm, formatFactValue } from '../lib/view/format.ts';
 import { subjectHref } from '../lib/view/routes.ts';
 import { unavailableStatement } from '../lib/view/sources.ts';
@@ -208,12 +208,11 @@ export function HazardCard({
   let body: ReactNode;
 
   if (card.availability === 'NOT_COVERED') {
+    const subject = familySubject(card.family);
     summary = COPY.families.notCoveredTitle;
     body = (
       <div data-state="not-covered">
-        <p className="font-medium">
-          {COPY.card.notCovered(meta.words.charAt(0).toUpperCase() + meta.words.slice(1))}
-        </p>
+        <p className="font-medium">{COPY.card.notCovered(subject.subject, subject.verb)}</p>
         {card.coverage.note === null ? null : (
           <p className="mt-1 text-sm text-fg-muted">{card.coverage.note}</p>
         )}
@@ -296,6 +295,20 @@ export function HazardCard({
                   {lead.title}
                 </a>
               )}
+            </p>
+            {/*
+             * The distance's basis, beside the distance.
+             *
+             * "144 km away" is measured to something, and what that something is differs by
+             * family and — for an earthquake two agencies located differently — moves when the
+             * preferred solution does. The event page already discloses both; the card did not
+             * (QA round 2, L-5).
+             */}
+            <p className="mt-1 text-xs text-fg-muted" data-distance-basis={card.family}>
+              {COPY.card.distanceBasis(meta.distanceBasis)}
+              {lead.agreement !== null && lead.agreement.nSources > 1
+                ? ` ${COPY.card.distanceMayMove}`
+                : ''}
             </p>
             {lead.relevance.caveats.map((caveat) => (
               <p key={caveat} className="mt-1 text-xs text-fg-muted">

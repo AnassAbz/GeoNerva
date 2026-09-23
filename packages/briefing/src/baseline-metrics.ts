@@ -506,10 +506,22 @@ async function gdacsMetric(input: BaselineMetricInput): Promise<BaselineMetricCo
   const count = new Set(links.map((link) => link.canonical_event_id)).size;
   const result = gdacsContext({ asOf: input.asOf, noun: family.noun, count, recordStart });
 
+  /*
+   * The period **actually compared**, never the configured horizon (QA round 2, L-4).
+   *
+   * These params exist so that the AI validator can check that no number in the sentence was
+   * invented, which makes a number here that the sentence does not support the one thing they
+   * must not contain. `years: GDACS_CONTEXT.years` was exactly that: a `5` beside "since 20
+   * September 2026, when GeoNerva's GDACS record begins" — a two-day record — because the
+   * constant is the horizon GeoNerva *asks* for and `since` is the point it was clamped to.
+   * `spanDays` is measured from `since`, so it is five years' worth only when five years were
+   * read, and the two fields can no longer disagree. The radius stays: it is not clamped, and
+   * the sentence quotes it.
+   */
   const params = {
     radiusKm: GDACS_CONTEXT.radiusKm,
-    years: GDACS_CONTEXT.years,
     since: since.toISOString(),
+    spanDays: Math.round((input.asOf.getTime() - since.getTime()) / DAY_MS),
   };
   const id = baselineId(input, params, result);
   return {

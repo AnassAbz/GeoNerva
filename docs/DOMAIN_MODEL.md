@@ -570,11 +570,13 @@ rate_limit_buckets(bucket_key bytea, window_start timestamptz, n int, PRIMARY KE
 | `fire_cluster_versions` | 30 d | 1 y |
 | `fire_daily_counts`, `fire_daily_coverage` | 400 d at 0.25° | 5 y at 0.25° |
 | `observation_versions` (EQ M ≥ 4.5 catalog) | forever (~190k rows since 2000) | forever |
-| `observation_versions` (EQ < M4.5) | 90 d | 2 y |
+| `observation_versions` (EQ < M4.5) | 30 d (ADR-035) | 2 y |
 | `observation_versions` (GDACS, ECCC) | forever (small) | forever |
-| `raw_source_records.payload` | 14 d (hash kept) | 180 d |
-| `ingestion_runs` | 90 d | 2 y |
+| `raw_source_records.payload` | 30 d (hash kept) | 90 d |
+| `ingestion_runs` | 90 d | 1 y |
 | `location_snapshots` / `change_signals` | 30 d | 1 y |
 | `agent_outputs` | 30 d | 1 y |
+
+Three of these rows were stale, and they are corrected here rather than in the code because the code is the decision (QA round 2, L-6). `raw_source_records.payload` read 14 d / 180 d against `LIVE_PAYLOAD_RETENTION_DAYS`' 30 / 90 in `packages/domain/src/value-objects/retention.ts` — the constant `/methodology` renders and the one `evidence-view.ts` judges `rawPayload.state` against, so the stale figure was the difference between a citation reported `AVAILABLE` and one reported `PRUNED`. `observation_versions` (EQ < M4.5) read 90 d against ADR-035's 30 d on lean, which is also what `replay-horizon.ts` serves and what `baseline-metrics.ts` uses to decide `referenceBeyondRetention`. `ingestion_runs` read 2 y on standard against ADR-033's 1 y; there is no constant for that one, only the ADR.
 
 **Replay horizon** = the shortest retention among the data a replay needs. It is exposed by the API (`/api/replay/horizon`) and the UI refuses to replay beyond it, per hazard family ("thermal detections are retained for 72 h in this deployment").

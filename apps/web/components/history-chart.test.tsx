@@ -73,3 +73,62 @@ describe('HistoryChart', () => {
     expect(screen.getByText('Derived')).toBeInTheDocument();
   });
 });
+
+function withBands(
+  response: HistoryResponse,
+  patch: Partial<NonNullable<HistoryResponse['referenceBands']>>,
+): HistoryResponse {
+  const bands = response.referenceBands;
+  if (bands === null) throw new Error('this fixture must carry reference bands');
+  return { ...response, referenceBands: { ...bands, ...patch } };
+}
+
+/*
+ * M-1's first smaller item. `[1, 1]` is a real and common reference band for a sparse count, and
+ * shading between two equal numbers drew a hairline rectangle labelled "Typical range".
+ */
+describe('HistoryChart — a typical range with no width', () => {
+  it('draws a level and says so, rather than a range', () => {
+    const figure = renderChart(withBands(history('EARTHQUAKES'), { p25: 1, median: 1, p75: 1 }));
+    expect(figure?.querySelector('[data-band="range"]')).toBeNull();
+    expect(figure?.querySelector('[data-band="level"]')).not.toBeNull();
+    expect(screen.queryByText('Typical range (25th–75th percentile)')).not.toBeInTheDocument();
+    expect(screen.getByText(/^Typical level: 1\./u)).toBeInTheDocument();
+    expect(
+      screen.getByRole('img', { name: /typical level 1, with no range between/u }),
+    ).toBeInTheDocument();
+  });
+
+  it('still draws the band, and calls it a range, when the quartiles differ', () => {
+    const figure = renderChart(history('EARTHQUAKES'));
+    expect(figure?.querySelector('[data-band="range"]')).not.toBeNull();
+    expect(figure?.querySelector('[data-band="level"]')).toBeNull();
+    expect(screen.getByText('Typical range (25th–75th percentile)')).toBeInTheDocument();
+  });
+});
+
+/*
+ * L-8. The fire trend's window ends two days back, because ADR-040 admits a day only once it is
+ * final — which is why this chart's refusal and a live cluster of 14 detections are both true on
+ * one page. The clause that says so was missing, and `lastDay` was already in the metric's params.
+ */
+describe('HistoryChart — the period the comparison covers', () => {
+  it('names the last whole day, and points at the cards for what is newer', () => {
+    const base = history('FIRE_ACTIVITY');
+    const figure = renderChart({
+      ...base,
+      metric: { ...base.metric, params: { ...base.metric.params, lastDay: '2026-09-20' } },
+    });
+    expect(figure?.querySelector('[data-window-ends="2026-09-20"]')).not.toBeNull();
+    expect(screen.getByText(/whole days up to and including 20 Sep 2026/u)).toBeInTheDocument();
+    expect(
+      screen.getByText(/count the individual detections rather than these daily totals/u),
+    ).toBeInTheDocument();
+  });
+
+  it('claims no window end for a metric that carries no lastDay', () => {
+    const figure = renderChart(history('FIRE_ACTIVITY'));
+    expect(figure?.querySelector('[data-window-ends]')).toBeNull();
+    expect(figure?.textContent).not.toMatch(/whole days up to and including/u);
+  });
+});

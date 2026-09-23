@@ -118,7 +118,7 @@ export function NearbyTable({ rows }: { readonly rows: readonly NearbyRow[] }) {
     >
       <table className="w-full min-w-[34rem] border-collapse text-sm">
         <caption id="nearby-caption" className="px-2 py-2 text-left text-xs text-fg-muted">
-          {COPY.nearby.caption}
+          {COPY.nearby.caption} {COPY.nearby.distanceNote}
         </caption>
         <thead className="border-b border-line bg-raised">
           <tr>
@@ -149,8 +149,19 @@ export function NearbyTable({ rows }: { readonly rows: readonly NearbyRow[] }) {
                     {meta.label}
                   </span>
                 </td>
-                <td className="tabular whitespace-nowrap px-2 py-2 text-right">
-                  {formatDistanceKm(row.distanceKm)}
+                {/*
+                 * The figure and what it is measured to. A column of bare kilometres invites a
+                 * comparison between an epicentre, the nearest pixel of a thermal cluster and the
+                 * edge of a modelled area as though they were the same measurement (QA round 2,
+                 * L-5). The phrase is not wrapped, so the number stays scannable.
+                 */}
+                <td className="px-2 py-2 text-right" data-distance-basis={row.family}>
+                  <span className="tabular whitespace-nowrap">
+                    {formatDistanceKm(row.distanceKm)}
+                  </span>
+                  <span className="block text-xs font-normal text-fg-muted">
+                    {meta.distanceBasis}
+                  </span>
                 </td>
                 <td className="px-2 py-2">
                   <RelevanceBadge level={row.level} />

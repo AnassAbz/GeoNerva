@@ -105,7 +105,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 3
+                      "const": 5
                     },
                     "__schema1": {
                       "type": "object",
@@ -2255,8 +2255,11 @@
                     "total": {
                       "$ref": "#/$defs/__schema12"
                     },
-                    "attribution": {
+                    "coverage": {
                       "$ref": "#/$defs/__schema13"
+                    },
+                    "attribution": {
+                      "$ref": "#/$defs/__schema14"
                     }
                   },
                   "required": [
@@ -2270,13 +2273,14 @@
                     "truncated",
                     "cap",
                     "total",
+                    "coverage",
                     "attribution"
                   ],
                   "additionalProperties": false,
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 3
+                      "const": 5
                     },
                     "__schema1": {
                       "type": "object",
@@ -2657,6 +2661,49 @@
                       "maximum": 9007199254740991
                     },
                     "__schema13": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "enum": [
+                          "EARTHQUAKES",
+                          "FIRE_ACTIVITY",
+                          "FLOODS",
+                          "CYCLONES",
+                          "WEATHER_ALERTS",
+                          "OTHER"
+                        ]
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "availability": {
+                            "type": "string",
+                            "enum": [
+                              "AVAILABLE",
+                              "UNAVAILABLE",
+                              "NOT_COVERED"
+                            ]
+                          },
+                          "note": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "availability",
+                          "note"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "__schema14": {
                       "type": "array",
                       "items": {
                         "type": "object",
@@ -2898,7 +2945,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 3
+                      "const": 5
                     },
                     "__schema1": {
                       "type": "string",
@@ -4658,7 +4705,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 3
+                      "const": 5
                     },
                     "__schema1": {
                       "type": "string",
@@ -4789,6 +4836,9 @@
                           "pattern": "^\\d+$"
                         },
                         "asOf": {
+                          "$ref": "#/$defs/__schema4"
+                        },
+                        "countedTo": {
                           "$ref": "#/$defs/__schema4"
                         },
                         "detectionCountTotal": {
@@ -5075,6 +5125,7 @@
                       "required": [
                         "clusterVersionId",
                         "asOf",
+                        "countedTo",
                         "detectionCountTotal",
                         "detectionCount24h",
                         "distinctOverpasses24h",
@@ -6017,7 +6068,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 3
+                      "const": 5
                     },
                     "__schema1": {
                       "type": "object",
@@ -7094,7 +7145,7 @@
                   "properties": {
                     "schemaVersion": {
                       "type": "number",
-                      "const": 3
+                      "const": 5
                     },
                     "query": {
                       "type": "string",
@@ -7328,7 +7379,7 @@
                   "properties": {
                     "schemaVersion": {
                       "type": "number",
-                      "const": 3
+                      "const": 5
                     },
                     "query": {
                       "type": "string",
@@ -7552,7 +7603,7 @@
                   "properties": {
                     "schemaVersion": {
                       "type": "number",
-                      "const": 3
+                      "const": 5
                     },
                     "query": {
                       "type": "string",
@@ -7798,7 +7849,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 3
+                      "const": 5
                     },
                     "__schema1": {
                       "type": "object",
@@ -8670,7 +8721,7 @@
                   "$defs": {
                     "__schema0": {
                       "type": "number",
-                      "const": 3
+                      "const": 5
                     },
                     "__schema1": {
                       "type": "object",
@@ -9737,7 +9788,7 @@
                   "properties": {
                     "schemaVersion": {
                       "type": "number",
-                      "const": 3
+                      "const": 5
                     },
                     "generatedAt": {
                       "$ref": "#/$defs/__schema0"

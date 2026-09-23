@@ -6,7 +6,7 @@
  * and the search box against mocks before the API lands (P8).
  */
 
-import type { FireClusterStatus, HazardFamily, HazardType } from '../enums.ts';
+import type { FamilyAvailability, FireClusterStatus, HazardFamily, HazardType } from '../enums.ts';
 import type { EvidenceId } from '../evidence/evidence-id.ts';
 import type { GeoJsonGeometry } from '../value-objects/geography.ts';
 import type { ProviderSeverity } from '../value-objects/provider-severity.ts';
@@ -50,7 +50,30 @@ export interface MapFeaturesResponse {
   readonly truncated: boolean;
   readonly cap: number;
   readonly total: number;
+  /**
+   * What the map can say about each requested family, so that `total: 0` is never the only answer
+   * (ADR-042).
+   *
+   * A map has one way to draw "nothing here" and two facts to draw with it. Before this field,
+   * `families=WEATHER_ALERTS` in a deployment with no weather source returned `total: 0` —
+   * byte-identical to a genuinely quiet, fully covered viewport — and under a fire outage the map
+   * drew an `ACTIVE` cluster beside a briefing that refused to vouch for it. `PRODUCT.md` §7's
+   * first row forbids the first, and §9.8 exists because "nothing found" and "cannot tell you"
+   * look alike on a screen and mean opposite things.
+   *
+   * The vocabulary is `FamilyAvailability`, the same one `LocationBriefing` uses, resolved by the
+   * same function over the same coverage geometry — asked of the **viewport** rather than of a
+   * place. One entry per family in `families`, and no others.
+   */
+  readonly coverage: Readonly<Partial<Record<HazardFamily, FamilyCoverageStatement>>>;
   readonly attribution: readonly Attribution[];
+}
+
+/** One family's verdict for a viewport, with the reason in words where there is one to give. */
+export interface FamilyCoverageStatement {
+  readonly availability: FamilyAvailability;
+  /** A sentence a reader can be shown, or `null` when the family needs no explanation. */
+  readonly note: string | null;
 }
 
 /** One map feature. Deliberately flat: the map renders it without further lookups. */

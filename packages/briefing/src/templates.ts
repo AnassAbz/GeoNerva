@@ -30,6 +30,8 @@
  */
 
 import {
+  FAMILY_GRAMMAR,
+  familyItemNoun,
   HAZARD_FAMILIES,
   type BriefingCopy,
   type ChangeWindow,
@@ -142,7 +144,9 @@ function summarySentences(input: CopyInput): readonly string[] {
        * floor as a total is the same class of overstatement as rendering an unknown as a zero.
        */
       const prefix = card.truncated ? 'at least ' : '';
-      return `${prefix}${String(count)} ${familyWords(family)} item${count === 1 ? '' : 's'}`;
+      // The item's own noun, not the family's name pluralised: "5 earthquakes", not
+      // "5 earthquakes items"; "1 fire activity cluster", not "1 fire activity item".
+      return `${prefix}${String(count)} ${familyItemNoun(family, count)}`;
     });
     sentences.push(`GeoNerva is currently tracking ${list(parts)} near this location.`);
   } else if (unavailable.length === 0) {
@@ -161,7 +165,16 @@ function summarySentences(input: CopyInput): readonly string[] {
 
   if (notCovered.length > 0) {
     sentences.push(
-      `${capitalize(list(notCovered.map(familyWords)))} ${notCovered.length === 1 ? 'is' : 'are'} not covered here, so GeoNerva would not have seen ${notCovered.length === 1 ? 'it' : 'them'} either way.`,
+      /*
+       * The verb and the pronoun agree with the **family**, not with how many families the
+       * sentence lists. Taking them from the count published "Weather warnings is not covered
+       * here" whenever exactly one plural-named family was uncovered.
+       */
+      `${capitalize(list(notCovered.map(familyWords)))} ${
+        notCovered.length === 1 && !FAMILY_GRAMMAR[notCovered[0] ?? 'OTHER'].plural ? 'is' : 'are'
+      } not covered here, so GeoNerva would not have seen ${
+        notCovered.length === 1 && !FAMILY_GRAMMAR[notCovered[0] ?? 'OTHER'].plural ? 'it' : 'them'
+      } either way.`,
     );
   }
 
@@ -235,8 +248,8 @@ function familySentences(card: FamilyCard): readonly string[] {
     if (card.itemsTotal > 1) {
       sentences.push(
         card.truncated
-          ? `At least ${String(card.itemsTotal)} ${words} items, of which ${String(card.items.length)} are listed.`
-          : `${String(card.itemsTotal)} ${words} items in total.`,
+          ? `At least ${String(card.itemsTotal)} ${familyItemNoun(card.family, card.itemsTotal)}, of which ${String(card.items.length)} are listed.`
+          : `${String(card.itemsTotal)} ${familyItemNoun(card.family, card.itemsTotal)} in total.`,
       );
     }
   }

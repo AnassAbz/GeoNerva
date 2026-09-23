@@ -624,8 +624,14 @@ function mostConsequential(types: readonly ChangeType[]): ChangeType {
  * `default` branch would quietly give a new signal type the words of a revision. The types this
  * engine cannot yet produce — the `ACTIVITY_*` family, which needs baselines — still have their
  * wording here, so adding the input is the only work left.
+ *
+ * Exported for the same reason those unreachable rows are written: it is the whole inventory of
+ * this engine's reader-facing wording, and the lexicon scan in
+ * `packages/briefing/src/engine-copy.test.ts` has to be able to reach the rows `diffSnapshots`
+ * cannot yet produce (QA round 2, L-7). A scan that covered only the reachable types would go
+ * quiet on exactly the sentences nobody has read recently.
  */
-function titleFor(type: ChangeType, item: SubjectSummary): string {
+export function titleFor(type: ChangeType, item: SubjectSummary): string {
   const titles: Readonly<Record<ChangeType, string>> = {
     NEW_EVENT: item.title,
     EVENT_UPDATED: `${item.title} was revised`,

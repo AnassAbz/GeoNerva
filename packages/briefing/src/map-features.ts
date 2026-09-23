@@ -34,19 +34,26 @@
  */
 
 import { chooseHeadlineMagnitude } from '@geonerva/correlation';
+import { resolveAvailability, type SourceAvailabilityInput } from '@geonerva/relevance';
 import {
   attributionsFor,
   canonicalEventsInViewportAsOf,
   clustersInViewportAsOf,
   linksAsOf,
   observationsAsOf,
+  healthAsOf,
+  productCoverageForViewport,
   sourceCutoffsAsOf,
   type ClusterVersionRow,
   type LinkRow,
   type ObservationRow,
+  type ProductCoverageRow,
+  type SourceHealthAsOf,
 } from '@geonerva/db/asof';
 import type { DB } from '@geonerva/db/schema';
 import { splitViewport } from '@geonerva/db/viewport';
+
+import { availabilityNote, resolveCoverage } from './coverage.ts';
 import {
   READ_MODEL_SCHEMA_VERSION,
   evidenceId,
@@ -54,6 +61,7 @@ import {
   formatSubjectRef,
   type BoundingBox,
   type EvidenceId,
+  type FamilyAvailability,
   type FireClusterStatus,
   type HazardFamily,
   type HazardType,
@@ -139,7 +147,7 @@ export async function buildMapFeatures(
   const families = new Set(options.families);
 
   const windows = eventWindows(options.families, asOf);
-  const [eventPage, clusterPage, cutoffs] = await Promise.all([
+  const [eventPage, clusterPage, cutoffs, coverageRows, health] = await Promise.all([
     canonicalEventsInViewportAsOf(db, { asOf, bbox, windows, limit: cap }),
     families.has('FIRE_ACTIVITY')
       ? clustersInViewportAsOf(db, {
@@ -150,6 +158,8 @@ export async function buildMapFeatures(
         })
       : Promise.resolve({ clusters: [] as ClusterVersionRow[], total: 0 }),
     sourceCutoffsAsOf(db, asOf),
+    productCoverageForViewport(db, splitViewport(bbox)),
+    healthAsOf(db, { asOf }),
   ]);
 
   const eventFeatures = await describeEvents(db, asOf, eventPage.events, windows);
@@ -192,8 +202,65 @@ export async function buildMapFeatures(
     truncated: total > features.length,
     cap,
     total,
+    coverage: coverageFor(options.families, coverageRows, health.byProduct, features, asOf),
     attribution,
   };
+}
+
+/**
+ * What the map can say about each requested family (ADR-042).
+ *
+ * The same vocabulary and the same resolver a card uses, asked of the **viewport** rather than of
+ * a place, so the two cannot come from different definitions of coverage. It is not the card's own
+ * verdict: that one is about a reader's location and a radius, this one about what is on screen. A
+ * viewport spanning the Canadian border is covered for weather warnings where a Moroccan one is
+ * not, and both are true at once.
+ *
+ * `itemCount` is what the map actually drew for the family, so a family with nothing on screen and
+ * no right to claim emptiness comes back `UNAVAILABLE` — the same downgrade `buildSnapshot`
+ * applies, for the same reason: `total: 0` must never be the only thing a client has to go on.
+ */
+function coverageFor(
+  requested: readonly HazardFamily[],
+  rows: readonly ProductCoverageRow[],
+  health: readonly SourceHealthAsOf[],
+  features: readonly MapFeature[],
+  asOf: Date,
+): MapFeaturesResponse['coverage'] {
+  const byFamily = resolveCoverage(rows, asOf);
+  const statusOf = new Map(
+    health.map((entry) => [`${entry.sourceId}:${String(entry.productId ?? '')}`, entry]),
+  );
+  const statements: Record<string, { availability: FamilyAvailability; note: string | null }> = {};
+
+  for (const family of new Set(requested)) {
+    const resolved = byFamily[family];
+    const drawn = features.filter((feature) => feature.family === family).length;
+    const sources: SourceAvailabilityInput[] = resolved.sources.map((source) => {
+      const entry = statusOf.get(`${source.sourceId}:${String(source.productId)}`);
+      return {
+        sourceId: source.sourceId,
+        productId: source.productId,
+        /*
+         * No health row means no committed run visible at this knowledge time. `UNAVAILABLE` is
+         * the honest reading — `hasEverSucceeded: false` then makes the verdict say so in words —
+         * and it is the one status that cannot overstate what GeoNerva knows.
+         */
+        status: entry?.status ?? 'UNAVAILABLE',
+        hasEverSucceeded: entry?.lastSuccessAt != null,
+      };
+    });
+    const verdict = resolveAvailability({
+      coverage: resolved.coverage.level,
+      sources,
+      itemCount: drawn,
+    });
+    statements[family] = {
+      availability: verdict.availability,
+      note: availabilityNote(family, resolved.coverage.note, sources.length, verdict),
+    };
+  }
+  return statements;
 }
 
 /**

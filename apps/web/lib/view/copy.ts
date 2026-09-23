@@ -65,6 +65,7 @@ import {
   FIRE_GROWTH_FLOOR,
   FIRE_HIGH_DETECTIONS_24H,
   FIRE_HIGH_OVERPASSES_24H,
+  FIRE_SUMMARY_VOUCHABLE_HOURS,
   FIRE_MID_KM,
   FIRE_MODEL_VERSION,
   FIRE_NEAR_KM,
@@ -238,7 +239,17 @@ export const COPY = {
     noChange: 'No listed change in this window.',
     changeCount: (count: number, window: string) =>
       `${String(count)} change${count === 1 ? '' : 's'} in the last ${window}`,
-    notCovered: (familyLabel: string) => `${familyLabel} are not covered for this location.`,
+    /*
+     * The verb is a parameter, and `familySubject` in `lib/view/families.ts` supplies it.
+     *
+     * This read `${familyLabel} are …` unconditionally, so the fire card said "Fire activity are
+     * not covered for this location." The same class of mistake reaches the briefing's own
+     * sentences, where the verb is chosen from how many families are being listed rather than
+     * from the grammatical number of the label: "Weather warnings is not covered here" (QA round
+     * 2, L-3). A family's number is a property of the family, so it is recorded with the family.
+     */
+    notCovered: (subject: string, verb: string) =>
+      `${subject} ${verb} not covered for this location.`,
     insufficientHistory: 'Not enough history to establish a baseline.',
     /*
      * The sentence for a card that was handed **no** metric, which is a different fact from a
@@ -263,6 +274,27 @@ export const COPY = {
     showLess: 'Hide details',
     open: 'Open',
     km: 'away',
+    /*
+     * What the kilometre figure beside an item is measured to, at the place the figure is shown.
+     *
+     * One earthquake read 143.9 km at one knowledge time and 148.3 km eight hours earlier,
+     * because the canonical centroid moved from EMSC's epicentre to USGS's when the USGS solution
+     * became reviewed. The event page says which source's values it is showing and by how much the
+     * epicentres differ; the card printed "144 km away" with nothing (QA round 2, L-5). The basis
+     * phrase comes from `FAMILY_META[family].distanceBasis`, because every family measures to
+     * something different.
+     */
+    distanceBasis: (basis: string) => `Measured ${basis}.`,
+    /*
+     * The second half of L-5, and the part a reader needs in order to trust a number that changed.
+     *
+     * Which source's position is canonical is not in the `/api/v1` contract — `SubjectSummary`
+     * carries `distanceKm` and `hypocentralDistanceKm` and no attribution for either — so this
+     * says what the response does support: that more than one source placed the item, and that
+     * the distance follows whichever solution GeoNerva currently prefers.
+     */
+    distanceMayMove:
+      'More than one source published a position for this item. The distance follows the solution GeoNerva currently prefers, so it can change when a source revises its own.',
   },
   agreement: {
     SINGLE_SOURCE: 'single source',
@@ -347,6 +379,14 @@ export const COPY = {
     time: 'Time',
     sources: 'Sources',
     empty: 'Nothing assessed near this location in the sources that are available.',
+    /*
+     * The table's half of QA round 2's L-5. A column of bare kilometre figures invites the reader
+     * to compare distances measured to different kinds of thing — an epicentre, the nearest pixel
+     * of a thermal cluster, the edge of a modelled area — so each cell names its own basis and
+     * this sentence says the figure can move when the preferred solution does.
+     */
+    distanceNote:
+      'Each distance is measured from the position GeoNerva currently treats as canonical for that item, named under the figure. Where sources place an item differently, the figure changes when the preferred solution changes.',
     sortAscending: 'sorted ascending',
     sortDescending: 'sorted descending',
   },
@@ -355,7 +395,28 @@ export const COPY = {
     chartLabel: (label: string) => `${label}: chart`,
     missingPoints: 'Gaps in the chart:',
     referenceBand: 'Typical range (25th–75th percentile)',
+    /*
+     * What replaces the band when the band has no width.
+     *
+     * With `p25` and `p75` both 1 the shaded rectangle collapsed to a hairline, and the legend
+     * still called it "Typical range (25th–75th percentile)" — a range that is not a range, drawn
+     * as one (QA round 2, M-1). Half the reference windows at the same value is a real and common
+     * result for a sparse count, and the honest rendering of it is a level rather than a band.
+     */
+    referenceLevel: (value: string) =>
+      `Typical level: ${value}. The 25th and 75th percentiles are both ${value} here, so there is no range to draw.`,
     p90: '90th percentile',
+    /*
+     * The bridge between this chart and the cards above it (QA round 2, L-8).
+     *
+     * "Not enough satellite coverage in the last five weeks to compare fire activity here" sat on
+     * the same page as a live cluster of 14 thermal detections. The two statements are not a
+     * contradiction — `FIRE_TREND`'s window ends two days back, because ADR-040 counts a day only
+     * once it is final, so no date is described both ways — but nothing said so. `lastDay` is in
+     * the metric's own `params`, and this is the sentence that spends it.
+     */
+    windowEnds: (lastDay: string) =>
+      `This comparison covers whole days up to and including ${lastDay}. A day is counted only once GeoNerva holds every hour of it, so anything the satellites have seen since is not in this chart — it is on the cards above, which count the individual detections rather than these daily totals.`,
     current: 'Current window',
     methodology: 'How this is computed',
     status: {
@@ -449,7 +510,7 @@ export const COPY = {
      */
     detections24h: 'Thermal detections',
     overpasses: 'Satellite overpasses',
-    window24h: (at: string) => `Counted over the 24 hours to ${at}, when this summary was computed`,
+    window24h: (at: string) => `Counted over the 24 hours to ${at}`,
     total: 'Thermal detections in the cluster',
     firstLast: 'First and last detection',
     frp: 'Fire radiative power',
@@ -577,7 +638,7 @@ export const COPY = {
         },
         {
           label: 'High',
-          value: `within ${km(FIRE_NEAR_KM)} and active, with either ${num(FIRE_HIGH_DETECTIONS_24H)} detections or ${num(FIRE_HIGH_OVERPASSES_24H)} distinct satellite overpasses in ${hours(FIRE_ACTIVE_HOURS)} — two independent looks are much stronger than five pixels from one pass`,
+          value: `within ${km(FIRE_NEAR_KM)} and active, with either ${num(FIRE_HIGH_DETECTIONS_24H)} detections or ${num(FIRE_HIGH_OVERPASSES_24H)} distinct satellite overpasses in ${hours(FIRE_ACTIVE_HOURS)} — two independent looks are much stronger than five pixels from one pass — and only while the summary those counts come from is current, within ${hours(FIRE_SUMMARY_VOUCHABLE_HOURS)}, because they are a rolling window computed when GeoNerva last clustered rather than at the moment you are reading`,
         },
         {
           label: 'Moderate',

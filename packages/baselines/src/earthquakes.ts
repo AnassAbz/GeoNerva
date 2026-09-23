@@ -166,15 +166,25 @@ export function earthquakeCountBaseline(input: EarthquakeCountInput): Earthquake
       activityRatio: average >= config.ratioMinimumMean ? observed / average : null,
     };
     percentile = midRankPercentile(observed, counts);
-    band =
-      percentile >= config.wellAbovePercentile && observed >= config.wellAboveMinimumObserved
-        ? 'WELL_ABOVE_TYPICAL'
-        : percentile >= config.abovePercentile && observed >= config.aboveMinimumObserved
-          ? 'ABOVE_TYPICAL'
-          : 'TYPICAL';
+    /*
+     * Each band needs its percentile to be resolvable by the sample it is drawn from, not only
+     * met by it (ADR-043). Over 59 windows the 99th percentile is an extrapolation — the finest
+     * quantile 59 observations resolve is about the 98th — so the band is capped one step down
+     * rather than claimed. The count is still high against the periods GeoNerva holds, which is
+     * what the remaining band says.
+     */
+    const wellAbove =
+      percentile >= config.wellAbovePercentile &&
+      observed >= config.wellAboveMinimumObserved &&
+      nWindows >= config.wellAboveMinimumWindows;
+    const above =
+      percentile >= config.abovePercentile &&
+      observed >= config.aboveMinimumObserved &&
+      nWindows >= config.aboveMinimumWindows;
+    band = wellAbove ? 'WELL_ABOVE_TYPICAL' : above ? 'ABOVE_TYPICAL' : 'TYPICAL';
     interpretation =
       `${plural(observed, 'earthquake')} of ${label} within ${String(input.radiusKm)} km in the past ` +
-      `${String(input.windowDays)} days: ${bandPhrase(band, nWindows)} for this area, compared with ` +
+      `${String(input.windowDays)} days: ${bandPhrase(band)} for this area, compared with ` +
       `${String(nWindows)} ${String(input.windowDays)}-day periods since ${String(sinceYear)}.`;
   } else if (status === 'RARE_ACTIVITY') {
     const total = nEvents + observed;
@@ -335,31 +345,23 @@ function completenessSentence(completeness: Completeness): string {
 }
 
 /**
- * The band in words, quoting only a quantile the sample can actually resolve.
+ * The band in words.
  *
- * The finest quantile `n` observations can resolve is `1/n`. Over 59 reference windows that is
- * about 1.7 %, so "in the top 1 % of comparable periods" named a rarity that is not in the
- * sample — ARCHITECTURE §8's third principle is "refuse to report a statistic that the data
- * cannot support", and this sentence was reporting one (QA round 2, M-1). §8.1's documented gate
- * of 52 windows and 20 events governs `status: OK`; it says nothing about the 99th percentile.
- *
- * The band itself is unchanged: it is a label for where the count sits, and the thresholds are
- * §8.1's. What changes is the claim made *about* it. Where the sample cannot carry the quantile,
- * the sentence says what it can — how the count ranks against the periods actually compared,
- * which for a top-of-sample count is both true and stronger than a percentile.
+ * The quantile is safe to quote here because an unresolvable one never reaches this function: a
+ * band whose percentile the sample cannot carry is capped one step down where it is computed
+ * (ADR-043). "In the top 1 % of comparable periods" over 59 windows was naming a rarity that is
+ * not in the sample — ARCHITECTURE §8's third principle is "refuse to report a statistic that the
+ * data cannot support" — and §8.1's gate of 52 windows and 20 events governs `status: OK`, not
+ * the percentile.
  */
-function bandPhrase(band: EarthquakeBand, nWindows: number): string {
+function bandPhrase(band: EarthquakeBand): string {
   switch (band) {
     case 'TYPICAL':
       return 'typical';
     case 'ABOVE_TYPICAL':
-      return nWindows >= 10
-        ? 'above typical (in the top 10 % of comparable periods)'
-        : 'above typical (among the highest of the periods compared)';
+      return 'above typical (in the top 10 % of comparable periods)';
     case 'WELL_ABOVE_TYPICAL':
-      return nWindows >= 100
-        ? 'well above typical (in the top 1 % of comparable periods)'
-        : 'well above typical (among the highest of the periods compared)';
+      return 'well above typical (in the top 1 % of comparable periods)';
   }
 }
 

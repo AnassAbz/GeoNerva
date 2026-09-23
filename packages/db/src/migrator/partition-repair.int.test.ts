@@ -172,6 +172,26 @@ describe.each([
 
     const day = '2026-09-20';
     await client.query(`SELECT geonerva.ensure_fire_detection_partitions('${day}'::date, 2)`);
+    /*
+     * And the day before, created the **legacy** way: bounds given as bare dates, which PostgreSQL
+     * reads at the session timezone's midnight. That is the convention migration 0005 used and the
+     * one 0010 exists to repair, so a database on this side of the repair has it for every day —
+     * including the one the 00:00-03:00Z rows below belong to under `America/New_York`, where the
+     * partition named for `day` does not start until 04:00Z.
+     *
+     * Those rows used to land in a partition 0005 happened to have seeded, since it creates a
+     * window around `CURRENT_DATE - 3`. So this test passed or failed according to the wall clock,
+     * and began failing the moment the local date reached 2026-09-23. Declaring the partition it
+     * needs is what stops it rotting again — and it cannot come from
+     * `ensure_fire_detection_partitions`, because by 0009 that function is UTC-aligned: it would
+     * leave a four-hour hole next to 0005's local-bounded neighbour under New York, and overlap it
+     * under Berlin.
+     */
+    await client.query(
+      `CREATE TABLE geonerva.fire_detections_20260919
+         PARTITION OF geonerva.fire_detections
+         FOR VALUES FROM ('2026-09-19') TO ('${day}')`,
+    );
     const product = await client.query<{ id: number }>(
       "SELECT id FROM geonerva.source_products WHERE code = 'VIIRS_NOAA20_NRT'",
     );

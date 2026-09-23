@@ -19,5 +19,5 @@ export {
   RECENCY_WEIGHT,
 } from './config.ts';
 
-export { diffSnapshots } from './classify.ts';
+export { diffSnapshots, titleFor as changeTitleFor } from './classify.ts';
 export type { ChangeFacetValue, ChangeSignal, DiffOptions, DiffResult } from './classify.ts';

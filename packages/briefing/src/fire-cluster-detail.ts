@@ -27,6 +27,7 @@
  */
 
 import {
+  clusterWindowCountsAsOf,
   attributionsFor,
   clusterVersionHistoryAsOf,
   fireClusterAsOf,
@@ -65,6 +66,19 @@ import type { Kysely } from 'kysely';
 
 import { resolveEvidenceManifest, toAttribution } from './briefing.ts';
 import { relatedView } from './event-detail.ts';
+/**
+ * How near the present a request must be for its rolling 24-hour figures to be recounted.
+ *
+ * The same five minutes `asOfContextFor` calls a live request: below it the answer is for now, and
+ * counting the window again is both sound and more honest than the worker's last pass. Above it
+ * the request is a replay, and today's cluster membership cannot be used to count a past window
+ * (ADR-039).
+ */
+const LIVE_RECOUNT_WITHIN_MS = 5 * 60 * 1000;
+
+/** §9.2's window, and the one `FireClusterSummaryView`'s rolling figures are defined over. */
+const FIRE_WINDOW_HOURS = 24;
+
 import { replayHorizonFor } from './replay-horizon.ts';
 import { asOfContextFor, assessFireCluster, fireDistanceOf } from './snapshot.ts';
 
@@ -170,6 +184,26 @@ export async function buildFireClusterDetail(
           hasHull: latest.hull_geojson !== null,
           nTotal: latest.n_total,
         });
+  /*
+   * The rolling 24-hour figures, recounted to the knowledge time when the request is live.
+   *
+   * `n_24h` and `overpasses_24h` were computed when the worker last clustered; shown hours later
+   * as "the last 24 hours" they overstated the fire — eight detections where the rows held five
+   * (QA round 2, M-2). A live read can count them again honestly. A **replay** cannot: membership
+   * lives in `fire_detections.cluster_id`, which is updated in place, so counting a past window
+   * with today's membership is the leak ADR-039 is open about. There the stored figures stand, and
+   * `countedTo` says which twenty-four hours they are.
+   */
+  const now = options.now ?? new Date();
+  const live = now.getTime() - asOf.getTime() <= LIVE_RECOUNT_WITHIN_MS;
+  const recounted = live
+    ? await clusterWindowCountsAsOf(db, {
+        clusterId: cluster.id,
+        asOf,
+        windowHours: FIRE_WINDOW_HOURS,
+      })
+    : null;
+
   const nearestM = distance?.meters ?? null;
   const relevance =
     distance === null || nearestM === null
@@ -179,9 +213,10 @@ export async function buildFireClusterDetail(
           lastDetectedAt: latest.last_detected_at,
           nearestDetectionKm: nearestM / 1000,
           distanceBasis: distance.basis,
-          n24h: latest.n_24h,
+          summarizedAt: recounted === null ? latest.as_of : asOf,
+          n24h: recounted?.detections ?? latest.n_24h,
           nTotal: latest.n_total,
-          overpasses24h: latest.overpasses_24h,
+          overpasses24h: recounted?.overpasses ?? latest.overpasses_24h,
           frpSum24h: latest.frp_sum_24h,
           evidenceIds: citations,
         });
@@ -205,19 +240,20 @@ export async function buildFireClusterDetail(
       asOf,
       cutoffs,
       replayHorizonFor(options.retentionProfile ?? 'lean', asOf),
-      options.now ?? new Date(),
+      now,
     ),
     status: statusOf(state),
     createdAt: cluster.created_at.toISOString(),
     summary: {
       clusterVersionId: latest.cluster_version_id,
       asOf: latest.as_of.toISOString(),
+      countedTo: (recounted === null ? latest.as_of : asOf).toISOString(),
       detectionCountTotal: latest.n_total,
-      detectionCount24h: latest.n_24h,
-      distinctOverpasses24h: latest.overpasses_24h,
+      detectionCount24h: recounted?.detections ?? latest.n_24h,
+      distinctOverpasses24h: recounted?.overpasses ?? latest.overpasses_24h,
       firstDetectedAt: latest.first_detected_at.toISOString(),
       lastDetectedAt: latest.last_detected_at.toISOString(),
-      frpSum24h: latest.frp_sum_24h,
+      frpSum24h: recounted === null ? latest.frp_sum_24h : recounted.frpSum,
       frpMax: latest.frp_max,
       maxConfidence: confidenceOf(latest.max_confidence, null),
       sensors,

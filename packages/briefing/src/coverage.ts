@@ -27,7 +27,9 @@
  * rendered, and it does not silence three other axes.
  */
 
+import type { AvailabilityVerdict } from '@geonerva/relevance';
 import {
+  FAMILY_GRAMMAR,
   HAZARD_TYPES_BY_FAMILY,
   HAZARD_FAMILIES,
   type CoverageLevel,
@@ -173,18 +175,52 @@ function isPresent(value: string | null): value is string {
 
 /** The family, in the words the card uses. */
 export function familyWords(family: HazardFamily): string {
-  switch (family) {
-    case 'EARTHQUAKES':
-      return 'earthquakes';
-    case 'FIRE_ACTIVITY':
-      return 'fire activity';
-    case 'FLOODS':
-      return 'floods';
-    case 'CYCLONES':
-      return 'tropical cyclones';
-    case 'WEATHER_ALERTS':
-      return 'weather warnings';
-    case 'OTHER':
-      return 'volcanoes and droughts';
+  return FAMILY_GRAMMAR[family].words;
+}
+
+/**
+ * A verdict in words, for whichever surface is showing it.
+ *
+ * One wording, because a map layer and a hazard card describing the same verdict in different
+ * sentences would eventually describe it differently (ADR-042). The card passes its own coverage
+ * note and source count; the map passes the viewport's.
+ */
+export function availabilityNote(
+  family: HazardFamily,
+  coverageNote: string | null,
+  sourceCount: number,
+  verdict: AvailabilityVerdict,
+): string {
+  const words = familyWords(family);
+  switch (verdict.reason) {
+    case 'NOT_COVERED_HERE':
+      return coverageNote ?? `GeoNerva does not cover ${words} here.`;
+    case 'ALL_SOURCES_UNUSABLE':
+      return `Every source for ${words} is unavailable, so GeoNerva cannot say what is happening here.`;
+    case 'NEVER_SUCCEEDED':
+      /*
+       * Not "never". `healthAsOf` reads a bounded run window, so what this verdict actually knows
+       * is that no successful run is *visible* at this knowledge time — a source that worked until
+       * last month and has failed since produces the same verdict. Claiming "never" would be a
+       * false statement about the system's own history, and it is exactly the distinction the
+       * availability model draws between a configuration problem and an outage.
+       */
+      return `GeoNerva has no successful read of a source for ${words} within the period it can see.`;
+    case 'SOME_SOURCES_UNUSABLE':
+      return `Some sources for ${words} could not be read: ${verdict.unusableSources.join(', ')}.`;
+    case 'DERIVATION_NOT_RUN':
+      return `GeoNerva has the underlying data for ${words} but has not finished processing it, so it cannot report on them yet.`;
+    case 'DERIVATION_STALE':
+      return `GeoNerva is still processing the most recent ${words} data, so this list may be incomplete.`;
+    case 'PARTIAL_COVERAGE':
+      return coverageNote ?? `Coverage for ${words} here is incomplete.`;
+    case 'SUBJECTS_NOT_ASSESSED':
+      return `GeoNerva is holding ${words} here that it has no model to describe, so this list is not complete.`;
+    case 'BEYOND_REPLAY_HORIZON':
+      return `This knowledge time is outside the window GeoNerva still holds ${words} data for, so it cannot say what was happening.`;
+    case 'NOTHING_TO_REPORT':
+      return `No ${words} to report here.`;
+    case 'OK':
+      return `Reporting ${words} from ${String(sourceCount)} source${sourceCount === 1 ? '' : 's'}.`;
   }
 }

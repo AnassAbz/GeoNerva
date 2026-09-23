@@ -737,6 +737,7 @@ describe('map features', () => {
       truncated: false,
       cap: 500,
       total: 0,
+      coverage: { EARTHQUAKES: { availability: 'AVAILABLE', note: null } },
       attribution: [],
       ...overrides,
     };
@@ -750,6 +751,66 @@ describe('map features', () => {
   it('rejects a total above the feature count with truncated false', () => {
     expect(
       mapFeaturesResponseSchema.safeParse(response({ total: 900, truncated: false })).success,
+    ).toBe(false);
+  });
+
+  /*
+   * ADR-042. An empty viewport and an uncovered one both returned `total: 0` and were
+   * indistinguishable, which is the shape PRODUCT §7's first row forbids. So a statement is
+   * required for every family the request asked about — a response that quietly omitted one would
+   * be back where it started — and for no other, because a verdict about a family nobody asked
+   * about was computed against nothing.
+   */
+  it('rejects a response that says nothing about a family it was asked about', () => {
+    expect(
+      mapFeaturesResponseSchema.safeParse(response({ families: ['EARTHQUAKES', 'FLOODS'] }))
+        .success,
+    ).toBe(false);
+  });
+
+  it('rejects a verdict about a family the request did not ask about', () => {
+    expect(
+      mapFeaturesResponseSchema.safeParse(
+        response({
+          coverage: {
+            EARTHQUAKES: { availability: 'AVAILABLE', note: null },
+            FLOODS: { availability: 'NOT_COVERED', note: 'no source' },
+          },
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
+  /* A family with something drawn on the map is not a family nothing covers. */
+  it('rejects NOT_COVERED for a family that has features', () => {
+    const feature = {
+      subjectRef: 'CE:EQ-26-7K3F9Q',
+      kind: 'canonical_event',
+      publicId: 'EQ-26-7K3F9Q',
+      family: 'EARTHQUAKES',
+      hazardType: 'EARTHQUAKE',
+      geometry: { type: 'Point', coordinates: [-8, 31.5] },
+      geometryKind: 'POINT',
+      geometryRole: 'EPICENTRE',
+      relevance: 'LOW',
+      observedAt: TS,
+      isActive: true,
+      providerSeverity: null,
+      magnitudeValue: 4.7,
+      clusterStatus: null,
+      confidence: null,
+      label: 'M4.7 earthquake',
+      href: '/event/EQ-26-7K3F9Q',
+      evidenceIds: [],
+    };
+    expect(
+      mapFeaturesResponseSchema.safeParse(
+        response({
+          features: [feature],
+          total: 1,
+          coverage: { EARTHQUAKES: { availability: 'NOT_COVERED', note: 'no source' } },
+        }),
+      ).success,
     ).toBe(false);
   });
 

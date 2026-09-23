@@ -105,6 +105,25 @@ export function mapFeaturesFixture(scenario: FixtureScenario = 'all-fresh'): Map
     truncated: false,
     cap: 500,
     total: features.length,
+    /*
+     * One statement per requested family (ADR-042), and under the FIRMS outage the fire layer says
+     * so rather than looking like a quiet viewport — which is the whole point of the field: the
+     * cluster is still drawn, because I11 is "do not claim emptiness you did not observe", and the
+     * layer is labelled, because the map must be able to say the feed is down while drawing it.
+     */
+    coverage: {
+      EARTHQUAKES: { availability: 'AVAILABLE', note: 'Reporting earthquakes from 2 sources.' },
+      FIRE_ACTIVITY:
+        scenario === 'firms-stale'
+          ? {
+              availability: 'UNAVAILABLE',
+              note: 'Every source for fire activity is unavailable, so GeoNerva cannot say what is happening here.',
+            }
+          : { availability: 'AVAILABLE', note: 'Reporting fire activity from 2 sources.' },
+      FLOODS: { availability: 'AVAILABLE', note: 'Reporting floods from 1 source.' },
+      CYCLONES: { availability: 'AVAILABLE', note: 'Reporting tropical cyclones from 1 source.' },
+      OTHER: { availability: 'AVAILABLE', note: 'Reporting volcanoes and droughts from 1 source.' },
+    },
     attribution: attributionFor('usgs', 'emsc', 'gdacs', 'firms'),
   };
 }

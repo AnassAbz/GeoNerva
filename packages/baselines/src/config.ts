@@ -33,6 +33,20 @@ export const EARTHQUAKE_BASELINE = {
   /** "`ABOVE_TYPICAL` at ≥ p90 **and** observed ≥ 2." */
   abovePercentile: 90,
   aboveMinimumObserved: 2,
+  /**
+   * The reference windows a band's percentile needs before it may be claimed (ADR-043).
+   *
+   * The finest quantile `n` observations can resolve is `1/n`. A 90th percentile therefore needs
+   * ten windows and a 99th needs a hundred; below that the percentile is an extrapolation and
+   * §8's third principle — "refuse to report a statistic that the data cannot support" — forbids
+   * reporting it. §8.1's own gate of 52 windows governs `status: OK` and says nothing about this.
+   *
+   * A band whose sample cannot carry it is capped one step down rather than dropped: the count is
+   * still high against the periods GeoNerva actually holds, and saying nothing about that would be
+   * its own kind of misleading. Over 59 windows a `WELL_ABOVE_TYPICAL` becomes `ABOVE_TYPICAL`.
+   */
+  aboveMinimumWindows: 10,
+  wellAboveMinimumWindows: 100,
   /** "`WELL_ABOVE_TYPICAL` at ≥ p99 **and** observed ≥ 3." */
   wellAbovePercentile: 99,
   wellAboveMinimumObserved: 3,

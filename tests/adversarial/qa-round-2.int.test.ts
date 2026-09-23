@@ -154,6 +154,14 @@ async function readAll() {
     db,
     publicId: SCENARIO_IDS.fireCluster,
     asOf: AS_OF,
+    /*
+     * `now` is the anchor, because this harness models the product *at* the anchor — which is
+     * exactly what `GEONERVA_FAKE_NOW` does for the end-to-end run against the same seed. Left to
+     * default, `now` is the real wall clock and every read here is a replay, which is the one case
+     * where a rolling 24-hour window may **not** be recounted (ADR-039), so F-3 could never pass
+     * however the product behaved. Added by the orchestrator when M-2's recount landed.
+     */
+    now: AS_OF,
     location: LOCATION,
     retentionProfile: 'lean',
   });
@@ -254,22 +262,35 @@ describe('F-2 · the map must not present an outage or a gap as a quiet region',
     expect(disclosure).not.toEqual([]);
   });
 
-  it('does not draw an active fire cluster the briefing refuses to vouch for', () => {
+  /*
+   * Rewritten as the finding it documents, by the orchestrator, when ADR-042 was implemented.
+   *
+   * As first written this asserted `drawn: []` — that the map must show nothing while the card is
+   * UNAVAILABLE. The finding's own text says the opposite and is right to: "keeping the cluster
+   * rows is deliberate … I11 is not 'hide the data', it is 'do not claim emptiness you did not
+   * observe' … The finding is that the map has no way to *say* the feed is down while it draws
+   * them." Hiding the fourteen detections GeoNerva really holds would be its own dishonesty.
+   *
+   * So what is asserted is the finding: the cluster may be drawn, and the response must carry the
+   * verdict, in the same vocabulary the card uses.
+   */
+  it('says the fire feed is down on the same response that draws its cluster', () => {
     /*
      * `firms-stale`: all three fire sources are STALE with three consecutive 5xx, the card is
      * UNAVAILABLE, and the headline is "GeoNerva cannot currently report on fire activity here."
-     * The map, asked for the same family at the same instant, returns the cluster with
-     * `isActive: true` and `clusterStatus: 'ACTIVE'` and no way to say the feed is down.
      */
     const { briefing, map } = answerFor('firms-stale');
     const card = briefing.briefing.snapshot.families.FIRE_ACTIVITY;
     expect(card.availability).toBe('UNAVAILABLE');
 
     const drawn = map.fire.features.map((feature) => feature.publicId);
-    expect({ cardAvailability: card.availability, drawn }).toEqual({
-      cardAvailability: 'UNAVAILABLE',
-      drawn: [],
-    });
+    expect(drawn).toContain('FR-26-4HX2MB');
+
+    const verdict = map.fire.coverage.FIRE_ACTIVITY;
+    expect(verdict?.availability).toBe('UNAVAILABLE');
+    expect(verdict?.note ?? '').not.toBe('');
+    // And the two surfaces agree, which is the point of resolving it with one function.
+    expect(verdict?.availability).toBe(card.availability);
   });
 });
 
@@ -333,17 +354,31 @@ describe('F-4 · a percentile must be resolvable by its own sample', () => {
    * (§8.1) is 52 windows, which gates `status: OK` and says nothing about the 99th percentile
    * the `WELL_ABOVE_TYPICAL` band and its copy both name.
    */
+  /*
+   * Rewritten as the implication it documents, by the orchestrator, when ADR-043 was implemented.
+   *
+   * As first written this asserted `supportable: true` **unconditionally**, so it demanded the
+   * reference hold a hundred windows whatever the product said about it — which no fix to the
+   * product could satisfy on a two-year GDACS record, and which is not the finding. The finding is
+   * that a 1 % claim requires a sample that can resolve 1 %. That is what is asserted now, in both
+   * directions: the claim implies the sample, and the band a capped answer lands on is still
+   * checked against its own resolvable percentile.
+   */
   it('does not claim a 1 % rarity from fewer than 100 reference windows', () => {
     const { metric } = answerFor('all-fresh').history.eq30;
     if (metric.status !== 'OK') return;
 
+    const nWindows = metric.reference?.nWindows ?? 0;
     const claimsOnePercent =
       metric.band === 'WELL_ABOVE_TYPICAL' || /top 1\s*%/u.test(metric.interpretation);
-    expect({
-      claimsOnePercent,
-      nWindows: metric.reference?.nWindows ?? 0,
-      supportable: (metric.reference?.nWindows ?? 0) >= 100,
-    }).toEqual({ claimsOnePercent, nWindows: metric.reference?.nWindows ?? 0, supportable: true });
+    const claimsTenPercent =
+      metric.band === 'ABOVE_TYPICAL' || /top 10\s*%/u.test(metric.interpretation);
+
+    if (claimsOnePercent) expect(nWindows).toBeGreaterThanOrEqual(100);
+    if (claimsTenPercent) expect(nWindows).toBeGreaterThanOrEqual(10);
+
+    // And the record of what this deployment actually answers, so a regression is visible.
+    expect({ nWindows, claimsOnePercent }).toEqual({ nWindows: 59, claimsOnePercent: false });
   });
 });
 

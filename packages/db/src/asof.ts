@@ -1183,6 +1183,110 @@ export async function productCoverageFor(
 }
 
 /**
+ * The same rows for a **viewport** rather than a point (ADR-042).
+ *
+ * `covers_point` answers "does this source cover the place the reader asked about". The map asks a
+ * different question — "does it cover any of what is on screen" — and the two are not the same: a
+ * Canada-only source covers part of a viewport spanning the border and none of a Moroccan one. It
+ * is the same geometry and the same predicate, over a box instead of a point, so the map's verdict
+ * and a card's cannot come from different definitions of coverage.
+ *
+ * `parts` is one box normally and two when the viewport crosses the antimeridian, matching how the
+ * features themselves are read; a source covers the viewport if it intersects any part.
+ */
+export async function productCoverageForViewport(
+  db: Kysely<DB>,
+  parts: readonly {
+    readonly west: number;
+    readonly south: number;
+    readonly east: number;
+    readonly north: number;
+  }[],
+): Promise<ProductCoverageRow[]> {
+  if (parts.length === 0) return [];
+  const boxes = sql.join(
+    parts.map(
+      (part) =>
+        sql`ST_MakeEnvelope(${part.west}, ${part.south}, ${part.east}, ${part.north}, 4326)::geography`,
+    ),
+    sql`, `,
+  );
+  const result = await sql<ProductCoverageRow>`
+    SELECT s.id                AS source_id,
+           s.name              AS source_name,
+           p.id                AS product_id,
+           p.code              AS product_code,
+           p.hazard_types      AS hazard_types,
+           s.enabled           AS source_enabled,
+           p.enabled           AS product_enabled,
+           p.status            AS product_status,
+           p.active_from,
+           p.active_to,
+           (s.coverage IS NULL OR EXISTS (
+              SELECT 1 FROM (VALUES (${boxes})) AS box(geom)
+              WHERE ST_Intersects(s.coverage, box.geom)
+           ))                  AS covers_point,
+           s.coverage_note
+    FROM geonerva.sources s
+    JOIN geonerva.source_products p ON p.source_id = s.id
+    ORDER BY s.id, p.id
+  `.execute(db);
+  return [...result.rows];
+}
+
+/** A cluster's rolling-window figures, recomputed for a knowledge time. */
+export interface ClusterWindowCounts {
+  readonly detections: number;
+  readonly overpasses: number;
+  readonly frpSum: number | null;
+}
+
+/**
+ * The detections a cluster holds in the `windowHours` up to `asOf`, counted now rather than when
+ * the worker last clustered (QA round 2, M-2).
+ *
+ * `fire_cluster_versions.n_24h` is a *rolling* window computed at that row's own `as_of`. A reader
+ * arriving hours later was shown it as "the last 24 hours": in the seeded scenario, eight
+ * detections on two overpasses where the rows held five on one, because three had fallen out of
+ * the window eighteen minutes before the knowledge time.
+ *
+ * **Only sound for a live read.** Membership lives in `fire_detections.cluster_id`, which is
+ * updated in place and carries no knowledge time, so this returns *today's* membership over a past
+ * window — which is exactly the leak ADR-039 is open about. Callers use it when the request is for
+ * the present and fall back to the stored summary otherwise.
+ *
+ * An overpass is a distinct `(product, ten-minute bucket)`, which is the definition
+ * `FireClusterSummaryView.distinctOverpasses24h` documents.
+ */
+export async function clusterWindowCountsAsOf(
+  db: Kysely<DB>,
+  options: {
+    readonly clusterId: string;
+    readonly asOf: Date;
+    readonly windowHours: number;
+  },
+): Promise<ClusterWindowCounts> {
+  const result = await sql<{ detections: string; overpasses: string; frp_sum: number | null }>`
+    SELECT count(*)::text AS detections,
+           count(DISTINCT (d.product_id, floor(extract(epoch from d.acquired_at) / 600)))::text
+             AS overpasses,
+           sum(d.frp)::real AS frp_sum
+    FROM geonerva.fire_detections d
+    WHERE d.cluster_id = ${options.clusterId}::uuid
+      AND d.ingested_at <= ${options.asOf}
+      AND d.acquired_at <= ${options.asOf}
+      AND d.acquired_at > ${options.asOf}::timestamptz
+            - make_interval(hours => ${options.windowHours})
+  `.execute(db);
+  const row = result.rows[0];
+  return {
+    detections: Number(row?.detections ?? 0),
+    overpasses: Number(row?.overpasses ?? 0),
+    frpSum: row?.frp_sum ?? null,
+  };
+}
+
+/**
  * The newest fire detection visible at `asOf`, by ingestion time, within a radius.
  *
  * This is the input the **clustering** derivation reads. Without it the fire card's derivation

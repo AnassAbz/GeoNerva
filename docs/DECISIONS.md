@@ -47,8 +47,8 @@ Index:
 | 039 | A detection's cluster membership must be knowable as of a time | **Proposed** (not needed for G8) |
 | 040 | The fire trend reads an append-only daily aggregate over covered days only | Accepted (2026-09-22) |
 | 041 | Catalog coverage is an append-only per-feed ledger that outlives run retention | Accepted (2026-09-22) |
-| 042 | The map says what it could not see, per family | **Proposed** (QA round 2, H-4) |
-| 043 | A band may not name a quantile its sample cannot resolve | **Proposed** (QA round 2, M-1) |
+| 042 | The map says what it could not see, per family | Accepted (2026-09-23) |
+| 043 | A band may not name a quantile its sample cannot resolve | Accepted (2026-09-23) |
 
 > **2026-09-19, product-owner review:** Architecture approved (gate G0 passed). ADR-012 model/budget is resolved: `AI_MODE=disabled` in production for v1, and no paid AI at launch. ADR-018 is resolved: `lean` profile on free infrastructure. Licence is Apache-2.0. The deployment is non-commercial.
 
@@ -665,9 +665,10 @@ Turborepo is not adopted until build times justify it.
 - **Until this is decided**, `/history?family=FIRE_ACTIVITY&metric=FIRE_TREND` answers `200` with `status: INSUFFICIENT_COVERAGE`, no series and no band, and an interpretation that states the data is not held — never a trend computed from nothing, and never "stable".
 - **Relation to ADR-039:** both are the same defect in the fire tables — a derived value keyed without the knowledge time it became true. Deciding them together would let one migration fix both.
 
-## ADR-043 — Proposed: a band may not name a quantile its own sample cannot resolve
+## ADR-043 — Accepted: a band may not name a quantile its own sample cannot resolve
 - **Date:** 2026-09-22 (P9, raised by adversarial QA round 2 as finding M-1)
-- **Status:** **Proposed.** The sentence is fixed; the band is not, because changing it would revise ARCHITECTURE §8.1, which is frozen.
+- **Status:** **Accepted** by the product owner, 2026-09-23, with the instruction to fix every QA round 2 finding. Built as option 2 below.
+- **As built:** a band must be resolvable by the sample it is drawn from, not merely met by it. `EARTHQUAKE_BASELINE.aboveMinimumWindows` is 10 and `wellAboveMinimumWindows` is 100, because the finest quantile `n` observations resolve is `1/n`. A band whose percentile the sample cannot carry is capped one step down rather than dropped: the count is still high against the periods GeoNerva holds, and saying nothing about that would be its own kind of misleading. **This changes published output** — this deployment’s 30-day metric moves from `WELL_ABOVE_TYPICAL` to `ABOVE_TYPICAL` on the same data, and its sentence from "in the top 1 %" to "in the top 10 %", which 59 windows do resolve.
 - **The tension, which is between two things the architecture says.** §8 principle 3 is "refuse to report a statistic that the data cannot support". §8.1 defines `WELL_ABOVE_TYPICAL` as the **99th percentile** with at least three events. Over a reference of 59 windows the finest quantile the sample can resolve is 1/59, about 1.7 %: there is no 99th percentile in it to be at. The two rules disagree, and today the band wins silently.
 - **What is already fixed, without touching §8.1.** The *sentence* quoted the band: "well above typical (in the top 1 % of comparable periods)", from 59 periods. It now quotes a quantile only when the sample can resolve it — a hundred windows for the 1 % claim, ten for the 10 % one — and otherwise says "among the highest of the periods compared", which is true and, for a count at the top of its sample, stronger evidence than a percentile. So no reader is told a 1-in-100 rarity that is not in the data.
 - **What is not fixed, and needs a decision.** `band` is in the read model and a client may map `WELL_ABOVE_TYPICAL` to a rarity of its own. The options:
@@ -678,9 +679,13 @@ Turborepo is not adopted until build times justify it.
 - **Two smaller things in the same payload the owner may want to look at**, from the same finding: the "typical range (25th–75th percentile)" band can be `[1, 1]`, zero width, so the chart draws a line and calls it a range; and `mean` (0.76) can sit below `p25` (1), which is arithmetically fine for a zero-heavy count and still reads as a contradiction.
 - **Until it is decided**, `tests/adversarial/qa-round-2.int.test.ts` F-4 stays red on purpose: it asserts option 2, and it is the record that the question is open rather than forgotten.
 
-## ADR-042 — Proposed: the map says what it could not see, per family
+## ADR-042 — Accepted: the map says what it could not see, per family
 - **Date:** 2026-09-22 (P9, raised by adversarial QA round 2 as finding H-4)
-- **Status:** **Proposed.** It requires a compatible extension to the frozen `/api/v1` contract, which the product owner reserves to an approved ADR. Nothing is built.
+- **Status:** **Accepted** by the product owner, 2026-09-23, with the instruction to fix every QA round 2 finding. Built.
+- **As built:** `MapFeaturesResponse.coverage` carries one statement per requested family — `{ availability, note }` in `FamilyAvailability`'s own vocabulary — resolved by the same `resolveAvailability` a card uses, over the same coverage geometry, asked of the **viewport** rather than of a place (`productCoverageForViewport`). The wording comes from one function, `availabilityNote`, which the card and the map both call, so two surfaces cannot describe one verdict in two sentences. `READ_MODEL_SCHEMA_VERSION` is **4** and `docs/openapi.json` is regenerated.
+  - Two refinements keep the field honest: a statement is required for every family the request asked about **and for no other**, and a family with features on the map may not be reported `NOT_COVERED`. A response that quietly omitted a family would be back where this started.
+  - `itemCount` is what the map actually drew, so a family with nothing on screen and no right to claim emptiness comes back `UNAVAILABLE` — the same downgrade `buildSnapshot` applies.
+  - The page reads the verdict from the map response rather than from the briefing, because the two answer different questions: what is on screen, and what covers the reader’s place. Keeping the cluster drawn under an outage is deliberate — I11 is "do not claim emptiness you did not observe", not "hide the data" — and the layer is now labelled while it is drawn.
 - **The defect.** `MapFeaturesResponse` carries `families`, `features`, `truncated`, `cap`, `total`, `bbox`, `bboxParts`, `zoom`, `asOfContext` and `attribution` — and no availability, coverage, source-health or note field of any kind. So the map has exactly one way to say "nothing here", and it uses it for two opposite facts:
   - **A family with no source reads as a quiet region.** `families=WEATHER_ALERTS` in a deployment where no weather source is enabled returns `total: 0`, byte-identical to a genuinely quiet, fully covered viewport. `PRODUCT.md` §7's first row forbids precisely this shape, and `ARCHITECTURE.md` §9.8 exists because "nothing found" and "cannot tell you" look alike on a screen and mean opposite things.
   - **Under a full outage the map draws what the card refuses to vouch for.** With every fire feed stale, the briefing headline reads "GeoNerva cannot currently report on fire activity here" while `/events` returns the cluster with `isActive: true, clusterStatus: ACTIVE`. Keeping those rows is correct — I11 is "do not claim emptiness you did not observe", not "hide the data" — but the map has no way to *say* the feed is down while it draws them.

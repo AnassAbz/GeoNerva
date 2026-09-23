@@ -19,6 +19,7 @@ import type {
   SourceHealthView,
   SubjectSummary,
 } from '@geonerva/domain';
+import { familyItemNoun } from '@geonerva/domain';
 
 import {
   FIXTURE_NOW,
@@ -565,21 +566,22 @@ export function marrakechBriefing(options: BriefingFixtureOptions = {}): Locatio
     .filter((family) => families[family].items.length > 0)
     .map((family) => {
       const count = families[family].itemsTotal;
-      const words =
-        family === 'EARTHQUAKES'
-          ? 'earthquakes'
-          : family === 'FIRE_ACTIVITY'
-            ? 'fire activity'
-            : 'floods';
-      return `${String(count)} ${words} item${count === 1 ? '' : 's'}`;
+      /*
+       * `familyItemNoun`, the same vocabulary the read model's own templates use. This used to
+       * pluralise the family's *name* and suffix it, giving "5 earthquakes items" and "1 fire
+       * activity item" — the mock published the bug, the builder published the bug, and the two
+       * agreed with each other (QA round 2, L-3).
+       */
+      return `${String(count)} ${familyItemNoun(family, count)}`;
     });
   if (tracked.length > 0) {
     summary.push(
       `GeoNerva is currently tracking ${tracked.slice(0, -1).join(', ')}${tracked.length > 1 ? ' and ' : ''}${tracked.at(-1) ?? ''} near this location.`,
     );
   }
+  /* "warnings **are**": the verb agrees with the family, not with how many are uncovered. */
   summary.push(
-    'Weather warnings is not covered here, so GeoNerva would not have seen it either way.',
+    'Weather warnings are not covered here, so GeoNerva would not have seen them either way.',
   );
   summary.push(
     firstChange === undefined
@@ -596,7 +598,9 @@ export function marrakechBriefing(options: BriefingFixtureOptions = {}): Locatio
         : [
             `${eqItems[0].title}, about ${eqItems[0].distanceKm.toFixed(0)} km away.`,
             ...(eqItems.length > 1
-              ? [`${String(eqItems.length)} earthquakes items in total.`]
+              ? [
+                  `${String(eqItems.length)} ${familyItemNoun('EARTHQUAKES', eqItems.length)} in total.`,
+                ]
               : []),
           ],
     FIRE_ACTIVITY:

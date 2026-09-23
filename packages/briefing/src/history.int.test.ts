@@ -340,7 +340,15 @@ describe('EQ_COUNT_7D', () => {
     expect(metric.reference?.mean).toBe(1);
     expect(metric.reference?.activityRatio).toBe(3);
     expect(metric.percentile).toBe(100);
-    expect(metric.band).toBe('WELL_ABOVE_TYPICAL');
+    /*
+     * `ABOVE_TYPICAL`, not `WELL_ABOVE_TYPICAL`, and that is ADR-043 rather than a regression: the
+     * count sits at the top of its sample, but 59 windows cannot resolve the 99th percentile the
+     * higher band is defined by — the finest quantile 59 observations resolve is about the 98th.
+     * The band is capped one step rather than dropped, and the sentence quotes the 90th percentile,
+     * which this sample can carry.
+     */
+    expect(metric.band).toBe('ABOVE_TYPICAL');
+    expect(metric.interpretation).toContain('top 10 %');
     expect(metric.caveats.length).toBe(1);
     expect(response.completenessStatement).toContain('M4.5+');
     expect(response.series[0]?.points.at(-1)).toEqual({

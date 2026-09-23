@@ -1,7 +1,9 @@
+import { FAMILY_GRAMMAR } from '@geonerva/domain';
 import { describe, expect, it } from 'vitest';
 
 import { FIXTURE_NOW, marrakechBriefing } from '../fixtures/index.ts';
-import { ordinal } from './copy.ts';
+import { COPY, ordinal } from './copy.ts';
+import { FAMILY_META, FAMILY_ORDER, familySubject } from './families.ts';
 import {
   formatAgo,
   formatDateTime,
@@ -172,5 +174,64 @@ describe('circleRing', () => {
     expect(ring[0]).toEqual(ring[64]);
     const north = ring[0] ?? [0, 0];
     expect(north[1] - 31.63).toBeCloseTo(150 / 111.2, 1);
+  });
+});
+
+/*
+ * QA round 2, L-3. The family vocabulary is what the sentence builders read, so the grammar is
+ * tested on the vocabulary rather than on one rendered page.
+ */
+describe('family vocabulary', () => {
+  it('gives every family a verb that agrees with its own words', () => {
+    expect(familySubject('EARTHQUAKES')).toEqual({ subject: 'Earthquakes', verb: 'are' });
+    expect(familySubject('FIRE_ACTIVITY')).toEqual({ subject: 'Fire activity', verb: 'is' });
+    expect(familySubject('FLOODS')).toEqual({ subject: 'Floods', verb: 'are' });
+    expect(familySubject('CYCLONES')).toEqual({ subject: 'Tropical cyclones', verb: 'are' });
+    expect(familySubject('OTHER')).toEqual({ subject: 'Volcanoes and droughts', verb: 'are' });
+    expect(familySubject('WEATHER_ALERTS')).toEqual({ subject: 'Weather warnings', verb: 'are' });
+  });
+
+  it('never writes "Fire activity are" or "Weather warnings is"', () => {
+    const sentences = FAMILY_ORDER.map((family) => {
+      const subject = familySubject(family);
+      return COPY.card.notCovered(subject.subject, subject.verb);
+    });
+    expect(sentences).toContain('Fire activity is not covered for this location.');
+    expect(sentences).toContain('Weather warnings are not covered for this location.');
+    expect(
+      sentences.some((sentence) => /Fire activity are|Weather warnings is/u.test(sentence)),
+    ).toBe(false);
+  });
+
+  it('carries a countable noun for an item, in both numbers, rather than a label plus "items"', () => {
+    for (const family of FAMILY_ORDER) {
+      const { itemNoun } = FAMILY_GRAMMAR[family];
+      expect(itemNoun.one.length).toBeGreaterThan(0);
+      expect(itemNoun.many).not.toBe(itemNoun.one);
+      expect(`${itemNoun.one}|${itemNoun.many}`).not.toMatch(/item/u);
+      expect(itemNoun.one).toBe(itemNoun.one.toLowerCase());
+    }
+    expect(FAMILY_GRAMMAR.EARTHQUAKES.itemNoun).toEqual({
+      one: 'earthquake',
+      many: 'earthquakes',
+    });
+    expect(FAMILY_GRAMMAR.FIRE_ACTIVITY.itemNoun).toEqual({
+      one: 'fire activity cluster',
+      many: 'fire activity clusters',
+    });
+    expect(FAMILY_GRAMMAR.FLOODS.itemNoun).toEqual({ one: 'flood event', many: 'flood events' });
+  });
+
+  /* QA round 2, L-5: every family says what its distance is measured to. */
+  it('says what each family’s distance is measured to', () => {
+    for (const family of FAMILY_ORDER) {
+      expect(FAMILY_META[family].distanceBasis).toMatch(/^to the /u);
+    }
+    expect(COPY.card.distanceBasis(FAMILY_META.EARTHQUAKES.distanceBasis)).toBe(
+      'Measured to the epicentre.',
+    );
+    expect(COPY.card.distanceBasis(FAMILY_META.FIRE_ACTIVITY.distanceBasis)).toBe(
+      'Measured to the nearest thermal detection.',
+    );
   });
 });

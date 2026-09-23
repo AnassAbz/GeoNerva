@@ -65,7 +65,9 @@ export {
   FIRE_NEAR_KM,
   FIRE_OFFICIAL_ALERT_KM,
   FIRE_OUTER_KM,
+  FIRE_SUMMARY_VOUCHABLE_HOURS,
   assessFire,
   fireClusterState,
+  fireSummaryIsCurrent,
 } from './fire.ts';
 export type { FireClusterState, FireDistanceBasis, FireInput } from './fire.ts';

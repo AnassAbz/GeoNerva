@@ -36,6 +36,8 @@ import type { Kysely } from 'kysely';
 
 import { assessAgreement, chooseHeadlineMagnitude } from '@geonerva/correlation';
 import {
+  clusterWindowCountsAsOf,
+  type ClusterWindowCounts,
   clusterVersionsAsOf,
   derivationsAsOf,
   healthAsOf,
@@ -113,7 +115,24 @@ import {
   type BaselineMetricInput,
 } from './baseline-metrics.ts';
 import { contentSha256 } from './content-hash.ts';
-import { resolveCoverage, familyWords, type FamilyCoverageResult } from './coverage.ts';
+import {
+  availabilityNote,
+  resolveCoverage,
+  familyWords,
+  type FamilyCoverageResult,
+} from './coverage.ts';
+/**
+ * How near the present a request must be for a cluster's rolling figures to be recounted.
+ *
+ * The same five minutes `asOfContextFor` calls a live request. Below it the answer is for now, and
+ * counting the window again is both sound and more honest than the worker's last pass; above it
+ * the request is a replay, and today's cluster membership cannot count a past window (ADR-039).
+ */
+const LIVE_RECOUNT_WITHIN_MS = 5 * 60 * 1000;
+
+/** §9.2's window, which the rolling figures are defined over. */
+const FIRE_WINDOW_HOURS = 24;
+
 import { replayHorizonFor } from './replay-horizon.ts';
 import { memberSolutionsOf, numberOf } from './solutions.ts';
 
@@ -290,6 +309,7 @@ export async function buildSnapshot(options: BuildSnapshotOptions): Promise<Snap
         family,
         location,
         asOf,
+        now: buildNow,
         engineVersion,
         maxItems,
         coverage: coverage[family],
@@ -487,6 +507,8 @@ interface FamilyCardInput {
   readonly family: HazardFamily;
   readonly location: LocationRef;
   readonly asOf: Date;
+  /** The caller's present, which decides whether a rolling window may be recounted (M-2). */
+  readonly now: Date;
   readonly engineVersion: string;
   readonly maxItems: number;
   readonly coverage: FamilyCoverageResult;
@@ -659,38 +681,12 @@ function buildDataConfidence(
 
 /** The sentence a card leads with when it is not simply reporting what it found. */
 function availabilitySentence(input: FamilyCardInput, verdict: AvailabilityVerdict): string {
-  const words = familyWords(input.family);
-  switch (verdict.reason) {
-    case 'NOT_COVERED_HERE':
-      return input.coverage.coverage.note ?? `GeoNerva does not cover ${words} here.`;
-    case 'ALL_SOURCES_UNUSABLE':
-      return `Every source for ${words} is unavailable, so GeoNerva cannot say what is happening here.`;
-    case 'NEVER_SUCCEEDED':
-      /*
-       * Not "never". `healthAsOf` reads a bounded run window, so what this verdict actually knows
-       * is that no successful run is *visible* at this knowledge time — a source that worked until
-       * last month and has failed since produces the same verdict. Claiming "never" would be a
-       * false statement about the system's own history, and it is exactly the distinction the
-       * availability model draws between a configuration problem and an outage.
-       */
-      return `GeoNerva has no successful read of a source for ${words} within the period it can see.`;
-    case 'SOME_SOURCES_UNUSABLE':
-      return `Some sources for ${words} could not be read: ${verdict.unusableSources.join(', ')}.`;
-    case 'DERIVATION_NOT_RUN':
-      return `GeoNerva has the underlying data for ${words} but has not finished processing it, so it cannot report on them yet.`;
-    case 'DERIVATION_STALE':
-      return `GeoNerva is still processing the most recent ${words} data, so this list may be incomplete.`;
-    case 'PARTIAL_COVERAGE':
-      return input.coverage.coverage.note ?? `Coverage for ${words} here is incomplete.`;
-    case 'SUBJECTS_NOT_ASSESSED':
-      return `GeoNerva is holding ${words} here that it has no model to describe, so this list is not complete.`;
-    case 'BEYOND_REPLAY_HORIZON':
-      return `This knowledge time is outside the window GeoNerva still holds ${words} data for, so it cannot say what was happening.`;
-    case 'NOTHING_TO_REPORT':
-      return `No ${words} to report here.`;
-    case 'OK':
-      return `Reporting ${words} from ${String(input.coverage.sources.length)} source${input.coverage.sources.length === 1 ? '' : 's'}.`;
-  }
+  return availabilityNote(
+    input.family,
+    input.coverage.coverage.note,
+    input.coverage.sources.length,
+    verdict,
+  );
 }
 
 function caveatsFor(input: FamilyCardInput, verdict: AvailabilityVerdict): readonly string[] {
@@ -779,6 +775,31 @@ async function readFireSubjects(input: FamilyCardInput): Promise<FoundSubjects> 
   });
   const nearestByCluster = new Map(nearest.map((row) => [row.cluster_id, row]));
 
+  /*
+   * The rolling 24-hour figures, recounted to the knowledge time for a live request, so the card
+   * and the cluster page cannot state different numbers for one cluster (QA round 2, M-2). A
+   * replay keeps the stored figures: counting a past window with today's membership is the leak
+   * ADR-039 is open about.
+   */
+  const live = input.now.getTime() - input.asOf.getTime() <= LIVE_RECOUNT_WITHIN_MS;
+  const recounts = new Map<string, ClusterWindowCounts>();
+  if (live) {
+    const counted = await Promise.all(
+      clusters.map(
+        async (cluster) =>
+          [
+            cluster.cluster_id,
+            await clusterWindowCountsAsOf(input.db, {
+              clusterId: cluster.cluster_id,
+              asOf: input.asOf,
+              windowHours: FIRE_WINDOW_HOURS,
+            }),
+          ] as const,
+      ),
+    );
+    for (const [id, counts] of counted) recounts.set(id, counts);
+  }
+
   let unassessed = 0;
   const items: SubjectSummary[] = [];
   for (const cluster of clusters) {
@@ -790,7 +811,7 @@ async function readFireSubjects(input: FamilyCardInput): Promise<FoundSubjects> 
       hasHull: cluster.hull_geojson !== null,
       nTotal: cluster.n_total,
     });
-    const item = buildFireSubject(input, cluster, distance);
+    const item = buildFireSubject(input, cluster, distance, recounts.get(cluster.cluster_id));
     if (item === null) {
       /*
        * A `DORMANT` cluster is not an *unassessed* subject. `assessFire` declines it because it is
@@ -917,6 +938,8 @@ function buildFireSubject(
   input: FamilyCardInput,
   cluster: ClusterVersionRow,
   distance: FireDistance,
+  /** The window recounted to the knowledge time, when the request is live. */
+  recounted?: ClusterWindowCounts,
 ): SubjectSummary | null {
   // Unknown is `NaN`, which `assessFire` declines: never a distance of zero.
   const nearestDetectionKm = (distance.meters ?? Number.NaN) / 1000;
@@ -931,10 +954,11 @@ function buildFireSubject(
     lastDetectedAt: cluster.last_detected_at,
     nearestDetectionKm,
     distanceBasis: distance.basis,
-    n24h: cluster.n_24h,
+    n24h: recounted?.detections ?? cluster.n_24h,
     nTotal: cluster.n_total,
-    overpasses24h: cluster.overpasses_24h,
-    frpSum24h: cluster.frp_sum_24h,
+    overpasses24h: recounted?.overpasses ?? cluster.overpasses_24h,
+    summarizedAt: recounted === undefined ? cluster.as_of : input.asOf,
+    frpSum24h: recounted === undefined ? cluster.frp_sum_24h : recounted.frpSum,
     evidenceIds,
   });
   if (relevance === null) return null;
@@ -954,7 +978,7 @@ function buildFireSubject(
       {
         code: 'DETECTIONS_24H' satisfies FactCode,
         label: 'Detections in the last 24 hours',
-        value: { kind: 'count', value: cluster.n_24h },
+        value: { kind: 'count', value: recounted?.detections ?? cluster.n_24h },
         evidenceIds,
       },
       {
@@ -1026,6 +1050,16 @@ export function fireDistanceOf(input: {
 export interface FireClusterAssessmentInput {
   readonly asOf: Date;
   readonly lastDetectedAt: Date;
+  /**
+   * When the cluster summary this assessment reads was computed — `fire_cluster_versions.as_of`.
+   *
+   * §9.2's `HIGH` rule tests `n_24h` and `overpasses_24h`, which are a *rolling* window the worker
+   * computed at that moment and not at this one. Without this the level could outlive the window
+   * it rests on: a cluster whose feed went quiet kept a `HIGH` on twenty-four hours that had since
+   * emptied (QA round 2, M-2). `assessFire` refuses to raise on a window it cannot vouch for, and
+   * this is how it knows.
+   */
+  readonly summarizedAt: Date;
   /** The distance `distanceBasis` names; see `fireDistanceOf`. */
   readonly nearestDetectionKm: number;
   readonly distanceBasis: FireDistanceBasis;
@@ -1053,6 +1087,7 @@ export function assessFireCluster(input: FireClusterAssessmentInput): RelevanceA
     n24h: input.n24h,
     nTotal: input.nTotal,
     overpasses24h: input.overpasses24h,
+    summaryAgeHours: hoursSince(input.summarizedAt, input.asOf),
     nPrevious24h: input.n24h,
     frpSum24h: input.frpSum24h,
     hoursSinceLastDetection,

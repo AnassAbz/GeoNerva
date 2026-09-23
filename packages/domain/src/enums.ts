@@ -38,6 +38,67 @@ export const HAZARD_FAMILIES = [
 ] as const;
 export type HazardFamily = (typeof HAZARD_FAMILIES)[number];
 
+/**
+ * How to write about a family: what it is called, whether the name takes a plural verb, and the
+ * countable noun for one of its items.
+ *
+ * It lives in the domain because `packages/briefing` writes the read model's sentences and
+ * `apps/web` writes the UI's, and a second copy is how "Fire activity **are** not covered" and
+ * "5 earthquakes **items**" got published (QA round 2, L-3). The name of a family is not the noun
+ * for one of its items: "earthquakes" pluralised and suffixed gives "5 earthquakes items", and
+ * "fire activity" is a mass noun whose items are *clusters*.
+ */
+export const FAMILY_GRAMMAR: Readonly<
+  Record<
+    HazardFamily,
+    {
+      /** The family as a reader sees it named, lower case. */
+      readonly words: string;
+      /** True when `words` takes a plural verb: "earthquakes are", "fire activity is". */
+      readonly plural: boolean;
+      /** The countable noun for one of its items, and for several. */
+      readonly itemNoun: { readonly one: string; readonly many: string };
+    }
+  >
+> = {
+  EARTHQUAKES: {
+    words: 'earthquakes',
+    plural: true,
+    itemNoun: { one: 'earthquake', many: 'earthquakes' },
+  },
+  FIRE_ACTIVITY: {
+    words: 'fire activity',
+    plural: false,
+    itemNoun: { one: 'fire activity cluster', many: 'fire activity clusters' },
+  },
+  FLOODS: {
+    words: 'floods',
+    plural: true,
+    itemNoun: { one: 'flood event', many: 'flood events' },
+  },
+  CYCLONES: {
+    words: 'tropical cyclones',
+    plural: true,
+    itemNoun: { one: 'tropical cyclone', many: 'tropical cyclones' },
+  },
+  WEATHER_ALERTS: {
+    words: 'weather warnings',
+    plural: true,
+    itemNoun: { one: 'weather warning', many: 'weather warnings' },
+  },
+  OTHER: {
+    words: 'volcanoes and droughts',
+    plural: true,
+    itemNoun: { one: 'volcano or drought event', many: 'volcano or drought events' },
+  },
+};
+
+/** The countable noun for `count` items of a family. */
+export function familyItemNoun(family: HazardFamily, count: number): string {
+  const noun = FAMILY_GRAMMAR[family].itemNoun;
+  return count === 1 ? noun.one : noun.many;
+}
+
 /** Family → hazard types. Exhaustive and disjoint; asserted by a unit test. */
 export const HAZARD_TYPES_BY_FAMILY: Readonly<Record<HazardFamily, readonly HazardType[]>> = {
   EARTHQUAKES: ['EARTHQUAKE'],

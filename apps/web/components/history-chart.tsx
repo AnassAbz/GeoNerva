@@ -24,6 +24,19 @@ const WIDTH = 320;
 const HEIGHT = 96;
 const PAD = 4;
 
+/**
+ * True when the 25th–75th percentile band is wide enough to *be* a band.
+ *
+ * For a sparse count — an area with one earthquake in a typical 30-day window — `p25` and `p75`
+ * are routinely the same number. Shading between them then draws a hairline rectangle and labels
+ * it "Typical range", which is a range that is not a range (QA round 2, M-1). Half the reference
+ * windows sitting on one value is a fact worth showing, so the value is drawn as a level and said
+ * to be one instead.
+ */
+function bandHasWidth(bands: HistoryResponse['referenceBands']): boolean {
+  return bands !== null && bands.p75 > bands.p25;
+}
+
 function shortDay(iso: string): string {
   return formatDay(iso, 'UTC');
 }
@@ -45,9 +58,15 @@ function Bars({
   const step = (WIDTH - PAD * 2) / Math.max(1, points.length);
   const y = (value: number) => HEIGHT - PAD - (value / max) * (HEIGHT - PAD * 2);
   const last = points.at(-1);
+  const typical =
+    bands === null
+      ? ''
+      : bandHasWidth(bands)
+        ? `; typical range ${formatNumber(bands.p25, 0)} to ${formatNumber(bands.p75, 0)}`
+        : `; typical level ${formatNumber(bands.p25, 0)}, with no range between the 25th and 75th percentiles`;
   const summary = `${label}. ${String(points.length)} periods; latest ${
     last?.value === null || last === undefined ? 'unknown' : formatNumber(last.value, 0)
-  }${bands === null ? '' : `; typical range ${formatNumber(bands.p25, 0)} to ${formatNumber(bands.p75, 0)}`}.`;
+  }${typical}.`;
 
   return (
     <svg
@@ -59,14 +78,28 @@ function Bars({
     >
       {bands === null ? null : (
         <>
-          <rect
-            x={PAD}
-            y={y(bands.p75)}
-            width={WIDTH - PAD * 2}
-            height={Math.max(1, y(bands.p25) - y(bands.p75))}
-            fill="#e6edf3"
-            opacity="0.1"
-          />
+          {bandHasWidth(bands) ? (
+            <rect
+              x={PAD}
+              y={y(bands.p75)}
+              width={WIDTH - PAD * 2}
+              height={y(bands.p25) - y(bands.p75)}
+              fill="#e6edf3"
+              opacity="0.1"
+              data-band="range"
+            />
+          ) : (
+            <line
+              x1={PAD}
+              x2={WIDTH - PAD}
+              y1={y(bands.p25)}
+              y2={y(bands.p25)}
+              stroke="#e6edf3"
+              strokeWidth="1"
+              opacity="0.35"
+              data-band="level"
+            />
+          )}
           <line
             x1={PAD}
             x2={WIDTH - PAD}
@@ -136,6 +169,22 @@ export function HistoryChart({ history }: { readonly history: HistoryResponse })
   const series = history.series[0];
   const headingId = `history-${history.family.toLowerCase()}-${history.metricCode.toLowerCase()}`;
 
+  /*
+   * The last whole day this metric's window includes, when the metric says it has one.
+   *
+   * `FIRE_TREND` ends its window two days back, because ADR-040 admits a day to
+   * `fire_daily_counts` only once it is final. That is why "Not enough satellite coverage in the
+   * last five weeks to compare fire activity here" can sit truthfully beside a card reporting a
+   * live cluster of 14 thermal detections — the two read different stores over different periods
+   * — and it is the one thing the page never said (QA round 2, L-8). The date is in the metric's
+   * own `params`, so this states it rather than recomputing it.
+   */
+  const lastDayParam = metric.params['lastDay'];
+  const lastDay =
+    typeof lastDayParam === 'string' && !Number.isNaN(Date.parse(lastDayParam))
+      ? lastDayParam
+      : null;
+
   return (
     <figure
       aria-labelledby={headingId}
@@ -167,11 +216,23 @@ export function HistoryChart({ history }: { readonly history: HistoryResponse })
           {history.referenceBands === null ? null : (
             <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-fg-muted">
               <span>
-                <span
-                  aria-hidden="true"
-                  className="mr-1 inline-block h-2 w-3 bg-fg/10 align-middle"
-                />
-                {COPY.history.referenceBand}
+                {bandHasWidth(history.referenceBands) ? (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className="mr-1 inline-block h-2 w-3 bg-fg/10 align-middle"
+                    />
+                    {COPY.history.referenceBand}
+                  </>
+                ) : (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className="mr-1 inline-block w-3 border-t border-fg-muted align-middle"
+                    />
+                    {COPY.history.referenceLevel(formatNumber(history.referenceBands.p25, 0))}
+                  </>
+                )}
               </span>
               <span>
                 <span
@@ -194,6 +255,11 @@ export function HistoryChart({ history }: { readonly history: HistoryResponse })
       {metric.status === 'RARE_ACTIVITY' && history.rarity !== null ? (
         <p className="mt-1 text-sm text-fg-muted">{metric.interpretation}</p>
       ) : null}
+      {lastDay === null ? null : (
+        <p className="mt-1 text-sm text-fg-muted" data-window-ends={lastDay}>
+          {COPY.history.windowEnds(formatDay(lastDay, 'UTC'))}
+        </p>
+      )}
       {history.largestRecent === null ? null : (
         <p className="mt-1 text-sm text-fg-muted">{history.largestRecent.text}</p>
       )}

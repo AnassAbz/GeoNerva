@@ -102,3 +102,23 @@ describe('NearbyTable', () => {
     expect(screen.getByText(/Nothing assessed near this location/u)).toBeInTheDocument();
   });
 });
+
+/*
+ * QA round 2, L-5. A column of bare kilometre figures invites a comparison between an epicentre,
+ * the nearest pixel of a thermal cluster and the edge of a modelled area as though the three were
+ * one measurement, and it hides that the figure moves when the preferred solution does.
+ */
+describe('NearbyTable — the distance basis', () => {
+  it('names what each row’s distance is measured to', () => {
+    render(<NearbyTable rows={rows} />);
+    expect(screen.getByText('to the epicentre')).toBeInTheDocument();
+    expect(screen.getByText('to the nearest thermal detection')).toBeInTheDocument();
+    expect(screen.getByText('to the flood area GDACS modelled')).toBeInTheDocument();
+  });
+
+  it('says in the caption that the figure can change with the preferred solution', () => {
+    render(<NearbyTable rows={rows} />);
+    expect(screen.getByText(/named under the figure/u)).toBeInTheDocument();
+    expect(screen.getByText(/the preferred solution changes/u)).toBeInTheDocument();
+  });
+});

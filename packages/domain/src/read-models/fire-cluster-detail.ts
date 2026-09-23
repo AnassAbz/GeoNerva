@@ -74,7 +74,19 @@ export interface FireClusterDetail {
 /** The cluster summary at `asOf`, i.e. the latest version with `as_of ≤ T`. */
 export interface FireClusterSummaryView {
   readonly clusterVersionId: string;
+  /** When this summary version was computed. */
   readonly asOf: IsoTimestamp;
+  /**
+   * The end of the 24-hour window the rolling figures below cover.
+   *
+   * It is **not** always `asOf`. Those figures are a rolling window the worker computed when it
+   * last clustered, and a reader arriving hours later was shown them as "the last 24 hours" —
+   * eight detections where the rows held five, because three had fallen out of the window
+   * (QA round 2, M-2). For a live read they are recounted to the knowledge time and this says so;
+   * for a replay they are the version's own, and this is the version's `asOf`. Either way the
+   * reader can be told which twenty-four hours they are.
+   */
+  readonly countedTo: IsoTimestamp;
   readonly detectionCountTotal: number;
   readonly detectionCount24h: number;
   /**
