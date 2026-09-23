@@ -48,6 +48,7 @@ Index:
 | 040 | The fire trend reads an append-only daily aggregate over covered days only | Accepted (2026-09-22) |
 | 041 | Catalog coverage is an append-only per-feed ledger that outlives run retention | Accepted (2026-09-22) |
 | 042 | The map says what it could not see, per family | **Proposed** (QA round 2, H-4) |
+| 043 | A band may not name a quantile its sample cannot resolve | **Proposed** (QA round 2, M-1) |
 
 > **2026-09-19, product-owner review:** Architecture approved (gate G0 passed). ADR-012 model/budget is resolved: `AI_MODE=disabled` in production for v1, and no paid AI at launch. ADR-018 is resolved: `lean` profile on free infrastructure. Licence is Apache-2.0. The deployment is non-commercial.
 
@@ -663,6 +664,19 @@ Turborepo is not adopted until build times justify it.
 
 - **Until this is decided**, `/history?family=FIRE_ACTIVITY&metric=FIRE_TREND` answers `200` with `status: INSUFFICIENT_COVERAGE`, no series and no band, and an interpretation that states the data is not held — never a trend computed from nothing, and never "stable".
 - **Relation to ADR-039:** both are the same defect in the fire tables — a derived value keyed without the knowledge time it became true. Deciding them together would let one migration fix both.
+
+## ADR-043 — Proposed: a band may not name a quantile its own sample cannot resolve
+- **Date:** 2026-09-22 (P9, raised by adversarial QA round 2 as finding M-1)
+- **Status:** **Proposed.** The sentence is fixed; the band is not, because changing it would revise ARCHITECTURE §8.1, which is frozen.
+- **The tension, which is between two things the architecture says.** §8 principle 3 is "refuse to report a statistic that the data cannot support". §8.1 defines `WELL_ABOVE_TYPICAL` as the **99th percentile** with at least three events. Over a reference of 59 windows the finest quantile the sample can resolve is 1/59, about 1.7 %: there is no 99th percentile in it to be at. The two rules disagree, and today the band wins silently.
+- **What is already fixed, without touching §8.1.** The *sentence* quoted the band: "well above typical (in the top 1 % of comparable periods)", from 59 periods. It now quotes a quantile only when the sample can resolve it — a hundred windows for the 1 % claim, ten for the 10 % one — and otherwise says "among the highest of the periods compared", which is true and, for a count at the top of its sample, stronger evidence than a percentile. So no reader is told a 1-in-100 rarity that is not in the data.
+- **What is not fixed, and needs a decision.** `band` is in the read model and a client may map `WELL_ABOVE_TYPICAL` to a rarity of its own. The options:
+  1. **Leave §8.1 as it is.** The band is a label for where a count sits against its own reference, not a claim about a population quantile, and the response already carries `reference.nWindows` beside it. Cheapest, and it leans on the reader reading both.
+  2. **Require the sample to resolve the band.** `WELL_ABOVE_TYPICAL` needs 100 reference windows, `ABOVE_TYPICAL` needs 10; below that the band is capped one step down. Honest per §8 principle 3, and it changes published output: this deployment's 30-day metric would move from `WELL_ABOVE_TYPICAL` to `ABOVE_TYPICAL` on the same data.
+  3. **Widen the reference** so the quantile is resolvable — a longer history, or shorter windows. Rejected for now: it changes what the metric measures in order to make a label true, which is the wrong way round.
+- **Recommendation: option 2**, because §8 principle 3 is the promise the product is built on and §8.1's thresholds are an implementation of it, not an exception to it. It is a visible change to what the product says about real places, so it is the owner's call.
+- **Two smaller things in the same payload the owner may want to look at**, from the same finding: the "typical range (25th–75th percentile)" band can be `[1, 1]`, zero width, so the chart draws a line and calls it a range; and `mean` (0.76) can sit below `p25` (1), which is arithmetically fine for a zero-heavy count and still reads as a contradiction.
+- **Until it is decided**, `tests/adversarial/qa-round-2.int.test.ts` F-4 stays red on purpose: it asserts option 2, and it is the record that the question is open rather than forgotten.
 
 ## ADR-042 — Proposed: the map says what it could not see, per family
 - **Date:** 2026-09-22 (P9, raised by adversarial QA round 2 as finding H-4)

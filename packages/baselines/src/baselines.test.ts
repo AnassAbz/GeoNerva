@@ -219,6 +219,30 @@ describe('EQ_COUNT: bands', () => {
     expect(six.band).toBe('WELL_ABOVE_TYPICAL');
   });
 
+  /*
+   * The finest quantile n observations can resolve is 1/n, so "the top 1 % of comparable periods"
+   * needs a hundred of them. Over 59 windows the product was naming a 1-in-100 rarity that is not
+   * in its own sample (QA round 2, M-1), against ARCHITECTURE §8's "refuse to report a statistic
+   * that the data cannot support". The band is unchanged; the claim made about it is not.
+   */
+  it('quotes a quantile only when the sample can resolve it', () => {
+    const many = [...new Array<number>(96).fill(0), ...new Array<number>(15).fill(1), 5, 0, 0, 0];
+    expect(many.length).toBeGreaterThanOrEqual(100);
+    const resolved = baseline(many, 6);
+    expect(resolved.band).toBe('WELL_ABOVE_TYPICAL');
+    expect(resolved.interpretation).toContain('top 1 %');
+
+    // Fifty-nine windows: the same band, and a sentence the sample can carry.
+    // 59 windows and 25 events: past §8.1's gate of 52 and 20, so the status is OK and the band
+    // is computed — the sample is sufficient for the band and insufficient for the quantile.
+    const few = [...new Array<number>(38).fill(0), ...new Array<number>(20).fill(1), 5];
+    expect(few.length).toBe(59);
+    const unresolved = baseline(few, 6);
+    expect(unresolved.band).toBe('WELL_ABOVE_TYPICAL');
+    expect(unresolved.interpretation).not.toContain('top 1 %');
+    expect(unresolved.interpretation).toContain('among the highest of the periods compared');
+  });
+
   it('carries no caveat when the band is typical', () => {
     expect(baseline(skewed, 0).caveats).toStrictEqual([]);
   });

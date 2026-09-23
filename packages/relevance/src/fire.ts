@@ -86,7 +86,14 @@ export interface FireInput {
   /** Defaults to `NEAREST_DETECTION`. */
   readonly distanceBasis?: FireDistanceBasis;
   readonly state: FireClusterState;
-  /** Detections in the last 24 hours. */
+  /**
+   * Detections in the 24 hours **to the moment the cluster was last summarized**, which is not
+   * the moment of the request. The worker computes these when it clusters; a reader arriving
+   * hours later sees a window that has since moved on, and the sentences below say "the most
+   * recent 24-hour window counted" rather than "the last 24 hours" for that reason (QA round
+   * 2, M-2). Recomputing per request is not available: membership is not knowable as of a time
+   * until ADR-039 is resolved, and the detections are pruned at 72 h.
+   */
   readonly n24h: number;
   /** Detections over the cluster's whole life. */
   readonly nTotal: number;
@@ -146,12 +153,14 @@ export function assessFire(input: FireInput): Assessment | null {
     distanceReason(input.nearestDetectionKm, input.distanceBasis ?? 'NEAREST_DETECTION'),
     reason(
       'DETECTION_COUNT',
-      `${input.n24h} detection${input.n24h === 1 ? '' : 's'} in the last 24 hours (${input.nTotal} in total).`,
+      `${input.n24h} detection${input.n24h === 1 ? '' : 's'} in the most recent 24-hour window ` +
+        `counted for this cluster (${input.nTotal} in total).`,
       { n24h: input.n24h, nTotal: input.nTotal },
     ),
     reason(
       'OVERPASSES',
-      `Seen on ${input.overpasses24h} satellite overpass${input.overpasses24h === 1 ? '' : 'es'} in the last 24 hours.`,
+      `Seen on ${input.overpasses24h} satellite overpass${input.overpasses24h === 1 ? '' : 'es'} ` +
+        'in that window.',
       { overpasses24h: input.overpasses24h },
     ),
     reason(

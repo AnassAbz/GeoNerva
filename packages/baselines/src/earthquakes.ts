@@ -174,7 +174,7 @@ export function earthquakeCountBaseline(input: EarthquakeCountInput): Earthquake
           : 'TYPICAL';
     interpretation =
       `${plural(observed, 'earthquake')} of ${label} within ${String(input.radiusKm)} km in the past ` +
-      `${String(input.windowDays)} days: ${bandPhrase(band)} for this area, compared with ` +
+      `${String(input.windowDays)} days: ${bandPhrase(band, nWindows)} for this area, compared with ` +
       `${String(nWindows)} ${String(input.windowDays)}-day periods since ${String(sinceYear)}.`;
   } else if (status === 'RARE_ACTIVITY') {
     const total = nEvents + observed;
@@ -334,14 +334,32 @@ function completenessSentence(completeness: Completeness): string {
   }
 }
 
-function bandPhrase(band: EarthquakeBand): string {
+/**
+ * The band in words, quoting only a quantile the sample can actually resolve.
+ *
+ * The finest quantile `n` observations can resolve is `1/n`. Over 59 reference windows that is
+ * about 1.7 %, so "in the top 1 % of comparable periods" named a rarity that is not in the
+ * sample — ARCHITECTURE §8's third principle is "refuse to report a statistic that the data
+ * cannot support", and this sentence was reporting one (QA round 2, M-1). §8.1's documented gate
+ * of 52 windows and 20 events governs `status: OK`; it says nothing about the 99th percentile.
+ *
+ * The band itself is unchanged: it is a label for where the count sits, and the thresholds are
+ * §8.1's. What changes is the claim made *about* it. Where the sample cannot carry the quantile,
+ * the sentence says what it can — how the count ranks against the periods actually compared,
+ * which for a top-of-sample count is both true and stronger than a percentile.
+ */
+function bandPhrase(band: EarthquakeBand, nWindows: number): string {
   switch (band) {
     case 'TYPICAL':
       return 'typical';
     case 'ABOVE_TYPICAL':
-      return 'above typical (in the top 10 % of comparable periods)';
+      return nWindows >= 10
+        ? 'above typical (in the top 10 % of comparable periods)'
+        : 'above typical (among the highest of the periods compared)';
     case 'WELL_ABOVE_TYPICAL':
-      return 'well above typical (in the top 1 % of comparable periods)';
+      return nWindows >= 100
+        ? 'well above typical (in the top 1 % of comparable periods)'
+        : 'well above typical (among the highest of the periods compared)';
   }
 }
 

@@ -140,6 +140,9 @@ async function FireClusterView({
           <h2 id="summary-title" className="mb-2 text-lg font-semibold">
             {COPY.fire.summary}
           </h2>
+          <p className="mb-2 text-sm text-fg-muted">
+            {COPY.fire.window24h(formatDateTime(summary.asOf, TIME_ZONE))}
+          </p>
           <dl className="grid gap-2 sm:grid-cols-2">
             {[
               [COPY.fire.detections24h, formatNumber(summary.detectionCount24h, 0)],

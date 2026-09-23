@@ -420,11 +420,23 @@ export const COPY = {
       MERGED: 'Merged into another cluster',
     },
     summary: 'Cluster summary',
-    detections24h: 'Thermal detections, last 24 h',
-    overpasses: 'Satellite overpasses, last 24 h',
+    /*
+     * The window ends when the summary was computed, not now.
+     *
+     * These read "last 24 h" and printed figures from whenever the worker last clustered — 7 h 46
+     * min before the knowledge time in the seeded scenario, by which point three of the eight
+     * detections had fallen out of the window and the honest count was five. The chart directly
+     * below said five for today and nine for yesterday, so the page contradicted itself (QA round
+     * 2, M-2). Recomputing per request is not available — a detection's cluster membership is not
+     * knowable as of a time until ADR-039 is resolved, and the raw detections are pruned at 72 h —
+     * so the fix is to say which 24 hours these are.
+     */
+    detections24h: 'Thermal detections',
+    overpasses: 'Satellite overpasses',
+    window24h: (at: string) => `Counted over the 24 hours to ${at}, when this summary was computed`,
     total: 'Thermal detections in the cluster',
     firstLast: 'First and last detection',
-    frp: 'Fire radiative power, last 24 h',
+    frp: 'Fire radiative power',
     sensors: 'Sensors',
     versions: 'Summary versions',
     byDay: 'Thermal detections per day',
