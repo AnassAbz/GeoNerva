@@ -1,13 +1,45 @@
 # Continuation handoff
 
-- **Written:** 2026-09-23, at the end of the session-numbered **P9 (the frontend)**. **The gate
-  passed.**
-- **Head:** `68df784`, plus the commit carrying this file. Working tree clean.
-- **`pnpm check`** exit **0** (1,980 unit, 173 component, dependency-cruiser clean).
-  **Integration** 788/788. **End-to-end** 81 passed, 0 failed, 0 skipped, at both viewports with
-  axe clean. Build and `build:canary` exit 0. The adversarial suite
-  (`tests/adversarial/vitest.config.ts`) is **13/13**.
-- The previous phase's record is `docs/reviews/gate-g8.md`; P8 passed its gate at checkpoint 2.
+- **Written:** 2026-09-23, at the end of **P10 (deployment & operations)**, which has no gate in
+  §2.4 and whose acceptance is **partially met on purpose** — see `docs/reviews/gate-p10.md`.
+- **Head:** `2b1c421`, plus the commits carrying the report and this file. Working tree clean.
+- **Verified serially, because this machine cannot run the suites in parallel** (see the last
+  section): typecheck, lint, format, depcruise all exit 0; **unit 2,011**; **components 173**;
+  **integration 805**; **end-to-end 81** at both viewports with axe clean; **adversarial 13**;
+  build and `build:canary` exit 0.
+- The phase before this one is `docs/reviews/gate-g9.md` (the plan's G7), which passed at
+  `7bb4ae2`. **ADR-039 landed between the two**, at `ef6e970`.
+
+## Pick this up first
+
+**The acceptance criterion needs you, not more code.** P10 built everything that has to be true
+before a soak can start; the soak itself needs a Supabase project, a Vercel project, a VM and a
+GitHub remote. `docs/reviews/gate-p10.md` §5 lists the six owner actions, and
+`docs/DEPLOYMENT.md` is the runbook. After that, **P11 — hardening & adversarial QA**, whose gate
+is the plan's **G8**.
+
+Two commands are the phase's whole output for you: `pnpm smoke <url>` exits with the number of the
+`TESTING.md` §10 check that failed, and `pnpm soak` prints the non-provider run success rate with
+its denominator. Both refuse to report a number they cannot stand behind.
+
+## What P10 learned the hard way
+
+- **`pnpm deploy` cannot ship this worker.** ADR-026 runs TypeScript directly and Node refuses to
+  strip types under `node_modules`, judged by the real path after resolving symlinks. The flattened
+  image built cleanly and died on its first import; the image keeps the pnpm workspace instead.
+  Anyone trying that shortcut for the **web** app should read `infra/worker/Dockerfile`'s header
+  before starting.
+- **Three of the nine smoke checks could not fail**, because the script was written against an
+  imagined API shape instead of `packages/domain/src/read-models/schemas.ts`. Adversarial review
+  found it. The lesson that generalises: *a check whose only observed outcome is "nothing to see"
+  has not been observed at all* — and writing the report is part of the verification, not a record
+  of it.
+- **CI's `build-e2e` job could never have passed**: it ran `pnpm test:e2e`, which seeds a database,
+  with no service container and no URL. Fixed, but it has still never run on a hosted runner (E-1),
+  so treat the first CI run as an experiment.
+- **`NETWORK` is a provider-side error class**, so a deployment whose own egress is broken has
+  every run excluded from the soak's denominator and would report 100 % while ingesting nothing.
+  That is why `pnpm soak` has a floor and always prints the provider count.
 
 **Gate numbering is now settled: see `docs/reviews/README.md`.** The plan is the source of truth,
 new reports are named after the phase they close (`gate-p10.md`, `gate-p11.md`), and the table
