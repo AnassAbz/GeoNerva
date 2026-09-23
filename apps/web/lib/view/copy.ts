@@ -394,6 +394,14 @@ export const COPY = {
     workerLastSeen: 'Last heartbeat',
     workerUnknown: 'GeoNerva cannot state the worker’s liveness at this time.',
     dataQuality: 'Data-quality checks',
+    /*
+     * Empty means "GeoNerva reports no data-quality checks", never "all checks pass". The service
+     * layer says exactly that in its own header and the page then rendered a bare heading over an
+     * empty list, which reads as a green light with nothing behind it (QA round 2, M-3). The
+     * worker does not compute TESTING §7's invariants yet; when it does, the rows replace this.
+     */
+    noDataQuality:
+      'GeoNerva does not yet run automated data-quality checks, so there is nothing to report here. An empty list is not a statement that every check passed.',
     products: 'Products',
     disabled: 'Not enabled yet',
   },

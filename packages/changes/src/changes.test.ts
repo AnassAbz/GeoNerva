@@ -190,6 +190,16 @@ describe('an outage is never reported as good news', () => {
     expect(types).toContain('NEW_EVENT');
     // And the new CRITICAL hazard, not the recovery, is what leads the section.
     expect(result.headline[0]?.type).toBe('NEW_EVENT');
+
+    /*
+     * A recovery carries no prose detail. The card's reasons are present-tense descriptions of a
+     * state, and `before`'s reason describes one that has just ended — "GeoNerva ... cannot report
+     * on them yet" under a headline saying it can report again (QA round 2, M-4). The reason code
+     * stays for whoever reads the signal rather than the sentence.
+     */
+    const recovered = result.all.find((signal) => signal.type === 'SOURCE_RECOVERED');
+    expect(recovered?.title).toContain('again');
+    expect(recovered?.detail).toBeNull();
   });
 
   it('claims no departures for a family it could not see before', () => {

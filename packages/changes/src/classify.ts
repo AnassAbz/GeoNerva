@@ -158,8 +158,17 @@ function familySignals(
   /*
    * The reason is the one the card already computed. Restating it here in different words would
    * be a second explanation of the same fact, and they would eventually disagree.
+   *
+   * For a **recovery** the code is kept and the prose is not. The card's reasons are written in
+   * the present tense — "GeoNerva has the underlying data but has not finished processing it, so
+   * it cannot report on them yet" — and `before`'s reason is a description of a state that has
+   * just ended. Carried onto a headline reading "GeoNerva can report on fire activity here
+   * again", it contradicted it on the same line, on a page where the fire card was reporting 14
+   * detections (QA round 2, M-4). The title and the `UNAVAILABLE → AVAILABLE` facet say what
+   * changed; the code stays for whoever is reading the signal rather than the sentence.
    */
-  const reasonCode = (becameUnusable ? after : before).dataConfidence.reasons[0]?.code ?? null;
+  const reason = (becameUnusable ? after : before).dataConfidence.reasons[0] ?? null;
+  const reasonCode = reason?.code ?? null;
 
   return [
     finish(
@@ -170,7 +179,7 @@ function familySignals(
         title: becameUnusable
           ? `GeoNerva can no longer report on ${familyLabel(family)} here`
           : `GeoNerva can report on ${familyLabel(family)} here again`,
-        detail: (becameUnusable ? after : before).dataConfidence.reasons[0]?.text ?? null,
+        detail: becameUnusable ? (reason?.text ?? null) : null,
         lateReport: false,
         facets: [
           {

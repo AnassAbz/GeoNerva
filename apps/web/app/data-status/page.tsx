@@ -130,6 +130,9 @@ export default async function DataStatusPage() {
           <h2 id="quality-title" className="mb-2 text-lg font-semibold">
             {COPY.dataStatus.dataQuality}
           </h2>
+          {status.dataQuality.length === 0 ? (
+            <p className="text-sm text-fg-muted">{COPY.dataStatus.noDataQuality}</p>
+          ) : null}
           <ul className="space-y-2 text-sm">
             {status.dataQuality.map((check) => (
               <li
