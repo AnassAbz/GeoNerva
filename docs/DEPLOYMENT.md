@@ -111,11 +111,29 @@ again until the lease is judged abandoned, half an hour later.
 rule in backfill continuity treats a long silence as a break, so plan restarts rather than letting
 the container sit down.
 
-Only **USGS** is scheduled (`SCHEDULED_ADAPTERS` in `apps/worker/src/cli/start.ts`). The other
-adapters exist and are not polled; `/data-status` says so, and the smoke check treats a disabled
-source as a declared outage rather than a fault. **Disable, in the `sources` table, any source this
-deployment does not poll** — a source that is advertised as enabled and never polled reads
-`UNAVAILABLE`, which is what smoke check 2 is for.
+**USGS and EMSC** are scheduled (`SCHEDULED_ADAPTERS` in `apps/worker/src/cli/start.ts`). GDACS and
+FIRMS exist and are not polled; `/data-status` says so, and the smoke check treats a disabled source
+as a declared outage rather than a fault. **Disable, in the `sources` table, any source this
+deployment does not poll** — a source advertised as enabled and never polled reads `UNAVAILABLE`,
+which is what smoke check 2 is for. Enabling a source is therefore two changes that must agree: the
+adapter list in code, and the `enabled` flag in the database.
+
+**EMSC carries one operational caveat that USGS does not.** Its poll reads `EMSC_POLL_LOOKBACK_MS`
+— fifteen minutes, three of its five-minute intervals, so consecutive polls overlap twice over and
+cannot skip an event between them. What that does not survive is **downtime longer than fifteen
+minutes**: USGS reads twenty-four hours back and heals itself, EMSC does not, and the coverage
+ledger will go on reporting the hole as covered. After any worker outage over a quarter of an hour,
+close it deliberately:
+
+```sh
+node apps/worker/src/main.ts run --source emsc --feed <minutes covering the downtime>
+```
+
+Adding a second independent earthquake source is what makes correlation worth having: one event
+with two solutions can be assessed for agreement, where a single source can only ever be
+`SINGLE_SOURCE`. Do not expect every earthquake to merge — the catalogues genuinely differ, EMSC
+reports small European events USGS does not, and a cross-source merge needs the same earthquake in
+both within the candidate window.
 
 **Correlation runs itself** (ADR-044). `scheduler.started` names both jobs:
 

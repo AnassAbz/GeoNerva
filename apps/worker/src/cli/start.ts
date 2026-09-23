@@ -25,7 +25,12 @@ import {
   type ScheduledJob,
   type SchedulerSummary,
 } from '@geonerva/pipeline';
-import { createSourceClient, usgsAdapter, type SourceAdapter } from '@geonerva/sources';
+import {
+  createSourceClient,
+  emscAdapter,
+  usgsAdapter,
+  type SourceAdapter,
+} from '@geonerva/sources';
 
 /**
  * How often correlation looks for work, and by how much that is jittered.
@@ -38,8 +43,26 @@ import { createSourceClient, usgsAdapter, type SourceAdapter } from '@geonerva/s
 const CORRELATION_INTERVAL_MS = 60_000;
 const CORRELATION_JITTER_RATIO = 0.1;
 
-/** The adapters this build polls on a schedule. */
-const SCHEDULED_ADAPTERS: readonly SourceAdapter<never>[] = [usgsAdapter as SourceAdapter<never>];
+/**
+ * The adapters this build polls on a schedule.
+ *
+ * EMSC was added as its own step, after correlation was scheduled (ADR-044) — a second independent
+ * earthquake source is only worth having once something merges the two solutions, and before that
+ * it would have produced twice the observations and still no events.
+ *
+ * **One caveat belongs with it.** `EMSC_POLL_LOOKBACK_MS` is fifteen minutes, three of its five
+ * minute poll intervals, so consecutive polls overlap twice over and cannot skip. What that does
+ * *not* survive is a worker outage longer than fifteen minutes: USGS reads twenty-four hours back
+ * and heals itself, EMSC does not, and the coverage ledger would go on claiming the hole was
+ * covered. Closing it is a deliberate act — `worker run --source emsc --feed <minutes>` with a
+ * window wide enough to cover the downtime (gate-g8 §6 item 7, latent until this line changed).
+ *
+ * GDACS and FIRMS remain unscheduled, and deliberately not in the same step as this one.
+ */
+const SCHEDULED_ADAPTERS: readonly SourceAdapter<never>[] = [
+  usgsAdapter as SourceAdapter<never>,
+  emscAdapter as SourceAdapter<never>,
+];
 
 export const START_USAGE = `Usage: geonerva-worker start
 
