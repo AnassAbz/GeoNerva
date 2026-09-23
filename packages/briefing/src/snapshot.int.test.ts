@@ -784,6 +784,170 @@ describe('the P6 review findings, as regressions', () => {
     expect(card.items[0]?.relevance.caveats.join(' ')).toContain('not confirmed wildfires');
   });
 
+  it('does not report "no fire activity" while holding a GDACS wildfire event', async () => {
+    /*
+     * The other half of the fix above, left undone for a release.
+     *
+     * When briefing was switched from reading wildfire *events* to reading fire *clusters*, the
+     * dispatch became either/or — so `readFireSubjects` was the only FIRE_ACTIVITY reader and the
+     * events it replaced stopped being read by anything. Nothing caught it, because GDACS wildfire
+     * was not yet live. Activating the WF feed made it user-visible: with 100 active
+     * `WILDFIRE_EVENT` rows, a briefing at the exact centroid of one reported `itemsTotal: 0` and
+     * the sentence "No fire activity to report here.", while `/api/v1/events` drew that same event
+     * on the map at the same knowledge time.
+     *
+     * `assessSubject` returns null for this family — there is a model for a thermal cluster and
+     * none for a GDACS burnt-area event — so the event cannot become an *item*. What it must do is
+     * be **counted**, which is what stops the zero being asserted. This test pins the zero, not the
+     * availability enum: the sentence is the thing a reader was misled by.
+     */
+    await healthySource('gdacs', 'WF');
+
+    const seeded = await seedObservation(db, {
+      sourceId: 'gdacs',
+      hazardType: 'WILDFIRE_EVENT',
+      primaryKey: 'WF-1',
+      aliases: ['WF-1'],
+      ingestedAt: INGEST,
+      observedAt: T0,
+      centroid: north(20),
+      magnitude: null,
+      severityScheme: 'GDACS_ALERT',
+      severityValue: 'Orange',
+    });
+    const event = await createCanonicalEvent(db, {
+      hazardType: 'WILDFIRE_EVENT',
+      createdAt: INGEST,
+    });
+    await db.transaction().execute(async (trx) => {
+      await linkRecord(trx, {
+        canonicalEventId: event.id,
+        sourceRecordId: seeded.sourceRecordId,
+        relation: 'PRIMARY',
+        matchKind: 'SEED',
+        algorithmVersion: 'seed-1',
+        linkedAt: INGEST,
+      });
+    });
+
+    const { snapshot } = await build();
+    const card = snapshot.families.FIRE_ACTIVITY;
+
+    /*
+     * What actually produced the false zero is `mayRenderZero`, not a reason code. Before the fix
+     * this card resolved to `PARTIAL_COVERAGE` — coverage is genuinely partial, since FIRMS is off
+     * — and that verdict permits a zero, so the copy layer rendered "No fire activity to report
+     * here." over a wildfire event nobody had read. `SUBJECTS_NOT_ASSESSED` is the only verdict
+     * that both survives a partial-coverage card and withholds the zero, so it is the thing to
+     * pin; the assertion below is the one that fails without the fix. The zero-reason code is
+     * checked too, as a guard on the other route to the same sentence.
+     */
+    expect(card.dataConfidence.reasons.map((reason) => reason.code)).not.toContain(
+      'AVAILABILITY_NOTHING_TO_REPORT',
+    );
+    /* And the caveat names the real cause, in the words a reader sees. */
+    expect(card.dataConfidence.reasons.map((reason) => reason.code)).toContain(
+      'AVAILABILITY_SUBJECTS_NOT_ASSESSED',
+    );
+    expect(card.caveats.join(' ')).toContain('no model to describe');
+  });
+
+  it('still shows a fire cluster when an unassessable wildfire event sits beside it', async () => {
+    /*
+     * The other side of the same coin, and the one that would make the fix a regression if it were
+     * wrong. Counting the wildfire event withholds the *zero*; it must not withhold the clusters.
+     * `buildFamilyCard` downgrades an `AVAILABLE` card to `UNAVAILABLE` only when there is nothing
+     * to show — "a stale derivation with three real clusters still shows them" — so a cluster and
+     * an unassessable event together must render the cluster and say the list is incomplete.
+     */
+    await healthySource('firms', 'VIIRS_NOAA20_NRT');
+    await healthySource('gdacs', 'WF');
+    await derivationRan('CLUSTERING', new Date(INGEST.getTime() + 60_000));
+    await seedFireCluster({ km: 5, lastDetectedAt: new Date(AS_OF.getTime() - 60 * 60 * 1000) });
+
+    const seeded = await seedObservation(db, {
+      sourceId: 'gdacs',
+      hazardType: 'WILDFIRE_EVENT',
+      primaryKey: 'WF-3',
+      aliases: ['WF-3'],
+      ingestedAt: INGEST,
+      observedAt: T0,
+      centroid: north(20),
+      magnitude: null,
+      severityScheme: 'GDACS_ALERT',
+      severityValue: 'Orange',
+    });
+    const event = await createCanonicalEvent(db, {
+      hazardType: 'WILDFIRE_EVENT',
+      createdAt: INGEST,
+    });
+    await db.transaction().execute(async (trx) => {
+      await linkRecord(trx, {
+        canonicalEventId: event.id,
+        sourceRecordId: seeded.sourceRecordId,
+        relation: 'PRIMARY',
+        matchKind: 'SEED',
+        algorithmVersion: 'seed-1',
+        linkedAt: INGEST,
+      });
+    });
+
+    const { snapshot } = await build();
+    const card = snapshot.families.FIRE_ACTIVITY;
+
+    expect(card.availability).toBe('AVAILABLE');
+    expect(card.items).toHaveLength(1);
+    expect(card.items[0]?.subjectRef).toMatch(/^FC:/);
+    /* Shown, and honestly labelled as a partial list rather than presented as the whole picture. */
+    expect(card.caveats.join(' ')).toContain('no model to describe');
+  });
+
+  it('measures clustering against detections even when a wildfire event is also held', async () => {
+    /*
+     * Merging the two readers must not re-break what the merge sits next to. `newestInputAt` is the
+     * derivation axis's input, and for this family the derivation is `CLUSTERING`, whose input is
+     * FIRMS detections. A GDACS wildfire event is not clustering's input, so an event on its own —
+     * with no detections and no clustering run — must not make the card claim clustering is behind.
+     * The earlier version of this code measured clustering against wildfire events, and that is
+     * precisely why a place with 235,707 detections and no clustering run could report nothing.
+     */
+    await healthySource('gdacs', 'WF');
+
+    const seeded = await seedObservation(db, {
+      sourceId: 'gdacs',
+      hazardType: 'WILDFIRE_EVENT',
+      primaryKey: 'WF-2',
+      aliases: ['WF-2'],
+      ingestedAt: INGEST,
+      observedAt: T0,
+      centroid: north(20),
+      magnitude: null,
+      severityScheme: 'GDACS_ALERT',
+      severityValue: 'Orange',
+    });
+    const event = await createCanonicalEvent(db, {
+      hazardType: 'WILDFIRE_EVENT',
+      createdAt: INGEST,
+    });
+    await db.transaction().execute(async (trx) => {
+      await linkRecord(trx, {
+        canonicalEventId: event.id,
+        sourceRecordId: seeded.sourceRecordId,
+        relation: 'PRIMARY',
+        matchKind: 'SEED',
+        algorithmVersion: 'seed-1',
+        linkedAt: INGEST,
+      });
+    });
+
+    const { snapshot } = await build();
+    const codes = snapshot.families.FIRE_ACTIVITY.dataConfidence.reasons.map(
+      (reason) => reason.code,
+    );
+    expect(codes).not.toContain('AVAILABILITY_DERIVATION_NOT_RUN');
+    expect(codes).not.toContain('AVAILABILITY_DERIVATION_STALE');
+  });
+
   it('counts a subject it cannot assess instead of deleting it', async () => {
     /*
      * A GDACS drought alert has no drought model. Dropping it and then reporting `itemCount: 0`

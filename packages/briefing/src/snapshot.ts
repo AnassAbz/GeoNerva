@@ -725,11 +725,46 @@ interface FoundSubjects {
  * a fire cluster is computed from FIRMS detections and has its own public id, while every other
  * family's subject is a canonical event reached through `linksAsOf`. Both paths report the
  * derivation input their own derivation actually reads.
+ *
+ * **Fire activity holds *both* kinds of subject, so it reads both.** `hazardTypesOf` has always
+ * said so — `FIRE_ACTIVITY` maps to `WILDFIRE_EVENT`, "the one this path can describe" — but the
+ * dispatch here used to be either/or, and the fire branch reads clusters only. The result was a
+ * false zero the moment GDACS wildfire became live: with 100 active `WILDFIRE_EVENT` events
+ * ingested, a briefing at the exact centroid of one of them reported `AVAILABLE`, `itemsTotal: 0`
+ * and the sentence "No fire activity to report here.", while `/api/v1/events` drew that same event
+ * on the map at that same knowledge time. Two read surfaces, one fact, opposite answers.
+ *
+ * `assessSubject` returns `null` for this family, because GeoNerva has a relevance model for a
+ * thermal cluster and none for a GDACS burnt-area event. That does **not** make dropping them
+ * correct — `readEventSubjects` already states the rule for exactly this case, in its own words:
+ * "A GDACS Red drought alert 30 km away has no drought model; removing it silently and then
+ * reporting `itemCount: 0` turns 'we have no model for this' into 'nothing is happening'". So the
+ * events are counted as `unassessed`, which is what makes availability answer
+ * `SUBJECTS_NOT_ASSESSED` with `mayRenderZero: false`, and the zero is withheld rather than
+ * asserted. A wildfire-event relevance model would turn those counts into shown items; until one
+ * exists, refusing to state a zero is the honest half of the answer.
  */
 async function readSubjects(input: FamilyCardInput): Promise<FoundSubjects> {
-  return input.family === 'FIRE_ACTIVITY'
-    ? await readFireSubjects(input)
-    : await readEventSubjects(input);
+  if (input.family !== 'FIRE_ACTIVITY') return await readEventSubjects(input);
+
+  const [clusters, events] = await Promise.all([readFireSubjects(input), readEventSubjects(input)]);
+
+  const items = [...clusters.items, ...events.items];
+  sortItems(items);
+  return {
+    items,
+    /*
+     * The **clusters'** input, not the merged one. `newestInputAt` measures the family's
+     * derivation, and this family's derivation is `CLUSTERING`, whose input is FIRMS detections.
+     * Folding the GDACS events in here is the precise mistake `readFireSubjects` documents above:
+     * it once measured clustering against wildfire events, so a place with 235,707 ingested
+     * detections and no clustering run could never trip the derivation axis. Merging the item
+     * lists must not quietly reintroduce that.
+     */
+    newestInputAt: clusters.newestInputAt,
+    unassessed: clusters.unassessed + events.unassessed,
+    capped: clusters.capped || events.capped,
+  };
 }
 
 /** The per-family query cap. Reaching it sets `capped`, so a floor is never shown as a total. */
