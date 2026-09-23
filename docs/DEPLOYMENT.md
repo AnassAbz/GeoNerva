@@ -121,13 +121,22 @@ adapter list in code, and the `enabled` flag in the database.
 **EMSC carries one operational caveat that USGS does not.** Its poll reads `EMSC_POLL_LOOKBACK_MS`
 — fifteen minutes, three of its five-minute intervals, so consecutive polls overlap twice over and
 cannot skip an event between them. What that does not survive is **downtime longer than fifteen
-minutes**: USGS reads twenty-four hours back and heals itself, EMSC does not, and the coverage
-ledger will go on reporting the hole as covered. After any worker outage over a quarter of an hour,
-close it deliberately:
+minutes**. Observed here, after the host slept for six hours: USGS's resumed poll reads
+twenty-four hours back and recovered **all six** coverage hours, while EMSC recovered **none** of
+them. The ledger records the hole, which is correct — nobody observed that window.
+
+After an outage over a quarter of an hour, recover the events deliberately:
 
 ```sh
 node apps/worker/src/main.ts run --source emsc --feed <minutes covering the downtime>
 ```
+
+**That recovers the events but not the coverage, and it is not supposed to.** `liveCoverageFor`
+records coverage only for a `SCHEDULE` trigger, so a manual run writes facts and claims nothing
+about the window. The events come back; the *observation* does not, and the ledger goes on saying
+so. If it did otherwise, a backfill would be able to manufacture the claim that a feed was being
+watched when it was not — which is the lie ADR-041 exists to prevent. A `/history` answer over
+that window will therefore refuse, correctly, for as long as the ledger remembers.
 
 Adding a second independent earthquake source is what makes correlation worth having: one event
 with two solutions can be assessed for agreement, where a single source can only ever be

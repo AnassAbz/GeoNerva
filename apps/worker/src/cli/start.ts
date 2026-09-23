@@ -14,6 +14,8 @@ import { ConfigError, loadWorkerConfig } from '@geonerva/config';
 import {
   createDatabase,
   getPollingPolicy,
+  listSourceProducts,
+  listSources,
   recordWorkerHeartbeat,
   workerPoolOptions,
 } from '@geonerva/db';
@@ -22,12 +24,14 @@ import {
   runCorrelation,
   runIngestion,
   runScheduler,
+  runSeed,
   type ScheduledJob,
   type SchedulerSummary,
 } from '@geonerva/pipeline';
 import {
   createSourceClient,
   emscAdapter,
+  gdacsAdapter,
   usgsAdapter,
   type SourceAdapter,
 } from '@geonerva/sources';
@@ -40,8 +44,21 @@ import {
  * each of which iterates real sources. `DEFAULT_BREAKER` and the heartbeat interval are the
  * existing precedents for a scheduling constant living in code. The number is argued in ADR-044.
  */
+import { describeSourceStateMismatch, findSourceStateMismatch } from './scheduled-sources.ts';
+
 const CORRELATION_INTERVAL_MS = 60_000;
 const CORRELATION_JITTER_RATIO = 0.1;
+
+/**
+ * How often the single-source seeding derivation looks for work.
+ *
+ * The same sixty seconds as correlation and for the same reason (ADR-044): the gate makes an idle
+ * tick cheap, and a longer interval would leave the families that depend on `SEED` — floods,
+ * cyclones, volcanoes, droughts, GDACS wildfire events — reporting `DERIVATION_STALE` for no
+ * reason. The two derivations take different advisory locks, so neither queues behind the other.
+ */
+const SEED_INTERVAL_MS = 60_000;
+const SEED_JITTER_RATIO = 0.1;
 
 /**
  * The adapters this build polls on a schedule.
@@ -62,6 +79,36 @@ const CORRELATION_JITTER_RATIO = 0.1;
 const SCHEDULED_ADAPTERS: readonly SourceAdapter<never>[] = [
   usgsAdapter as SourceAdapter<never>,
   emscAdapter as SourceAdapter<never>,
+  /*
+   * GDACS, one family at a time. Each event type is its own `source_products` row with its own
+   * coverage ledger (ADR-041), so activating one says nothing about the others — which is the
+   * whole point: polling the flood feed must never become evidence that the cyclone feed was read.
+   * The database's `enabled` flags must agree with this list; the worker says so at start-up when
+   * they do not.
+   */
+  gdacsAdapter('FL') as SourceAdapter<never>,
+  /*
+   * `OTHER` draws on both VO and DR, and `coveredSinceForEvery` requires *every* feed a family
+   * reads before it will say the family is covered. Activating one of the pair alone would leave
+   * the family refusing — honestly, but pointlessly — so they go on together.
+   */
+  gdacsAdapter('VO') as SourceAdapter<never>,
+  gdacsAdapter('DR') as SourceAdapter<never>,
+  gdacsAdapter('TC') as SourceAdapter<never>,
+  /*
+   * A GDACS wildfire is a `WILDFIRE_EVENT` — an official burnt-area event — and never a
+   * `THERMAL_ACTIVITY` detection. They are different hazard types in the domain, and the wording
+   * on both sides depends on them staying that way.
+   */
+  gdacsAdapter('WF') as SourceAdapter<never>,
+  /*
+   * GDACS earthquakes last, because they are the one feed that can corrupt a claim rather than
+   * merely add one. GDACS republishes USGS solutions, so a canonical event holding a USGS record
+   * and its GDACS copy has two links and **one** independent source; `assessAgreement` excludes
+   * `DERIVED_COPY` links from `nIndependentSources` for exactly that reason. With EMSC live the
+   * case to watch is three links and two independent sources, never three.
+   */
+  gdacsAdapter('EQ') as SourceAdapter<never>,
 ];
 
 export const START_USAGE = `Usage: geonerva-worker start
@@ -134,6 +181,28 @@ export async function startWorker(
         `ai=${config.AI_MODE} build=${workerVersion ?? '(unset)'}`,
     });
 
+    /*
+     * Does the job list agree with the database's own switches? Enabling a feed takes two changes
+     * that have to agree, and each direction of disagreement fails quietly on its own — a
+     * scheduled-but-disabled product writes no run row at all. Reported, never fatal: the database
+     * is the documented control surface for switching a feed off.
+     */
+    const [allProducts, enabledSources] = await Promise.all([
+      listSourceProducts(handle.db, { includeDisabled: true, includeRetired: true }),
+      listSources(handle.db),
+    ]);
+    const mismatch = findSourceStateMismatch(
+      SCHEDULED_ADAPTERS.map((adapter) => ({
+        sourceId: adapter.descriptor.sourceId,
+        productCode: adapter.descriptor.productCode,
+      })),
+      allProducts,
+      new Set(enabledSources.map((source) => source.id)),
+    );
+    for (const detail of describeSourceStateMismatch(mismatch)) {
+      logger.log('warn', 'worker.source_state_mismatch', { detail });
+    }
+
     const jobs: ScheduledJob[] = [];
     for (const adapter of SCHEDULED_ADAPTERS) {
       const descriptor = adapter.descriptor;
@@ -175,6 +244,18 @@ export async function startWorker(
       intervalMs: CORRELATION_INTERVAL_MS,
       jitterRatio: CORRELATION_JITTER_RATIO,
       run: () => runCorrelation({ db: handle.db, logger }),
+    });
+
+    /*
+     * Seeding, for the hazards where no matching is possible because only one source reports them.
+     * Without it a GDACS flood is ingested and then reported as `DERIVATION_NOT_RUN` for ever —
+     * the same defect ADR-044 fixed for earthquakes, one family over.
+     */
+    jobs.push({
+      name: 'seed:single-source',
+      intervalMs: SEED_INTERVAL_MS,
+      jitterRatio: SEED_JITTER_RATIO,
+      run: () => runSeed({ db: handle.db, logger }),
     });
 
     const summaries = await runScheduler({

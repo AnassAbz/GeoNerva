@@ -15,7 +15,7 @@ import { createDb, derivationsAsOf, type DB } from '@geonerva/db';
 import { setupTestDatabase, type TestDatabase } from '@geonerva/db/testing';
 import { seedObservation } from '@geonerva/db/testing/factories';
 
-import { runCorrelation } from './correlate-job.ts';
+import { runCorrelation, runSeed } from './correlate-job.ts';
 import { createJsonLogger, type Logger } from './logging.ts';
 
 let testDb: TestDatabase;
@@ -290,9 +290,7 @@ describe('repeated and overlapping runs', () => {
 
         expect(outcome.status).toBe('SKIPPED');
         expect(await eventCount()).toBe(0);
-        expect(String(lines.at(-1)?.['detail'])).toContain(
-          'another correlation run holds the lock',
-        );
+        expect(String(lines.at(-1)?.['detail'])).toContain('holds the lock');
       } finally {
         await sql`SELECT pg_advisory_unlock(4405001)`.execute(held);
       }
@@ -362,5 +360,112 @@ describe('when correlation fails', () => {
 
     expect(outcome.status).toBe('SUCCEEDED');
     expect(await eventCount()).toBe(1);
+  });
+});
+
+/*
+ * `SEED` is the same job over the families where no matching is possible, and it was unscheduled
+ * for exactly as long as correlation was. Without it a GDACS flood is ingested and then reported
+ * as `DERIVATION_NOT_RUN` for ever.
+ */
+describe('the seed derivation', () => {
+  async function seedFlood(primaryKey: string, ingestedAt: Date = INGEST): Promise<void> {
+    await seedObservation(db, {
+      sourceId: 'gdacs',
+      primaryKey,
+      aliases: [primaryKey],
+      ingestedAt,
+      observedAt: T0,
+      centroid: AT,
+      magnitude: null,
+      magnitudeType: null,
+      depthKm: null,
+      contributor: null,
+      lifecycleStatus: 'ACTIVE',
+      hazardType: 'FLOOD',
+    });
+  }
+
+  it('opens a single-source event for a hazard nothing can be matched against', async () => {
+    await seedFlood('FL-1');
+
+    const outcome = await runSeed({ db, logger: collectingLogger().logger, asOf: AS_OF });
+
+    expect(outcome.status).toBe('SUCCEEDED');
+    expect(await eventCount()).toBe(1);
+    expect(await activeLinkCount()).toBe(1);
+  });
+
+  it('records a SEED run, which is not a CORRELATION run', async () => {
+    await seedFlood('FL-1');
+    await runSeed({ db, logger: collectingLogger().logger, asOf: AS_OF });
+
+    const seeded = await derivationsAsOf(db, {
+      asOf: new Date(Date.now() + 60_000),
+      kinds: ['SEED'],
+    });
+    const correlated = await derivationsAsOf(db, {
+      asOf: new Date(Date.now() + 60_000),
+      kinds: ['CORRELATION'],
+    });
+
+    expect(seeded[0]?.lastSucceededAt).not.toBeNull();
+    /*
+     * The split matters: a SEED run must never vouch for the earthquake matcher. A GDACS seed once
+     * did, which is why `DERIVED_FAMILIES` keys the two kinds separately.
+     */
+    expect(correlated[0]?.lastSucceededAt ?? null).toBeNull();
+  });
+
+  it('is not woken by an earthquake, and does not wake correlation', async () => {
+    await seed('us1');
+
+    const seedOutcome = await runSeed({ db, logger: collectingLogger().logger, asOf: AS_OF });
+    expect(seedOutcome.status).toBe('SKIPPED');
+
+    await seedFlood('FL-1', new Date(AS_OF.getTime() + 30_000));
+    const laterAsOf = new Date(AS_OF.getTime() + 60_000);
+
+    /* Correlation has already seen the earthquake, so a flood must not make it run again. */
+    await runCorrelation({ db, logger: collectingLogger().logger, asOf: AS_OF });
+    const again = await runCorrelation({ db, logger: collectingLogger().logger, asOf: laterAsOf });
+    expect(again.status).toBe('SKIPPED');
+
+    const seeded = await runSeed({ db, logger: collectingLogger().logger, asOf: laterAsOf });
+    expect(seeded.status).toBe('SUCCEEDED');
+  });
+
+  it('does not duplicate an event it has already seeded', async () => {
+    await seedFlood('FL-1');
+    await runSeed({ db, logger: collectingLogger().logger, asOf: AS_OF });
+    await seedFlood('FL-2', new Date(AS_OF.getTime() + 30_000));
+    await runSeed({
+      db,
+      logger: collectingLogger().logger,
+      asOf: new Date(AS_OF.getTime() + 60_000),
+    });
+
+    expect(await eventCount()).toBe(2);
+    expect(await activeLinkCount()).toBe(2);
+  });
+
+  it('takes its own lock, so seeding and correlating do not queue behind each other', async () => {
+    await seedFlood('FL-1');
+    await seed('us1');
+
+    await db.connection().execute(async (held) => {
+      /* Correlation's key, held. Seeding must be unaffected. */
+      const taken = await sql<{ locked: boolean }>`
+        SELECT pg_try_advisory_lock(4405001) AS locked
+      `.execute(held);
+      expect(taken.rows[0]?.locked).toBe(true);
+
+      try {
+        const seeded = await runSeed({ db, logger: collectingLogger().logger, asOf: AS_OF });
+        expect(seeded.status).toBe('SUCCEEDED');
+      } finally {
+        await sql`SELECT pg_advisory_unlock(4405001)`.execute(held);
+      }
+    });
   });
 });

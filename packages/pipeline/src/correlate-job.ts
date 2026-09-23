@@ -39,20 +39,47 @@
  * would have blocked correlation permanently.
  */
 
-import { correlateEarthquakes, type CorrelateResult } from './correlate.ts';
+import {
+  SEEDED_HAZARD_TYPES,
+  correlateEarthquakes,
+  seedSingleSourceEvents,
+  type CorrelateResult,
+  type SeedResult,
+} from './correlate.ts';
 import type { Logger } from './logging.ts';
 import type { RunOutcome } from './run.ts';
-import { lastSuccessfulCorrelationAsOf, newestEarthquakeIngestAt, type DB } from '@geonerva/db';
+import { lastSuccessfulDerivationAsOf, newestHazardIngestAt, type DB } from '@geonerva/db';
 import { sql, type Kysely } from 'kysely';
 
 /**
- * The advisory lock key. An arbitrary constant, chosen once and never derived from anything that
- * could change: two workers must pick the same number or the lock protects nothing.
+ * What one derivation needs in order to be scheduled.
+ *
+ * Two of them exist, and they are genuinely the same job over different facts: `CORRELATION`
+ * matches earthquake solutions from independent catalogues, `SEED` opens a single-source event for
+ * the families where no matching is possible because only one source reports them. Both are pure
+ * functions of database state, both are idempotent, and both would silently never run if nobody
+ * scheduled them — which is exactly what happened to each in turn.
  */
-const CORRELATION_LOCK_KEY = 4_405_001;
+interface DerivationSpec<T> {
+  /** Matches `analysis_runs.kind`, and is what the availability model looks up. */
+  readonly kind: string;
+  /** The log event name. Kept distinct per derivation so one cannot be mistaken for the other. */
+  readonly event: string;
+  /**
+   * The advisory lock key. Arbitrary constants, chosen once and never derived from anything that
+   * could change: two workers must pick the same number or the lock protects nothing. **Distinct
+   * per derivation**, because correlation and seeding touch different records and serialising one
+   * behind the other would be a pointless queue.
+   */
+  readonly lockKey: number;
+  /** Which hazards this derivation reads, so its gate is not woken by another family's feed. */
+  readonly hazardTypes: readonly string[];
+  run(conn: Kysely<DB>, asOf: Date): Promise<T>;
+  describe(result: T): string;
+}
 
 /** Counters are reported in `detail`; the log allowlist has no field for them. */
-function describeResult(result: CorrelateResult): string {
+function describeCorrelation(result: CorrelateResult): string {
   return [
     `considered=${String(result.considered)}`,
     `created=${String(result.created)}`,
@@ -65,6 +92,24 @@ function describeResult(result: CorrelateResult): string {
     `projected=${String(result.projected)}`,
   ].join(' ');
 }
+
+const CORRELATION: DerivationSpec<CorrelateResult> = {
+  kind: 'CORRELATION',
+  event: 'correlation.run',
+  lockKey: 4_405_001,
+  hazardTypes: ['EARTHQUAKE'],
+  run: async (conn, asOf) => await correlateEarthquakes(conn, { asOf }),
+  describe: describeCorrelation,
+};
+
+const SEED: DerivationSpec<SeedResult> = {
+  kind: 'SEED',
+  event: 'seed.run',
+  lockKey: 4_405_002,
+  hazardTypes: SEEDED_HAZARD_TYPES,
+  run: async (conn, asOf) => await seedSingleSourceEvents(conn, { asOf }),
+  describe: (result) => `considered=${String(result.considered)} created=${String(result.created)}`,
+};
 
 const NO_COUNTS = {
   received: 0,
@@ -113,14 +158,17 @@ export interface CorrelationJobOptions {
 }
 
 /**
- * One correlation pass: gate, lock, correlate, report.
+ * One derivation pass: gate, lock, derive, report.
  *
  * Returns `SKIPPED` when there is nothing new to do or when another run holds the lock — neither is
  * a fault, and neither may trip the circuit breaker. Returns `FAILED` when the pass threw, having
  * already recorded a `FAILED` analysis run; because `lastSucceededAt` does not move, the briefing's
  * availability model degrades on its own without this job telling it to.
  */
-export async function runCorrelation(options: CorrelationJobOptions): Promise<RunOutcome> {
+async function runDerivation<T>(
+  spec: DerivationSpec<T>,
+  options: CorrelationJobOptions,
+): Promise<RunOutcome> {
   const { db, logger } = options;
   const now = options.now ?? (() => new Date());
   const startedAt = now().getTime();
@@ -132,7 +180,7 @@ export async function runCorrelation(options: CorrelationJobOptions): Promise<Ru
     over: Parameters<typeof outcomeOf>[1],
   ): RunOutcome => {
     const outcome = outcomeOf(status, over);
-    logger.log(status === 'FAILED' ? 'error' : 'info', 'correlation.run', {
+    logger.log(status === 'FAILED' ? 'error' : 'info', spec.event, {
       stage: 'run',
       status,
       ...(outcome.runId === null ? {} : { runId: outcome.runId }),
@@ -164,15 +212,15 @@ export async function runCorrelation(options: CorrelationJobOptions): Promise<Ru
      */
     return finish('FAILED', {
       errorClass: 'UNKNOWN',
-      detail: `correlation failed: ${error instanceof Error ? error.name : 'unknown error'}`,
+      detail: `${spec.kind} failed: ${error instanceof Error ? error.name : 'unknown error'}`,
       totalMs: elapsed(),
     });
   }
 
   async function attempt(): Promise<RunOutcome> {
     const [newestFact, lastRunAsOf] = await Promise.all([
-      newestEarthquakeIngestAt(db, asOf),
-      lastSuccessfulCorrelationAsOf(db),
+      newestHazardIngestAt(db, asOf, spec.hazardTypes),
+      lastSuccessfulDerivationAsOf(db, spec.kind),
     ]);
 
     /*
@@ -180,7 +228,10 @@ export async function runCorrelation(options: CorrelationJobOptions): Promise<Ru
      * not an outage, and the availability model says so too (`newestInputAt === null`).
      */
     if (newestFact === null) {
-      return finish('SKIPPED', { detail: 'no earthquake facts to correlate', totalMs: elapsed() });
+      return finish('SKIPPED', {
+        detail: 'no facts of these hazards to derive',
+        totalMs: elapsed(),
+      });
     }
     if (lastRunAsOf !== null && newestFact.getTime() <= lastRunAsOf.getTime()) {
       return finish('SKIPPED', {
@@ -195,20 +246,20 @@ export async function runCorrelation(options: CorrelationJobOptions): Promise<Ru
      */
     return await db.connection().execute(async (conn) => {
       const locked = await sql<{ locked: boolean }>`
-        SELECT pg_try_advisory_lock(${CORRELATION_LOCK_KEY}) AS locked
+        SELECT pg_try_advisory_lock(${spec.lockKey}) AS locked
       `.execute(conn);
       if (locked.rows[0]?.locked !== true) {
         return finish('SKIPPED', {
-          detail: 'another correlation run holds the lock',
+          detail: 'another run of this derivation holds the lock',
           totalMs: elapsed(),
         });
       }
 
       try {
-        const result = await correlateEarthquakes(conn, { asOf });
+        const result = await spec.run(conn, asOf);
         return finish('SUCCEEDED', {
-          runId: result.runId,
-          detail: describeResult(result),
+          runId: (result as { runId: string }).runId,
+          detail: spec.describe(result),
           totalMs: elapsed(),
           committedAt: asOf,
         });
@@ -219,8 +270,24 @@ export async function runCorrelation(options: CorrelationJobOptions): Promise<Ru
          * closes its own analysis run as FAILED before rethrowing, so a throw leaves the ledger
          * correct and `lastSucceededAt` unmoved; the outer boundary turns it into an outcome.
          */
-        await sql`SELECT pg_advisory_unlock(${CORRELATION_LOCK_KEY})`.execute(conn);
+        await sql`SELECT pg_advisory_unlock(${spec.lockKey})`.execute(conn);
       }
     });
   }
+}
+
+/** Earthquake correlation, scheduled (ADR-044). */
+export async function runCorrelation(options: CorrelationJobOptions): Promise<RunOutcome> {
+  return await runDerivation(CORRELATION, options);
+}
+
+/**
+ * Single-source seeding, scheduled for the same reason correlation is.
+ *
+ * `DERIVED_FAMILIES` gates floods, cyclones and "other" on `SEED`, so without this job a GDACS
+ * flood is ingested and then reported as `DERIVATION_NOT_RUN` for ever — the identical defect
+ * ADR-044 fixed for earthquakes, one family over.
+ */
+export async function runSeed(options: CorrelationJobOptions): Promise<RunOutcome> {
+  return await runDerivation(SEED, options);
 }

@@ -22,10 +22,15 @@
  *
  * ### Two checks that are narrower than they look
  *
- *  - **Check 2** cannot require every P0 source to be healthy, because the worker schedules USGS
- *    only (`SCHEDULED_ADAPTERS`). §10 already allows "an explicit known outage"; this reads that as
- *    the unscheduled sources, and fails only when a *scheduled* one is `UNAVAILABLE`. The reasoning
- *    is in `docs/reviews/p10-plan.md` §2; if the worker starts scheduling more, this narrows itself.
+ *  - **Check 2 judges feeds, not sources.** §10 says each P0 source must be available "or an
+ *    explicit known outage", and the explicit part is what the database's `enabled` flag records.
+ *    But a source is not one thing: GDACS is six feeds, and activating one family at a time means
+ *    five of them are deliberately off while the source itself stays on. Judged at source level
+ *    that reads `UNAVAILABLE` and fails — which it did, the first time one GDACS family went live.
+ *    So the rule is per **product**: every `UNAVAILABLE` feed must say `DISABLED` among its
+ *    reasons. A feed that is switched off is a declared decision; a feed that is enabled and
+ *    `UNAVAILABLE` for any other reason is either an outage or a feed nothing polls, and both
+ *    deserve to fail a smoke test.
  *  - **Check 6** must not follow redirects. Next normalises a trailing slash with a 308 *before*
  *    the proxy that sets the policy runs, so a redirect carries no CSP by design
  *    (`docs/SECURITY.md` §6). Following one would test the wrong response and report a header as
@@ -153,40 +158,63 @@ async function checkHome(base: string): Promise<string> {
   return `/ answered 200 in ${String(elapsedMs)} ms warm (${String(cold.elapsedMs)} ms cold)`;
 }
 
-/** 2. Each scheduled P0 source ≠ UNAVAILABLE, or an explicitly declared outage. */
+/** 2. Every feed is available, or explicitly switched off. */
 async function checkSources(base: string): Promise<string> {
   const body = asRecord(await json(`${base}/api/v1/sources/status`, 2), 2, 'the source status');
   const sources = body['sources'];
   if (!Array.isArray(sources) || sources.length === 0) {
     throw new CheckFailed(2, 'the deployment reports no sources at all');
   }
-  const unavailable: string[] = [];
-  let checked = 0;
+
+  const unexplained: string[] = [];
+  let live = 0;
+  let declaredOff = 0;
+
   for (const entry of sources) {
     const source = asRecord(entry, 2, 'a source');
-    const enabled = source['enabled'];
-    if (enabled !== false) checked += 1;
-    /*
-     * A source the deployment has switched off is the "explicit known outage" §10 allows for: it
-     * is a declared decision, visible on /data-status, not a deployment that has quietly stopped
-     * working. A source that is enabled and UNAVAILABLE is the failure this check exists for.
-     */
-    if (enabled === false) continue;
-    /*
-     * `health.status`, not `status`. The first version of this check read a top-level field that
-     * `sourceStatusEntrySchema` does not have, so `unavailable` was always empty and the check
-     * reported every source healthy even when all of them were dead.
-     */
-    const health = asRecord(source['health'], 2, 'a source health');
-    if (health['status'] === 'UNAVAILABLE') {
-      const id = source['sourceId'];
-      unavailable.push(typeof id === 'string' ? id : 'an unnamed source');
+    const sourceId = typeof source['sourceId'] === 'string' ? source['sourceId'] : '?';
+    const products = source['products'];
+    if (!Array.isArray(products) || products.length === 0) {
+      throw new CheckFailed(2, `${sourceId} reports no feeds`);
+    }
+
+    for (const productEntry of products) {
+      const product = asRecord(productEntry, 2, 'a feed');
+      const code = typeof product['code'] === 'string' ? product['code'] : '?';
+      /*
+       * `health.status` and `health.reasons`, not a top-level field — `sourceStatusEntrySchema`
+       * has neither at the top, and an earlier version of this check read one that did not exist
+       * and therefore never failed.
+       */
+      const health = asRecord(product['health'], 2, `the health of ${sourceId}:${code}`);
+      if (health['status'] !== 'UNAVAILABLE') {
+        live += 1;
+        continue;
+      }
+      const reasons = Array.isArray(health['reasons']) ? health['reasons'].map(String) : [];
+      /*
+       * `DISABLED` is the database saying "we do not offer this here", which is §10's explicit
+       * known outage. `RETIRED` is the provider having withdrawn it — equally declared, and not
+       * something a deployment can fix.
+       */
+      if (reasons.includes('DISABLED') || reasons.includes('RETIRED')) {
+        declaredOff += 1;
+        continue;
+      }
+      unexplained.push(`${sourceId}:${code}${reasons.length > 0 ? ` (${reasons.join('/')})` : ''}`);
     }
   }
-  if (unavailable.length > 0) {
-    throw new CheckFailed(2, `enabled sources are UNAVAILABLE: ${unavailable.join(', ')}`);
+
+  if (unexplained.length > 0) {
+    throw new CheckFailed(
+      2,
+      `feeds are UNAVAILABLE without being switched off: ${unexplained.join(', ')}`,
+    );
   }
-  return `${String(sources.length)} sources reported, ${String(checked)} enabled, none unavailable`;
+  if (live === 0) {
+    throw new CheckFailed(2, 'every feed is switched off, so the deployment reports nothing');
+  }
+  return `${String(live)} feeds live, ${String(declaredOff)} explicitly off, none unexplained`;
 }
 
 /** 3. A briefing for the curated places returns 200 with a manifest. */
