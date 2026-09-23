@@ -106,6 +106,54 @@ function TogglesHarness() {
   );
 }
 
+describe('LayerToggles — what the map cannot say', () => {
+  /*
+   * A map has one way to show "nothing here" and two facts to show with it. A family with no
+   * source in this deployment drew the same empty viewport as a genuinely quiet one, which is the
+   * shape PRODUCT §7's first row forbids (QA round 2, H-4). The verdict comes from the briefing,
+   * so the map and the cards beside it cannot disagree.
+   */
+  it('labels a family it has no source for, and one whose feeds are down', () => {
+    // Mapped families only: weather warnings are not drawn at all, so the card speaks for them.
+    expect(MAPPED_FAMILIES).not.toContain('WEATHER_ALERTS');
+    render(
+      <LayerToggles
+        families={MAPPED_FAMILIES}
+        enabled={new Set(MAPPED_FAMILIES)}
+        availability={{ FLOODS: 'NOT_COVERED', FIRE_ACTIVITY: 'UNAVAILABLE' }}
+        onChange={() => undefined}
+      />,
+    );
+    expect(screen.getByText('(not covered here)')).toBeInTheDocument();
+    expect(screen.getByText('(cannot be shown now)')).toBeInTheDocument();
+  });
+
+  /* Still listed and still toggleable: hiding the layer would be another way of saying nothing. */
+  it('keeps an unspeakable family in the list', () => {
+    render(
+      <LayerToggles
+        families={MAPPED_FAMILIES}
+        enabled={new Set(MAPPED_FAMILIES)}
+        availability={{ FLOODS: 'NOT_COVERED' }}
+        onChange={() => undefined}
+      />,
+    );
+    expect(screen.getAllByRole('checkbox').length).toBe(MAPPED_FAMILIES.length);
+  });
+
+  it('says nothing when it was told nothing', () => {
+    render(
+      <LayerToggles
+        families={MAPPED_FAMILIES}
+        enabled={new Set(MAPPED_FAMILIES)}
+        onChange={() => undefined}
+      />,
+    );
+    expect(screen.queryByText('(not covered here)')).not.toBeInTheDocument();
+    expect(screen.queryByText('(cannot be shown now)')).not.toBeInTheDocument();
+  });
+});
+
 describe('LayerToggles — keyboard operation', () => {
   it('every family toggle is reachable with Tab and toggled with Space', async () => {
     const user = userEvent.setup();

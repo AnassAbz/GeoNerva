@@ -303,6 +303,14 @@ export const COPY = {
   },
   map: {
     title: 'Map',
+    /*
+     * Beside a layer the map cannot speak for. A family with no source drew the same empty
+     * viewport as a quiet one, which is the shape PRODUCT §7 forbids (QA round 2, H-4).
+     */
+    cannotSay: {
+      NOT_COVERED: '(not covered here)',
+      UNAVAILABLE: '(cannot be shown now)',
+    },
     layers: 'Map layers',
     legend: 'Legend',
     open: 'Open map',

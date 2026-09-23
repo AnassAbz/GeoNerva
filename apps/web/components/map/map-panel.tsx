@@ -12,7 +12,7 @@
  * drawer. Desktop: the page layout makes this region sticky.
  */
 
-import type { HazardFamily, MapFeature } from '@geonerva/domain';
+import type { FamilyAvailability, HazardFamily, MapFeature } from '@geonerva/domain';
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useState, type ComponentType } from 'react';
 
@@ -34,6 +34,12 @@ export interface MapPanelProps {
   readonly placeLabel: string;
   readonly placeSlug?: string;
   readonly features: readonly MapFeature[];
+  /**
+   * What the briefing says GeoNerva can report for each family, so a family with no source
+   * reads as refused rather than as a quiet viewport (QA round 2, H-4). Optional: a caller
+   * without a briefing to hand claims nothing either way.
+   */
+  readonly availability?: Readonly<Partial<Record<HazardFamily, FamilyAvailability>>>;
   /** Anchor of the accessible list that replaces the map. */
   readonly listAnchor?: string;
   /** A small, fixed map without toggles or legend, for detail pages. */
@@ -52,6 +58,7 @@ export function MapPanel({
   placeLabel,
   placeSlug,
   features,
+  availability,
   listAnchor = '#nearby',
   compact = false,
   detectWebGL2 = hasWebGL2,
@@ -187,7 +194,12 @@ export function MapPanel({
         </div>
         {expanded ? (
           <div className="mt-2 max-h-[40vh] overflow-y-auto">
-            <LayerToggles families={MAPPED_FAMILIES} enabled={enabled} onChange={toggle} />
+            <LayerToggles
+              families={MAPPED_FAMILIES}
+              enabled={enabled}
+              {...(availability === undefined ? {} : { availability })}
+              onChange={toggle}
+            />
           </div>
         ) : null}
       </div>
@@ -208,7 +220,12 @@ export function MapPanel({
             {COPY.map.open}
           </button>
           <div className="hidden lg:block">
-            <LayerToggles families={MAPPED_FAMILIES} enabled={enabled} onChange={toggle} />
+            <LayerToggles
+              families={MAPPED_FAMILIES}
+              enabled={enabled}
+              {...(availability === undefined ? {} : { availability })}
+              onChange={toggle}
+            />
           </div>
         </>
       )}

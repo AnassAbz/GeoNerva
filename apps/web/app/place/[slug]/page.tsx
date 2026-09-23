@@ -330,6 +330,17 @@ async function PlaceDashboard({
                 placeLabel={location.label}
                 placeSlug={slug}
                 features={mapFeatures?.features ?? []}
+                /*
+                 * The briefing's own verdicts, so the map cannot contradict the cards beside it:
+                 * a family with no source, or one whose feeds are down, is labelled rather than
+                 * drawn as an empty viewport (QA round 2, H-4).
+                 */
+                availability={Object.fromEntries(
+                  Object.entries(briefing.snapshot.families).map(([family, card]) => [
+                    family,
+                    card.availability,
+                  ]),
+                )}
               />
             </div>
           </section>
