@@ -139,11 +139,17 @@ function SourcesRow({
    * EMSC at 5.3 (QA round 2, H-2). `FieldComparison.code` is now the enum the builder emits, so
    * the next spelling that disagrees fails to compile rather than rendering a plausible card.
    *
-   * There is no `MAGNITUDE_TYPE` lookup any more, and its absence is the finding rather than the
-   * fix: no builder emits one, so the card cannot show which scale each value is on. That is
-   * H-3, and it needs the comparison to exist before anything here can render it.
+   * `MAGNITUDE_TYPE` is now emitted too, and each value carries its scale, because a bare pair of
+   * numbers invites a comparison that is not available: an Mww and an mb measure different things
+   * (H-3). Where the scales differ the engine withholds the numeric spread, so the types are the
+   * only honest thing to show beside the values.
    */
   const magnitude = agreement?.comparisons.find((comparison) => comparison.code === 'MAGNITUDE');
+  const magnitudeTypeBySource = new Map(
+    agreement?.comparisons
+      .find((comparison) => comparison.code === 'MAGNITUDE_TYPE')
+      ?.values.map((value) => [value.sourceId, value.value]) ?? [],
+  );
   const evidence = [
     ...new Set(
       agreement?.comparisons.flatMap((c) => c.values.map((v) => v.evidenceId)) ?? item.evidenceIds,
@@ -157,15 +163,21 @@ function SourcesRow({
               {fact.label}: {formatFactValue(fact.value, timeZone)}
             </span>
           ))
-        : magnitude.values.map((value) => (
-            <span
-              key={`${value.sourceId}:${value.evidenceId}`}
-              className="inline-flex items-center gap-1"
-            >
-              <SourceBadge sourceId={value.sourceId} />
-              <span className="tabular">{formatFactValue(value.value)}</span>
-            </span>
-          ))}
+        : magnitude.values.map((value) => {
+            const type = magnitudeTypeBySource.get(value.sourceId);
+            return (
+              <span
+                key={`${value.sourceId}:${value.evidenceId}`}
+                className="inline-flex items-center gap-1"
+              >
+                <SourceBadge sourceId={value.sourceId} />
+                <span className="tabular">{formatFactValue(value.value)}</span>
+                {type === undefined ? null : (
+                  <span className="text-fg-muted">{formatFactValue(type)}</span>
+                )}
+              </span>
+            );
+          })}
       {agreement === null ? null : (
         <span className="text-fg-muted">
           · {COPY.card.agreement}: {COPY.agreement[agreement.level]} ·{' '}

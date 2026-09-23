@@ -907,6 +907,7 @@
                                           "type": "string",
                                           "enum": [
                                             "MAGNITUDE",
+                                            "MAGNITUDE_TYPE",
                                             "DEPTH"
                                           ]
                                         },
@@ -3640,6 +3641,7 @@
                                 "type": "string",
                                 "enum": [
                                   "MAGNITUDE",
+                                  "MAGNITUDE_TYPE",
                                   "DEPTH"
                                 ]
                               },

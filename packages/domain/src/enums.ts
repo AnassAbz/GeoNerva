@@ -197,13 +197,12 @@ export type AgreementLevel = (typeof AGREEMENT_LEVELS)[number];
  * are the complete set `packages/briefing/src/snapshot.ts` constructs; `/api/v1` is frozen and
  * nothing here widens it.
  *
- * `MAGNITUDE_TYPE` is deliberately **absent**. `apps/web` looked for it and the P9a mock supplied
- * it, but no builder has ever emitted one, so admitting it here would be writing a contract for
- * something that does not exist. Adding it is QA round 2's H-3 — a moment magnitude and a
- * body-wave magnitude are presently compared as a 0.1 spread with neither scale named — and it
- * belongs with the fix that makes the comparison honest, not with this list.
+ * `MAGNITUDE_TYPE` joined them with the fix for H-3. A moment magnitude and a body-wave magnitude
+ * were being compared as a 0.1 spread with neither scale named, which invites a reader to conclude
+ * the solution is well constrained. The scales are now reported as their own comparison, and the
+ * numeric spread is withheld when they differ.
  */
-export const FIELD_COMPARISON_CODES = ['MAGNITUDE', 'DEPTH'] as const;
+export const FIELD_COMPARISON_CODES = ['MAGNITUDE', 'MAGNITUDE_TYPE', 'DEPTH'] as const;
 export type FieldComparisonCode = (typeof FIELD_COMPARISON_CODES)[number];
 
 /**

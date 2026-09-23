@@ -21,7 +21,7 @@ import type { AgreementLevel, LatLon } from '@geonerva/domain';
 import { vincentyDistanceMeters } from '@geonerva/geo';
 
 import { byCodeUnit } from './decide.ts';
-import { magnitudeFamily } from './misfit.ts';
+import { magnitudeFamily, sameMagnitudeFamily } from './misfit.ts';
 
 /** One source's contribution to a canonical event. */
 export interface MemberSolution {
@@ -50,6 +50,12 @@ export interface AgreementResult {
   /** Excludes derived copies. This is the number the UI may describe as corroboration. */
   readonly nIndependentSources: number;
   readonly deltaMagnitude: number | null;
+  /**
+   * The distinct magnitude types the independent sources published, lower-cased, in order.
+   * More than one means the spread above is `null`, because the numbers are not on one
+   * scale; the types are still reported so a reader can see why nothing was compared.
+   */
+  readonly magnitudeTypes: readonly string[];
   readonly deltaLocationKm: number | null;
   readonly deltaDepthKm: number | null;
   readonly reasons: readonly { readonly code: string; readonly text: string }[];
@@ -78,6 +84,7 @@ export function assessAgreement(members: readonly MemberSolution[]): AgreementRe
       nSources,
       nIndependentSources,
       deltaMagnitude: null,
+      magnitudeTypes: [],
       deltaLocationKm: null,
       deltaDepthKm: null,
       reasons: [
@@ -96,6 +103,7 @@ export function assessAgreement(members: readonly MemberSolution[]): AgreementRe
       nSources,
       nIndependentSources,
       deltaMagnitude: null,
+      magnitudeTypes: [],
       deltaLocationKm: null,
       deltaDepthKm: null,
       /*
@@ -133,8 +141,38 @@ export function assessAgreement(members: readonly MemberSolution[]): AgreementRe
    * point produced, which is the same reasoning `roundStored` applies on the ingest side. An
    * epsilon would work too and would be arbitrary; this one is derived from the column.
    */
+  /*
+   * A spread is only a spread when the two numbers measure the same quantity.
+   *
+   * An Mww and an mb are different scales, and at M4–5 they routinely differ by several tenths in
+   * either direction; the difference between them is not a measurement disagreement and its size
+   * is not evidence of anything. `misfit.ts` already knows this — it halves the magnitude term
+   * when the families differ — and `/methodology` states it in the product's own words. The
+   * agreement block used to compare them at full weight anyway, and reported "Magnitudes differ by
+   * 0.1 across 2 independent sources" over an `AGREE`, which invites a reader to conclude the
+   * solution is well constrained (QA round 2, H-3).
+   *
+   * So the spread is computed only across one family. Mixed scales produce `null`, which the band
+   * logic below treats as "these sources have not disagreed about magnitude" — because they have
+   * not; they have not been compared. The reason text says so, and names the types.
+   */
+  const withMagnitude = independent.filter((member) => member.magnitude !== null);
+  const magnitudeTypes = [
+    ...new Set(
+      withMagnitude
+        .map((member) => member.magnitudeType?.trim().toLowerCase())
+        .filter((type): type is string => type !== undefined && type !== ''),
+    ),
+  ];
+  const oneScale =
+    withMagnitude.length >= 2 &&
+    withMagnitude.every((member, _index, all) =>
+      sameMagnitudeFamily(member.magnitudeType, all[0]?.magnitudeType ?? null),
+    );
   const deltaMagnitude =
-    magnitudes.length >= 2 ? roundTo(Math.max(...magnitudes) - Math.min(...magnitudes), 2) : null;
+    magnitudes.length >= 2 && oneScale
+      ? roundTo(Math.max(...magnitudes) - Math.min(...magnitudes), 2)
+      : null;
   const deltaDepthKm =
     depths.length >= 2 ? roundTo(Math.max(...depths) - Math.min(...depths), 2) : null;
   const deltaLocationKm = maxPairwiseDistanceKm(independent.map((member) => member.epicentre));
@@ -144,6 +182,13 @@ export function assessAgreement(members: readonly MemberSolution[]): AgreementRe
     reasons.push({
       code: 'MAGNITUDE_SPREAD',
       text: `Magnitudes differ by ${deltaMagnitude.toFixed(1)} across ${String(nIndependentSources)} independent sources.`,
+    });
+  } else if (withMagnitude.length >= 2) {
+    reasons.push({
+      code: 'MAGNITUDE_TYPES_DIFFER',
+      text:
+        `The sources report different magnitude types (${magnitudeTypes.join(', ')}), which ` +
+        'measure different things, so their magnitudes are not compared here.',
     });
   }
   if (deltaLocationKm !== null) {
@@ -170,6 +215,7 @@ export function assessAgreement(members: readonly MemberSolution[]): AgreementRe
       nSources,
       nIndependentSources,
       deltaMagnitude,
+      magnitudeTypes,
       deltaLocationKm,
       deltaDepthKm,
       reasons,
@@ -185,6 +231,7 @@ export function assessAgreement(members: readonly MemberSolution[]): AgreementRe
       nSources,
       nIndependentSources,
       deltaMagnitude,
+      magnitudeTypes,
       deltaLocationKm,
       deltaDepthKm,
       reasons,
@@ -196,6 +243,7 @@ export function assessAgreement(members: readonly MemberSolution[]): AgreementRe
     nSources,
     nIndependentSources,
     deltaMagnitude,
+    magnitudeTypes,
     deltaLocationKm,
     deltaDepthKm,
     reasons: [

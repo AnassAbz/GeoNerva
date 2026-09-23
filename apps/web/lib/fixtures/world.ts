@@ -360,8 +360,9 @@ export function evidenceRegistry(asOf: string): ReadonlyMap<string, EvidenceItem
  * lists, so the next divergence fails there instead of shipping.
  *
  * There is no magnitude-type fact and no magnitude-type comparison, because there is none in the
- * product: `snapshot.ts` reads `magnitude_type` into the member solutions and drops it on the way
- * out. Putting one back here is part of H-3, not of keeping this file honest.
+ * product. H-3's fix changed that: `snapshot.ts` now emits a `MAGNITUDE_TYPE` comparison, so this
+ * file carries one again — with the numeric spread withheld, which is what the engine does when
+ * the scales differ.
  */
 const magnitude = (value: number, evidenceId: string): Fact => ({
   code: 'MAGNITUDE',
@@ -435,7 +436,34 @@ export const EQ_AGREEMENT: Agreement = {
           evidenceId: EV.emscV1,
         },
       ],
-      spread: { kind: 'number', value: 0.1, unit: null, decimals: 1 },
+      /*
+       * No spread, because the two values are not on one scale: USGS publishes `mww` and EMSC
+       * publishes `mb` for this event, and `assessAgreement` withholds the difference between
+       * different magnitude types rather than reporting it as a discrepancy (H-3). The mock used
+       * to carry `0.1` here, which is what a reader saw described as near-agreement.
+       */
+      spread: null,
+      isConflict: false,
+    },
+    {
+      code: 'MAGNITUDE_TYPE',
+      label: 'Magnitude type',
+      values: [
+        {
+          sourceId: 'usgs',
+          contributor: 'us',
+          value: { kind: 'text', value: 'mww' },
+          evidenceId: EV.usgsV2,
+        },
+        {
+          sourceId: 'emsc',
+          contributor: 'EMSC',
+          value: { kind: 'text', value: 'mb' },
+          evidenceId: EV.emscV1,
+        },
+      ],
+      /* Two scales are not a dispute between the agencies; they measured different quantities. */
+      spread: null,
       isConflict: false,
     },
     {

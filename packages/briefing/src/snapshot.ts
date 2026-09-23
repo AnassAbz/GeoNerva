@@ -1486,6 +1486,7 @@ export function toAgreementView(
 
   const comparisons: FieldComparison[] = [
     fieldComparison('MAGNITUDE', 'Magnitude', independent, assessment.deltaMagnitude, 1, null),
+    magnitudeTypeComparison(independent),
     fieldComparison('DEPTH', 'Depth', independent, assessment.deltaDepthKm, 0, 'km'),
   ].filter((comparison): comparison is FieldComparison => comparison !== null);
 
@@ -1512,6 +1513,43 @@ export function toAgreementView(
       evidenceIds,
     })),
     comparisons,
+  };
+}
+
+/**
+ * The magnitude *scale* each source used, beside the numbers themselves.
+ *
+ * A magnitude without its type invites a comparison that is not available: an Mww and an mb
+ * measure different things, and at M4-5 they routinely differ by several tenths in either
+ * direction. `assessAgreement` therefore withholds the numeric spread when the scales differ, and
+ * this is what tells the reader why — the two values side by side, in the sources' own words.
+ *
+ * `isConflict` is false throughout: two sources using different scales have not disagreed about
+ * anything. They have measured different quantities, which is a fact about the measurements and
+ * not a dispute between the agencies (QA round 2, H-3).
+ */
+function magnitudeTypeComparison(members: readonly ObservationRow[]): FieldComparison | null {
+  const values = members
+    .map((row) => {
+      const type = row.magnitude_type?.trim();
+      if (type === undefined || type === '' || row.magnitude === null) return null;
+      return {
+        sourceId: row.source_id,
+        contributor: row.contributor,
+        value: { kind: 'text' as const, value: type },
+        evidenceId: evidenceId.observation(row.version_id),
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .sort((left, right) => compare(left.evidenceId, right.evidenceId));
+
+  if (values.length < 2) return null;
+  return {
+    code: 'MAGNITUDE_TYPE',
+    label: 'Magnitude type',
+    values,
+    spread: null,
+    isConflict: false,
   };
 }
 
