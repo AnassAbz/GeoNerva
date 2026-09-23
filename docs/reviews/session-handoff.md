@@ -1,12 +1,12 @@
 # Continuation handoff
 
-- **Written:** 2026-09-22, at the end of the session-numbered **P9 (the frontend)**. The gate is
-  **not** claimed — see below.
-- **Head:** `4304465`, plus the commit carrying this file, `docs/reviews/gate-g9.md` and
-  `docs/reviews/qa-round-2.md`. Working tree clean.
-- **`pnpm check`** exit **0** (1,952 unit, 164 component, dependency-cruiser clean).
+- **Written:** 2026-09-23, at the end of the session-numbered **P9 (the frontend)**. **The gate
+  passed.**
+- **Head:** `68df784`, plus the commit carrying this file. Working tree clean.
+- **`pnpm check`** exit **0** (1,980 unit, 173 component, dependency-cruiser clean).
   **Integration** 788/788. **End-to-end** 81 passed, 0 failed, 0 skipped, at both viewports with
-  axe clean. `pnpm --filter @geonerva/web build` exit 0.
+  axe clean. Build and `build:canary` exit 0. The adversarial suite
+  (`tests/adversarial/vitest.config.ts`) is **13/13**.
 - The previous phase's record is `docs/reviews/gate-g8.md`; P8 passed its gate at checkpoint 2.
 
 **The gate-numbering warning every report since G7 carries.** The continuation prompts and
@@ -15,27 +15,30 @@
 
 ## Where P9 got to
 
-**P9b is built, every gate command is green, and the gate is *not* claimed.** One HIGH finding
-from adversarial QA round 2 is open and closing it needs the owner: `MapFeaturesResponse` has no
-availability field, so the map API answers `total: 0` for a family nothing covers —
-byte-identical to a quiet viewport, which is the shape `PRODUCT.md` §7 forbids. The page half is
-fixed (each map layer carries the briefing's own verdict); the contract half is **ADR-042,
-Proposed**.
+**P9b is built and the gate passed.** Adversarial QA round 2 found no CRITICAL, five HIGH, four
+MEDIUM and eight LOW, and **every one is closed** with its reproduction passing. `gate-g9.md` is
+the report (the plan calls this gate G7) and `qa-round-2.md` carries the findings with their
+dispositions.
 
-**ADR-043** is also waiting: whether a band may be defined by a quantile its own sample cannot
-resolve. The *sentence* claiming "in the top 1 % of comparable periods" over 59 windows is
-fixed; the band definition is §8.1 and changing it changes what the product says about real
-places.
+The owner accepted **ADR-042** and **ADR-043** on 2026-09-23. Both are built, and both changed the
+contract or the output, so they are worth knowing:
 
-Three adversarial specs stay red on purpose, as the record of those two decisions. They are in
-their own vitest project (`tests/adversarial/vitest.config.ts`) and do not block `pnpm check`.
+- `MapFeaturesResponse.coverage` states a verdict per requested family, so `total: 0` is never the
+  only answer. `READ_MODEL_SCHEMA_VERSION` is **5** (4 for that field, 5 for
+  `FireClusterSummaryView.countedTo`).
+- A baseline band is claimed only where its sample can resolve the percentile it is defined by, so
+  this deployment answers `ABOVE_TYPICAL` where it used to answer `WELL_ABOVE_TYPICAL`, on the same
+  data.
 
 ### Pick this up first
 
-1. **Get ADR-042 decided.** It is the last HIGH and the only thing between here and the gate.
-2. Then P10. The `ingestion_runs` sweep is no longer blocked by ADR-041's first condition, and
-   its second is demonstrated by "a baseline after its run history is pruned" in
-   `packages/briefing/src/history.int.test.ts` — read that before enabling it.
+**P10.** Nothing from the QA round is outstanding. The `ingestion_runs` sweep is no longer blocked
+by ADR-041's first condition, and its second is demonstrated by "a baseline after its run history
+is pruned" in `packages/briefing/src/history.int.test.ts` — read that before enabling it.
+
+**ADR-039 is still Proposed**, and two fixes route around it: the fire page withholds what it
+cannot verify, and a rolling 24-hour window is recounted only for a live read, because counting a
+past window with today's cluster membership is the leak that ADR is about.
 
 ### Things that will bite if you do not know them
 
