@@ -1,15 +1,64 @@
 # Continuation handoff
 
-- **Written:** 2026-09-22, at the end of the session-numbered P8 (the read-only `/api/v1` domain
-  API), after **G8 PASSED** at checkpoint 2.
-- **Head:** `d2b8b6c`, plus the commit carrying this file and `docs/reviews/gate-g8.md`. Working
-  tree clean.
-- **`pnpm check`** exit **0** (**1,610** unit). Integration **699/699**, twice consecutively, on the
-  last change (294 s, 349 s).
+- **Written:** 2026-09-22, at the end of the session-numbered **P9 (the frontend)**. The gate is
+  **not** claimed — see below.
+- **Head:** `4304465`, plus the commit carrying this file, `docs/reviews/gate-g9.md` and
+  `docs/reviews/qa-round-2.md`. Working tree clean.
+- **`pnpm check`** exit **0** (1,952 unit, 164 component, dependency-cruiser clean).
+  **Integration** 788/788. **End-to-end** 81 passed, 0 failed, 0 skipped, at both viewports with
+  axe clean. `pnpm --filter @geonerva/web build` exit 0.
+- The previous phase's record is `docs/reviews/gate-g8.md`; P8 passed its gate at checkpoint 2.
 
 **The gate-numbering warning every report since G7 carries.** The continuation prompts and
 `docs/IMPLEMENTATION_PLAN.md` number gates differently — the plan gives its own P8 the criterion
 "G6". State which scheme a report uses.
+
+## Where P9 got to
+
+**P9b is built, every gate command is green, and the gate is *not* claimed.** One HIGH finding
+from adversarial QA round 2 is open and closing it needs the owner: `MapFeaturesResponse` has no
+availability field, so the map API answers `total: 0` for a family nothing covers —
+byte-identical to a quiet viewport, which is the shape `PRODUCT.md` §7 forbids. The page half is
+fixed (each map layer carries the briefing's own verdict); the contract half is **ADR-042,
+Proposed**.
+
+**ADR-043** is also waiting: whether a band may be defined by a quantile its own sample cannot
+resolve. The *sentence* claiming "in the top 1 % of comparable periods" over 59 windows is
+fixed; the band definition is §8.1 and changing it changes what the product says about real
+places.
+
+Three adversarial specs stay red on purpose, as the record of those two decisions. They are in
+their own vitest project (`tests/adversarial/vitest.config.ts`) and do not block `pnpm check`.
+
+### Pick this up first
+
+1. **Get ADR-042 decided.** It is the last HIGH and the only thing between here and the gate.
+2. Then P10. The `ingestion_runs` sweep is no longer blocked by ADR-041's first condition, and
+   its second is demonstrated by "a baseline after its run history is pruned" in
+   `packages/briefing/src/history.int.test.ts` — read that before enabling it.
+
+### Things that will bite if you do not know them
+
+- **`pnpm test:e2e` is part of the gate.** Verifying lint, unit and components and then
+  committing cost this phase a regression: a `loading.tsx` flushes the response shell before
+  `notFound()` runs, so every unknown place answered `200`, and nine specs stopped running —
+  including the only automated coverage of invariant I11. Route files change route behaviour.
+- **The component suite renders `apps/web/lib/fixtures/**`, which can drift from what the
+  builders emit.** It did, which is why the suite stayed green over two HIGH findings — one of
+  them with a test asserting the *correct* behaviour against a wrong mock.
+  `FieldComparison.code` is now typed, so that particular drift is a compile error.
+- **E2E needs a seeded database and a fixed clock.** `pnpm db:seed:scenario all-fresh` (or
+  `firms-stale`), then the env in `apps/web/playwright.config.ts`'s `webServer` block.
+  `NODE_ENV=test` is required: `GEONERVA_FAKE_NOW` is *refused* unless `NODE_ENV` is explicitly
+  `development` or `test`, because a fixed clock in a deployment would publish stale data as
+  current.
+- **Docker wedged mid-session** — engine API returning 500s, port 54320 refused — and needed
+  `wsl --shutdown` plus a Docker Desktop relaunch, with the owner's agreement. The database came
+  back intact at migration 0019. Any test result from a window where the container was down is
+  worthless; re-run it rather than reading it.
+- **`snapshot.ts` has now read the wall clock beside a knowledge time twice** (`8008e07`,
+  `c7e421b`). If a third appears, the pattern is the tell: a builder deciding "now" for itself
+  instead of taking it from the request.
 
 ## Where P8 ended
 
