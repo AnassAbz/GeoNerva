@@ -143,19 +143,32 @@ These are checked after each run and reported on `/data-status`. They are not on
 - **Test with AI disabled:** the full E2E suite runs with `AI_MODE=disabled` (the default) and must be green.
 - **Test with the model unavailable:** mock 500/timeout/refusal and assert that the templates render and nothing else changes.
 
-## 9. Live-API smoke (nightly, `.github/workflows/live-smoke.yml`)
+## 9. Live smoke (nightly, `.github/workflows/live-smoke.yml`)
 
-For each source:
+**What the workflow does today** (added in P10): it runs §10's nine post-deploy checks against the
+deployment named by the `GEONERVA_SMOKE_URL` repository variable, and reports the 24-hour soak rate
+beside them when a database secret is configured. With neither set it skips rather than failing, so
+a repository without a deployment does not carry a red nightly cron.
+
+**What is specified here and not built**: a per-source provider reachability check —
+
 1. Fetch a minimal request.
 2. Parse with the production adapter.
 3. Assert verdict OK and the counts plausible.
 
-Failures open or refresh an issue. They never block PRs, since provider outages are not our regressions. The job also checks:
-- OpenFreeMap style URL reachable
-- Nominatim reachable with our UA (1 request)
-- FIRMS `mapkey_status`
+— along with the OpenFreeMap style URL, Nominatim with our user agent (1 request), and FIRMS
+`mapkey_status`. Failures of that kind would open or refresh an issue and never block PRs, since
+provider outages are not our regressions. It is recorded as unbuilt rather than quietly dropped:
+nothing in the repository contacts a provider on a schedule outside the worker itself.
 
 ## 10. Production smoke (post-deploy)
+
+Implemented by `scripts/smoke.ts` (`pnpm smoke <base-url>`), which exits with the number of the
+check that failed. Two checks are deliberately narrower than the wording below, each for a reason
+given in its own docblock: check 2 requires only *enabled* sources to be available, because a
+source this deployment has switched off is the "explicit known outage" the item allows for; and
+check 3 asks by coordinate key rather than by name, so a deployment that has not imported the
+gazetteer is not reported as having a broken briefing.
 
 1. `/` 200 in under 2 s.
 2. `/api/v1/sources/status`: each P0 source status ≠ UNAVAILABLE (or an explicit known outage).
@@ -181,7 +194,7 @@ Automated:
 
 Then:
 - live-API smoke
-- scheduled-ingestion smoke (worker runs ≥ 24 h in staging with ≥ 99 % run success, excluding provider outages)
+- scheduled-ingestion smoke (worker runs ≥ 24 h in staging with ≥ 99 % run success, excluding provider outages) — measured by `pnpm soak`, which also fails when too few non-provider runs exist for the rate to mean anything
 - source-outage drill (block each provider host in staging and verify the UI)
 - stale-data drill
 - conflict drill (fixture USGS/EMSC CONFLICT)
