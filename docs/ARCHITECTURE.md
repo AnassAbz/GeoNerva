@@ -391,7 +391,11 @@ All spatial SQL lives in `packages/db/src/spatial/*.ts` as parameterized, docume
 
 ### 7.4 Fire clustering
 
-Run in the worker after each FIRMS batch.
+Run in the worker as a scheduled derivation, gated on new detections (**ADR-045**). This supersedes
+"after each FIRMS batch": a trigger chained to the ingestion run lives in memory, so a worker that
+died between the detection commit and the clustering call would lose the work until the next batch
+happened to arrive. The gate fires on exactly the condition the chain would have signalled, and the
+work list is a pure function of database state, so a restart loses nothing.
 
 - **Algorithm:** incremental single-linkage clustering with union-find over detections from the last 72 h.
   - Two detections are linked if their geodesic distance is ≤ **ε = 1.5 km** (VIIRS 375 m pixels grow to ~0.8 km at swath edge, so ε ≈ 2 edge pixels) **and** |Δt| ≤ **48 h**.

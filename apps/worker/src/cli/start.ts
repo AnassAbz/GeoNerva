@@ -24,13 +24,19 @@ import {
   runCorrelation,
   runIngestion,
   runScheduler,
+  runClustering,
+  runFireIngestion,
   runSeed,
+  type FireIngestionOutcome,
+  type RunOutcome,
   type ScheduledJob,
   type SchedulerSummary,
 } from '@geonerva/pipeline';
 import {
+  FIRMS_SENSORS,
   createSourceClient,
   emscAdapter,
+  firmsDescriptor,
   gdacsAdapter,
   usgsAdapter,
   type SourceAdapter,
@@ -44,7 +50,11 @@ import {
  * each of which iterates real sources. `DEFAULT_BREAKER` and the heartbeat interval are the
  * existing precedents for a scheduling constant living in code. The number is argued in ADR-044.
  */
-import { describeSourceStateMismatch, findSourceStateMismatch } from './scheduled-sources.ts';
+import {
+  describeSourceStateMismatch,
+  findSourceStateMismatch,
+  type ScheduledFeed,
+} from './scheduled-sources.ts';
 
 const CORRELATION_INTERVAL_MS = 60_000;
 const CORRELATION_JITTER_RATIO = 0.1;
@@ -58,6 +68,48 @@ const CORRELATION_JITTER_RATIO = 0.1;
  * reason. The two derivations take different advisory locks, so neither queues behind the other.
  */
 const SEED_INTERVAL_MS = 60_000;
+
+/**
+ * How often fire clustering looks for work (ADR-045).
+ *
+ * Deliberately slower than the other two derivations. FIRMS is polled every fifteen minutes and a
+ * satellite overpass delivers a place's detections in one batch, so there is nothing for a
+ * sixty-second tick to find; and unlike correlation, a clustering pass is not cheap when it *does*
+ * run — it reads the whole 72-hour window. Five minutes keeps the fire card comfortably inside its
+ * own staleness bound while leaving the gate to absorb the idle wakeups.
+ */
+/**
+ * A fire ingestion outcome as the scheduler's `RunOutcome`.
+ *
+ * `FireIngestionOutcome` is deliberately its own shape — it carries `partitionsTouched`,
+ * `newestAcquiredAt` and `keyless`, none of which mean anything for a source that writes
+ * observation versions. The scheduler only needs the status, the class and the counters, so the
+ * mapping is narrow and the FIRMS-specific facts stay on the terminal log line rather than being
+ * flattened into a vocabulary that has no room for them.
+ */
+function asRunOutcome(outcome: FireIngestionOutcome): RunOutcome {
+  return {
+    status: outcome.status,
+    runId: outcome.runId,
+    errorClass: outcome.errorClass,
+    detail: outcome.detail,
+    counts: {
+      received: outcome.counts.received,
+      accepted: outcome.counts.inserted,
+      rejected: outcome.counts.rejected,
+      newRecords: outcome.counts.inserted,
+      newVersions: 0,
+      unchanged: outcome.counts.duplicates,
+      mergedRecords: 0,
+    },
+    stageMs: { fetchMs: 0, parseMs: 0, normalizeMs: 0, persistMs: 0, totalMs: 0 },
+    committedAt: null,
+    httpStatus: null,
+  };
+}
+
+const CLUSTERING_INTERVAL_MS = 300_000;
+const CLUSTERING_JITTER_RATIO = 0.1;
 const SEED_JITTER_RATIO = 0.1;
 
 /**
@@ -109,6 +161,28 @@ const SCHEDULED_ADAPTERS: readonly SourceAdapter<never>[] = [
    * case to watch is three links and two independent sources, never three.
    */
   gdacsAdapter('EQ') as SourceAdapter<never>,
+];
+
+/**
+ * Every feed this build polls, adapters **and** FIRMS.
+ *
+ * FIRMS is not a `SourceAdapter` and so cannot live in `SCHEDULED_ADAPTERS`, and the first version
+ * of the FIRMS job simply forgot to tell the drift check about it. The consequence was not
+ * theoretical: FIRMS ingested 92,616 detections and produced 34,087 clusters while
+ * `sources.firms.enabled` was `false`, and the start-up check that exists precisely to catch that
+ * said nothing, because the feed it was judging was invisible to it. A list derived from one place
+ * is the fix — anything this worker polls has to appear here, or the invariant only covers the
+ * sources someone remembered.
+ */
+export const SCHEDULED_FEEDS: readonly ScheduledFeed[] = [
+  ...SCHEDULED_ADAPTERS.map((adapter) => ({
+    sourceId: adapter.descriptor.sourceId,
+    productCode: adapter.descriptor.productCode,
+  })),
+  ...FIRMS_SENSORS.map((sensor) => {
+    const descriptor = firmsDescriptor(sensor);
+    return { sourceId: descriptor.sourceId, productCode: descriptor.productCode };
+  }),
 ];
 
 export const START_USAGE = `Usage: geonerva-worker start
@@ -192,10 +266,7 @@ export async function startWorker(
       listSources(handle.db),
     ]);
     const mismatch = findSourceStateMismatch(
-      SCHEDULED_ADAPTERS.map((adapter) => ({
-        sourceId: adapter.descriptor.sourceId,
-        productCode: adapter.descriptor.productCode,
-      })),
+      SCHEDULED_FEEDS,
       allProducts,
       new Set(enabledSources.map((source) => source.id)),
     );
@@ -229,6 +300,45 @@ export async function startWorker(
     }
 
     /*
+     * FIRMS, which is not a `SourceAdapter` and so cannot join `SCHEDULED_ADAPTERS`.
+     *
+     * It answers a different question from every other source — 230,000 pixel detections a day,
+     * no identifiers, no revisions, no events — and writes to `fire_detections` rather than to
+     * observation versions (ADR-011). What it shares is the run row, the health evidence and the
+     * coverage ledger, and `trigger: 'SCHEDULE'` is what makes that last one record anything: the
+     * ledger is written for scheduled polls only, so the manual CLI's `MANUAL` produces detections
+     * with no covered hours and a permanently `INSUFFICIENT_COVERAGE` fire trend.
+     *
+     * Keyless here, because no `FIRMS_MAP_KEY` is configured: the public 24-hour global files,
+     * which is a supported mode and the one this build has been run against. The mode travels on
+     * the outcome rather than being inferred, so a gap is not mistaken for an outage.
+     */
+    for (const sensor of FIRMS_SENSORS) {
+      const descriptor = firmsDescriptor(sensor);
+      const policy = await getPollingPolicy(handle.db, descriptor.sourceId, descriptor.productCode);
+      const client = createSourceClient(descriptor, {
+        userAgent: `GeoNerva/${config.NODE_ENV} (+https://github.com/geonerva)`,
+      });
+      jobs.push({
+        name: `${descriptor.sourceId}:${descriptor.productCode}`,
+        intervalMs: policy.intervalS * 1000,
+        jitterRatio: policy.jitterRatio,
+        run: async (jobSignal) =>
+          asRunOutcome(
+            await runFireIngestion({
+              db: handle.db,
+              client,
+              sensor,
+              ...(config.FIRMS_MAP_KEY === undefined ? {} : { mapKey: config.FIRMS_MAP_KEY }),
+              trigger: 'SCHEDULE',
+              logger,
+              signal: jobSignal,
+            }),
+          ),
+      });
+    }
+
+    /*
      * Correlation, beside the ingestion jobs (ADR-044). Until this existed the worker ingested
      * observations and never produced a canonical event, and the product said so — honestly, and
      * uselessly.
@@ -256,6 +366,18 @@ export async function startWorker(
       intervalMs: SEED_INTERVAL_MS,
       jitterRatio: SEED_JITTER_RATIO,
       run: () => runSeed({ db: handle.db, logger }),
+    });
+
+    /*
+     * Fire clustering. Without it FIRMS detections accumulate and `FIRE_ACTIVITY` reports
+     * `DERIVATION_NOT_RUN` for ever — the defect ADR-044 fixed for earthquakes and ADR-045 for
+     * this family, which until now had no implementation at all rather than merely no schedule.
+     */
+    jobs.push({
+      name: 'clustering:fire',
+      intervalMs: CLUSTERING_INTERVAL_MS,
+      jitterRatio: CLUSTERING_JITTER_RATIO,
+      run: () => runClustering({ db: handle.db, logger }),
     });
 
     const summaries = await runScheduler({

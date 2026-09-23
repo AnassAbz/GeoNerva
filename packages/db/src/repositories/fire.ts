@@ -20,6 +20,7 @@ import { sql, type Kysely, type Transaction } from 'kysely';
 import type { ConfidenceClass } from '@geonerva/domain';
 
 import type { DB } from '../generated/database.ts';
+import { clusterLineageAsOf } from '../asof-membership.ts';
 
 type Db = Kysely<DB> | Transaction<DB>;
 
@@ -459,6 +460,184 @@ export async function mergeClusters(
    * the return value a restatement of the request.
    */
   return Number(absorbed.numAffectedRows ?? 0n);
+}
+
+/**
+ * The newest detection ingest time, for the clustering job's gate (ADR-045).
+ *
+ * Deliberately **not** the as-of layer's `newestDetectionIngestAt`, which is scoped to a radius
+ * around a location because a briefing card only cares about its own neighbourhood. The scheduler
+ * asks a global question — has anything at all arrived since the last run? — and answering it with
+ * a location-scoped query would leave clustering asleep while the other hemisphere burned.
+ *
+ * `acquiredAfter` exists to let the partitioned table prune: without it this is a scan of every
+ * partition still on disk, run once a minute forever.
+ */
+export async function newestDetectionIngestedAt(
+  db: Db,
+  options: { readonly asOf: Date; readonly acquiredAfter: Date },
+): Promise<Date | null> {
+  const result = await sql<{ newest: Date | null }>`
+    SELECT max(d.ingested_at) AS newest
+    FROM geonerva.fire_detections d
+    WHERE d.ingested_at <= ${options.asOf}
+      AND d.acquired_at >= ${options.acquiredAfter}
+  `.execute(db);
+  return result.rows[0]?.newest ?? null;
+}
+
+export interface ClusterableDetection {
+  readonly id: string;
+  readonly lat: number;
+  readonly lon: number;
+  readonly acquiredAt: Date;
+  /** The cluster this detection already belongs to, or `null` when it is still unassigned. */
+  readonly clusterId: string | null;
+}
+
+/**
+ * The detections a clustering run considers: the last `windowMs`, as known at `asOf`.
+ *
+ * **Already-assigned detections are included, and that is the point.** ARCHITECTURE §7.4 calls
+ * this incremental clustering, and the increment only works if a new pixel can see the cluster its
+ * neighbours are already in. Reading only unassigned rows would open a brand-new cluster beside
+ * every existing fire on every pass — the same fire, a new public id each run.
+ *
+ * Ordered by `(acquired_at, id)`, which §7.4 fixes as the input order. Cluster identity is minted
+ * from this order, so leaving it to the planner would let a public id depend on which plan
+ * PostgreSQL chose that minute.
+ */
+export async function detectionsForClustering(
+  db: Db,
+  options: { readonly asOf: Date; readonly acquiredAfter: Date; readonly limit: number },
+): Promise<ClusterableDetection[]> {
+  const result = await sql<{
+    id: string;
+    lat: number;
+    lon: number;
+    acquired_at: Date;
+    cluster_id: string | null;
+  }>`
+    SELECT d.id::text AS id, d.lat, d.lon, d.acquired_at, d.cluster_id::text AS cluster_id
+    FROM geonerva.fire_detections d
+    WHERE d.ingested_at <= ${options.asOf}
+      AND d.acquired_at >= ${options.acquiredAfter}
+      AND d.acquired_at <= ${options.asOf}
+    ORDER BY d.acquired_at, d.id
+    LIMIT ${options.limit}
+  `.execute(db);
+  return result.rows.map((row) => ({
+    id: row.id,
+    lat: row.lat,
+    lon: row.lon,
+    acquiredAt: row.acquired_at,
+    clusterId: row.cluster_id,
+  }));
+}
+
+export interface ClusterIdentityRow {
+  readonly id: string;
+  readonly createdAt: Date;
+  readonly mergedInto: string | null;
+}
+
+/** The identity rows for a set of clusters, so a run can pick the oldest and follow merges. */
+export async function clusterIdentities(
+  db: Db,
+  clusterIds: readonly string[],
+): Promise<ClusterIdentityRow[]> {
+  if (clusterIds.length === 0) return [];
+  const result = await sql<{ id: string; created_at: Date; merged_into: string | null }>`
+    SELECT id::text AS id, created_at, merged_into::text AS merged_into
+    FROM geonerva.fire_clusters
+    WHERE id = ANY(${sql.val(clusterIds)}::uuid[])
+  `.execute(db);
+  return result.rows.map((row) => ({
+    id: row.id,
+    createdAt: row.created_at,
+    mergedInto: row.merged_into,
+  }));
+}
+
+export interface ClusterDetectionStats {
+  readonly nTotal: number;
+  readonly n24h: number;
+  readonly overpasses24h: number;
+  readonly firstDetectedAt: Date | null;
+  readonly lastDetectedAt: Date | null;
+  readonly frpSum24h: number | null;
+  readonly frpMax: number | null;
+  readonly maxConfidence: ConfidenceClass | null;
+  readonly productIds: number[];
+}
+
+/**
+ * Everything a cluster version states about its detections, as known at `asOf`.
+ *
+ * Resolved through the merge lineage rather than through `fire_detections.cluster_id`, for the
+ * reason `buildClusterHull` gives at length: a merge does not re-point detections (ADR-039), so
+ * the raw column undercounts a survivor by everything it absorbed. The summary and the read paths
+ * must agree, so they resolve membership the same way.
+ *
+ * `overpasses_24h` counts **distinct acquisition times**, which is what separates "the satellite
+ * looked once and saw a lot" from "it kept seeing this over and over".
+ */
+export async function clusterDetectionStatsAsOf(
+  db: Db,
+  clusterId: string,
+  asOf: Date,
+  windowHours = 24,
+): Promise<ClusterDetectionStats> {
+  const since = new Date(asOf.getTime() - windowHours * 60 * 60 * 1000);
+  const result = await sql<{
+    n_total: string;
+    n_24h: string;
+    overpasses_24h: string;
+    first_detected_at: Date | null;
+    last_detected_at: Date | null;
+    frp_sum_24h: number | null;
+    frp_max: number | null;
+    max_confidence: string | null;
+    product_ids: number[] | null;
+  }>`
+    ${clusterLineageAsOf(clusterId, asOf)}
+    SELECT
+      count(*)::text AS n_total,
+      count(*) FILTER (WHERE d.acquired_at >= ${since})::text AS n_24h,
+      count(DISTINCT d.acquired_at) FILTER (WHERE d.acquired_at >= ${since})::text AS overpasses_24h,
+      min(d.acquired_at) AS first_detected_at,
+      max(d.acquired_at) AS last_detected_at,
+      sum(d.frp) FILTER (WHERE d.acquired_at >= ${since}) AS frp_sum_24h,
+      max(d.frp) AS frp_max,
+      /*
+       * The strongest confidence class present, ordered by meaning rather than alphabetically:
+       * 'low' < 'nominal' < 'high' is not the string order, and a plain max() over the text would
+       * report a cluster of nominal pixels as the same confidence as one holding a high pixel.
+       */
+      (ARRAY['LOW','NOMINAL','HIGH'])[
+        max(array_position(ARRAY['LOW','NOMINAL','HIGH'], d.confidence_class))
+      ] AS max_confidence,
+      array_agg(DISTINCT d.product_id ORDER BY d.product_id) AS product_ids
+    FROM target t
+    JOIN lineage l ON l.target_id = t.id
+    JOIN geonerva.fire_detections d ON d.cluster_id = l.cluster_id
+    WHERE d.cluster_assigned_at IS NOT NULL
+      AND d.cluster_assigned_at <= ${asOf}
+  `.execute(db);
+
+  const row = result.rows[0];
+  if (row === undefined) throw new Error(`cluster ${clusterId}: stats returned no row`);
+  return {
+    nTotal: Number(row.n_total),
+    n24h: Number(row.n_24h),
+    overpasses24h: Number(row.overpasses_24h),
+    firstDetectedAt: row.first_detected_at,
+    lastDetectedAt: row.last_detected_at,
+    frpSum24h: row.frp_sum_24h,
+    frpMax: row.frp_max,
+    maxConfidence: (row.max_confidence as ConfidenceClass | null) ?? null,
+    productIds: row.product_ids ?? [],
+  };
 }
 
 /** Records a day on which FIRMS reported no satellite data, so trends can exclude it. */

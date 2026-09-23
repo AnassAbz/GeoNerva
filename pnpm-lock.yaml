@@ -455,6 +455,9 @@ importers:
       '@geonerva/domain':
         specifier: workspace:*
         version: link:../domain
+      '@geonerva/geo':
+        specifier: workspace:*
+        version: link:../geo
       '@geonerva/http':
         specifier: workspace:*
         version: link:../http

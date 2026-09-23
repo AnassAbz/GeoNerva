@@ -15,6 +15,7 @@
     "@geonerva/correlation": "workspace:*",
     "@geonerva/db": "workspace:*",
     "@geonerva/domain": "workspace:*",
+    "@geonerva/geo": "workspace:*",
     "@geonerva/http": "workspace:*",
     "@geonerva/sources": "workspace:*",
     "kysely": "0.29.6"

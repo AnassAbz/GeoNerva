@@ -40,5 +40,14 @@ export {
   seedSingleSourceEvents,
 } from './correlate.ts';
 export type { CorrelateOptions, CorrelateResult, SeedResult } from './correlate.ts';
-export { runCorrelation, runSeed } from './correlate-job.ts';
+export { runClustering, runCorrelation, runSeed } from './correlate-job.ts';
+export {
+  CLUSTER_EPSILON_M,
+  CLUSTER_MAX_DELTA_MS,
+  CLUSTER_WINDOW_MS,
+  FIRE_CLUSTER_ALGORITHM_VERSION,
+  clusterFireDetections,
+  hasUnclusteredDetections,
+} from './fire-cluster.ts';
+export type { ClusterFireOptions, ClusterFireResult } from './fire-cluster.ts';
 export type { CorrelationJobOptions } from './correlate-job.ts';

@@ -48,7 +48,17 @@ import {
 } from './correlate.ts';
 import type { Logger } from './logging.ts';
 import type { RunOutcome } from './run.ts';
-import { lastSuccessfulDerivationAsOf, newestHazardIngestAt, type DB } from '@geonerva/db';
+import {
+  lastSuccessfulDerivationAsOf,
+  newestDetectionIngestedAt,
+  newestHazardIngestAt,
+  type DB,
+} from '@geonerva/db';
+import {
+  CLUSTER_WINDOW_MS,
+  clusterFireDetections,
+  type ClusterFireResult,
+} from './fire-cluster.ts';
 import { sql, type Kysely } from 'kysely';
 
 /**
@@ -72,8 +82,16 @@ interface DerivationSpec<T> {
    * behind the other would be a pointless queue.
    */
   readonly lockKey: number;
-  /** Which hazards this derivation reads, so its gate is not woken by another family's feed. */
-  readonly hazardTypes: readonly string[];
+  /**
+   * The newest fact this derivation reads, as known at `asOf`, or `null` when it has none.
+   *
+   * A function rather than a list of hazard types, because not every derivation's input is an
+   * observation version. `CLUSTERING` reads `fire_detections`, which is a different table with a
+   * different retention model and is deliberately not in `observation_versions` at all (ADR-011);
+   * asking `newestHazardIngestAt` about `THERMAL_ACTIVITY` would return `null` for ever and the
+   * job would never wake.
+   */
+  newestInput(db: Kysely<DB>, asOf: Date): Promise<Date | null>;
   run(conn: Kysely<DB>, asOf: Date): Promise<T>;
   describe(result: T): string;
 }
@@ -97,7 +115,7 @@ const CORRELATION: DerivationSpec<CorrelateResult> = {
   kind: 'CORRELATION',
   event: 'correlation.run',
   lockKey: 4_405_001,
-  hazardTypes: ['EARTHQUAKE'],
+  newestInput: async (db, asOf) => await newestHazardIngestAt(db, asOf, ['EARTHQUAKE']),
   run: async (conn, asOf) => await correlateEarthquakes(conn, { asOf }),
   describe: describeCorrelation,
 };
@@ -106,7 +124,7 @@ const SEED: DerivationSpec<SeedResult> = {
   kind: 'SEED',
   event: 'seed.run',
   lockKey: 4_405_002,
-  hazardTypes: SEEDED_HAZARD_TYPES,
+  newestInput: async (db, asOf) => await newestHazardIngestAt(db, asOf, SEEDED_HAZARD_TYPES),
   run: async (conn, asOf) => await seedSingleSourceEvents(conn, { asOf }),
   describe: (result) => `considered=${String(result.considered)} created=${String(result.created)}`,
 };
@@ -219,7 +237,7 @@ async function runDerivation<T>(
 
   async function attempt(): Promise<RunOutcome> {
     const [newestFact, lastRunAsOf] = await Promise.all([
-      newestHazardIngestAt(db, asOf, spec.hazardTypes),
+      spec.newestInput(db, asOf),
       lastSuccessfulDerivationAsOf(db, spec.kind),
     ]);
 
@@ -276,6 +294,32 @@ async function runDerivation<T>(
   }
 }
 
+const CLUSTERING: DerivationSpec<ClusterFireResult> = {
+  kind: 'CLUSTERING',
+  event: 'clustering.run',
+  lockKey: 4_405_003,
+  /*
+   * The gate reads detections, not observation versions, and bounds itself to the same 72-hour
+   * window the run works over so the partitioned table can prune. A detection older than the
+   * window cannot change this run's answer, so it must not wake it either.
+   */
+  newestInput: async (db, asOf) =>
+    await newestDetectionIngestedAt(db, {
+      asOf,
+      acquiredAfter: new Date(asOf.getTime() - CLUSTER_WINDOW_MS),
+    }),
+  run: async (conn, asOf) => await clusterFireDetections(conn, { asOf }),
+  describe: (result) =>
+    [
+      `considered=${String(result.considered)}`,
+      `assigned=${String(result.assigned)}`,
+      `created=${String(result.clustersCreated)}`,
+      `merged=${String(result.clustersMerged)}`,
+      `versions=${String(result.versionsWritten)}`,
+      ...(result.capped ? ['capped=true'] : []),
+    ].join(' '),
+};
+
 /** Earthquake correlation, scheduled (ADR-044). */
 export async function runCorrelation(options: CorrelationJobOptions): Promise<RunOutcome> {
   return await runDerivation(CORRELATION, options);
@@ -290,4 +334,15 @@ export async function runCorrelation(options: CorrelationJobOptions): Promise<Ru
  */
 export async function runSeed(options: CorrelationJobOptions): Promise<RunOutcome> {
   return await runDerivation(SEED, options);
+}
+
+/**
+ * Fire clustering, scheduled (ADR-045).
+ *
+ * The third derivation and the one ADR-044 explicitly left for its own decision. `DERIVED_FAMILIES`
+ * gates `FIRE_ACTIVITY` on `CLUSTERING`, so without this job FIRMS detections accumulate and the
+ * fire card reports `DERIVATION_NOT_RUN` — honestly, and uselessly.
+ */
+export async function runClustering(options: CorrelationJobOptions): Promise<RunOutcome> {
+  return await runDerivation(CLUSTERING, options);
 }

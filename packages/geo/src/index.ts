@@ -36,3 +36,6 @@ export {
   boundingBoxesForRadius,
   isWithinRadius,
 } from './radius.ts';
+
+export { singleLinkage } from './single-linkage.ts';
+export type { LinkablePoint, SingleLinkageOptions } from './single-linkage.ts';

@@ -15,6 +15,7 @@ import {
   findSourceStateMismatch,
   type ProductState,
 } from './scheduled-sources.ts';
+import { SCHEDULED_FEEDS } from './start.ts';
 
 function product(
   over: Partial<ProductState> & Pick<ProductState, 'sourceId' | 'code'>,
@@ -127,5 +128,31 @@ describe('findSourceStateMismatch', () => {
 
     /* The source is off; its products advertising themselves is not a drift to shout about. */
     expect(mismatch.enabledButUnscheduled).toEqual([]);
+  });
+});
+
+/*
+ * The check is only as good as the list it judges, and that list is where it went wrong.
+ *
+ * FIRMS is not a `SourceAdapter`, so it cannot live in `SCHEDULED_ADAPTERS`; the first version of
+ * its scheduled job therefore never reached the drift check at all. The result was the exact
+ * failure the check exists to prevent: FIRMS ingested 92,616 detections and produced 34,087
+ * clusters while `sources.firms.enabled` was false, and start-up said nothing. A feed this worker
+ * polls but does not declare here is invisible to the invariant.
+ */
+describe('SCHEDULED_FEEDS', () => {
+  it('declares every feed the worker polls, including the ones that are not adapters', () => {
+    const labels = SCHEDULED_FEEDS.map((feed) => `${feed.sourceId}:${feed.productCode}`);
+    expect(labels).toContain('usgs:comcat');
+    expect(labels).toContain('emsc:rts');
+    expect(labels).toContain('gdacs:WF');
+    /* The two that have no adapter, and that the first version of this list omitted. */
+    expect(labels).toContain('firms:VIIRS_NOAA20_NRT');
+    expect(labels).toContain('firms:VIIRS_NOAA21_NRT');
+  });
+
+  it('lists each feed once, so a duplicate cannot mask a missing one', () => {
+    const labels = SCHEDULED_FEEDS.map((feed) => `${feed.sourceId}:${feed.productCode}`);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 });
