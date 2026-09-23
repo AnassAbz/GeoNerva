@@ -47,6 +47,7 @@ Index:
 | 039 | A detection's cluster membership must be knowable as of a time | **Proposed** (not needed for G8) |
 | 040 | The fire trend reads an append-only daily aggregate over covered days only | Accepted (2026-09-22) |
 | 041 | Catalog coverage is an append-only per-feed ledger that outlives run retention | Accepted (2026-09-22) |
+| 042 | The map says what it could not see, per family | **Proposed** (QA round 2, H-4) |
 
 > **2026-09-19, product-owner review:** Architecture approved (gate G0 passed). ADR-012 model/budget is resolved: `AI_MODE=disabled` in production for v1, and no paid AI at launch. ADR-018 is resolved: `lean` profile on free infrastructure. Licence is Apache-2.0. The deployment is non-commercial.
 
@@ -662,6 +663,23 @@ Turborepo is not adopted until build times justify it.
 
 - **Until this is decided**, `/history?family=FIRE_ACTIVITY&metric=FIRE_TREND` answers `200` with `status: INSUFFICIENT_COVERAGE`, no series and no band, and an interpretation that states the data is not held — never a trend computed from nothing, and never "stable".
 - **Relation to ADR-039:** both are the same defect in the fire tables — a derived value keyed without the knowledge time it became true. Deciding them together would let one migration fix both.
+
+## ADR-042 — Proposed: the map says what it could not see, per family
+- **Date:** 2026-09-22 (P9, raised by adversarial QA round 2 as finding H-4)
+- **Status:** **Proposed.** It requires a compatible extension to the frozen `/api/v1` contract, which the product owner reserves to an approved ADR. Nothing is built.
+- **The defect.** `MapFeaturesResponse` carries `families`, `features`, `truncated`, `cap`, `total`, `bbox`, `bboxParts`, `zoom`, `asOfContext` and `attribution` — and no availability, coverage, source-health or note field of any kind. So the map has exactly one way to say "nothing here", and it uses it for two opposite facts:
+  - **A family with no source reads as a quiet region.** `families=WEATHER_ALERTS` in a deployment where no weather source is enabled returns `total: 0`, byte-identical to a genuinely quiet, fully covered viewport. `PRODUCT.md` §7's first row forbids precisely this shape, and `ARCHITECTURE.md` §9.8 exists because "nothing found" and "cannot tell you" look alike on a screen and mean opposite things.
+  - **Under a full outage the map draws what the card refuses to vouch for.** With every fire feed stale, the briefing headline reads "GeoNerva cannot currently report on fire activity here" while `/events` returns the cluster with `isActive: true, clusterStatus: ACTIVE`. Keeping those rows is correct — I11 is "do not claim emptiness you did not observe", not "hide the data" — but the map has no way to *say* the feed is down while it draws them.
+- **Why the client cannot paper over it.** Nothing in `apps/web/components/map/**` reads availability today, and the layer toggles come from a static `MAPPED_FAMILIES` rather than from any per-family verdict. The page *can* pass the briefing's verdict down as props, and that fixes what a reader of the product sees — it is worth doing on its own. It does not fix the contract: an HTTP client that asks `/events` and gets `total: 0` still cannot tell the two cases apart, and the map is the surface a reader looks at first.
+- **Proposal — one additive field, mirroring the briefing's own vocabulary:**
+  - `coverage: Record<HazardFamily, { availability: FamilyAvailability; note: string | null }>` on `MapFeaturesResponse`, restricted to the families the request asked for. The values are the ones `LocationBriefing` already uses (`AVAILABLE`, `NOT_COVERED`, `UNAVAILABLE`, `PARTIAL`), computed by the same `resolveAvailability` the briefing calls, so the two surfaces cannot disagree about one fact at one knowledge time.
+  - Additive and optional-to-ignore, so it is compatible: an existing client that reads `features` is unaffected. `READ_MODEL_SCHEMA_VERSION` goes to 4, as the read-model policy requires for any change after the freeze, and `docs/openapi.json` is regenerated.
+  - The map legend then renders a family's verdict beside its toggle, and a `NOT_COVERED` or `UNAVAILABLE` family is drawn as *refused*, never as empty.
+- **Alternatives considered:**
+  - *Leave the API and fix only the page* — rejected as a complete answer, accepted as a first step. It leaves the documented contract unable to express the product's central promise.
+  - *Infer it client-side from `/sources/status`* — rejected. Two requests, two knowledge times, and the client would be re-deriving a verdict the server already computes; the first time they disagreed, the map would contradict the card.
+  - *Return a synthetic "not covered" feature* — rejected. A feature is a thing on the ground; an absence is not, and drawing one would be the same lie in a new shape.
+- **Until it is decided**, the page-level fix stands on its own: the dashboard passes the briefing's per-family availability to the map, so a reader sees the refusal beside the drawing. The API gap is recorded here and in `docs/reviews/qa-round-2.md` H-4.
 
 ## ADR-041 — Accepted: catalog coverage is an append-only per-feed ledger that outlives run retention
 - **Date:** 2026-09-22 (G8, found by the review of the fix for the P8 correctness review's H1)

@@ -34,6 +34,7 @@ import type {
   DataConfidenceLevel,
   ErrorClass,
   FamilyAvailability,
+  FieldComparisonCode,
   GeometryKind,
   GeometryRole,
   HazardFamily,
@@ -160,7 +161,7 @@ export interface Agreement {
 
 /** Per-field comparison across sources, which is what makes `CONFLICT` explainable. */
 export interface FieldComparison {
-  readonly code: string;
+  readonly code: FieldComparisonCode;
   readonly label: string;
   readonly values: readonly {
     readonly sourceId: string;

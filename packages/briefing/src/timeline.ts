@@ -13,7 +13,12 @@
  * makes the timeline part of a replay rather than a rendering detail.
  */
 
-import type { FactValue, LifecycleStatus, ProviderSeverity } from '@geonerva/domain';
+import type {
+  FactValue,
+  LifecycleStatus,
+  ProviderSeverity,
+  RevisionChangeCode,
+} from '@geonerva/domain';
 import { statedKilometres, vincentyDistanceMeters } from '@geonerva/geo';
 
 /** The values of one version that the timeline compares. */
@@ -76,7 +81,7 @@ export function describeRevision(
   if (current.lifecycleStatus !== previous.lifecycleStatus) {
     changedFields.push('lifecycleStatus');
     changes.push({
-      code: 'LIFECYCLE',
+      code: 'LIFECYCLE' satisfies RevisionChangeCode,
       label: 'Status',
       before: { kind: 'text', value: previous.lifecycleStatus },
       after: { kind: 'text', value: current.lifecycleStatus },
@@ -87,7 +92,7 @@ export function describeRevision(
   if (current.magnitude !== previous.magnitude) {
     changedFields.push('magnitude');
     changes.push({
-      code: 'MAGNITUDE',
+      code: 'MAGNITUDE' satisfies RevisionChangeCode,
       label: 'Magnitude',
       before: magnitudeValue(previous.magnitude),
       after: magnitudeValue(current.magnitude),
@@ -104,7 +109,7 @@ export function describeRevision(
   if (current.depthKm !== previous.depthKm) {
     changedFields.push('depthKm');
     changes.push({
-      code: 'DEPTH',
+      code: 'DEPTH' satisfies RevisionChangeCode,
       label: 'Depth',
       before: depthValue(previous.depthKm),
       after: depthValue(current.depthKm),
@@ -126,7 +131,7 @@ export function describeRevision(
     const km = statedKilometres(movedM);
     changedFields.push('centroid');
     changes.push({
-      code: 'EPICENTRE_MOVED',
+      code: 'EPICENTRE_MOVED' satisfies RevisionChangeCode,
       label: 'Location moved by',
       before: null,
       after: { kind: 'number', value: km, unit: 'km', decimals: km >= 10 ? 0 : 1 },
@@ -137,7 +142,7 @@ export function describeRevision(
   if (current.observedAt.getTime() !== previous.observedAt.getTime()) {
     changedFields.push('observedAt');
     changes.push({
-      code: 'OBSERVED_AT',
+      code: 'OBSERVED_AT' satisfies RevisionChangeCode,
       label: 'Reported time',
       before: { kind: 'timestamp', value: previous.observedAt.toISOString() },
       after: { kind: 'timestamp', value: current.observedAt.toISOString() },
@@ -148,7 +153,7 @@ export function describeRevision(
   if (!sameSeverity(previous.severity, current.severity)) {
     changedFields.push('severity');
     changes.push({
-      code: 'SEVERITY',
+      code: 'SEVERITY' satisfies RevisionChangeCode,
       label: 'Alert level',
       before: previous.severity === null ? null : { kind: 'severity', severity: previous.severity },
       after: current.severity === null ? null : { kind: 'severity', severity: current.severity },
@@ -165,7 +170,7 @@ export function describeRevision(
   if (current.providerStatus !== previous.providerStatus) {
     changedFields.push('providerStatus');
     changes.push({
-      code: 'PROVIDER_STATUS',
+      code: 'PROVIDER_STATUS' satisfies RevisionChangeCode,
       label: 'Review status',
       before:
         previous.providerStatus === null ? null : { kind: 'text', value: previous.providerStatus },

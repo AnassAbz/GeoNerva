@@ -47,10 +47,26 @@ describe('HazardCard — normal state', () => {
     expect(within(article).getByText(/\(91st percentile\)/u)).toBeInTheDocument();
   });
 
+  /*
+   * This asserted `'Mww 4.7'` and `'mb 4.6'` — a magnitude *type* beside each value — and passed,
+   * against a mock that supplied a `magnitude_type` comparison the API has never produced. The
+   * capability being tested did not exist: `snapshot.ts` reads `magnitude_type` into the member
+   * solutions and drops it, so no reader has ever seen a scale named on a card. That is QA round
+   * 2's H-3, and it is open.
+   *
+   * What the card must do, and now does, is show **both** sources' magnitudes rather than one
+   * number under "sources agree" (H-2). That is what is asserted, per source, so the test still
+   * fails if either value or either attribution disappears. When H-3 lands and a
+   * `MAGNITUDE_TYPE` comparison exists, the types belong back in this assertion.
+   */
   it('shows per-source observed values and the agreement', () => {
     const { article } = renderCard('EARTHQUAKES');
-    expect(within(article).getByText('Mww 4.7')).toBeInTheDocument();
-    expect(within(article).getByText('mb 4.6')).toBeInTheDocument();
+    const sources = within(article).getByText('Sources').closest('div')?.parentElement;
+    expect(sources).not.toBeNull();
+    expect(within(article).getByText('4.7')).toBeInTheDocument();
+    expect(within(article).getByText('4.6')).toBeInTheDocument();
+    expect(within(article).getAllByText('USGS').length).toBeGreaterThanOrEqual(1);
+    expect(within(article).getAllByText('EMSC').length).toBeGreaterThanOrEqual(1);
     expect(within(article).getByText(/minor differences/u)).toBeInTheDocument();
     expect(within(article).getByText(/2 independent of 3 sources/u)).toBeInTheDocument();
   });

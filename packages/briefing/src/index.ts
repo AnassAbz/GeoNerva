@@ -32,8 +32,21 @@ export type {
 } from './fire-cluster-detail.ts';
 export type { BriefingBuild, BuildBriefingOptions } from './briefing.ts';
 
-export { HISTORY_METRICS, buildHistory, metricsFor, radiiFor } from './history.ts';
-export type { BuildHistoryOptions, HistoryMetric } from './history.ts';
+export {
+  HISTORY_METRICS,
+  computeBaselineMetric,
+  metricsFor,
+  primaryMetricFor,
+  radiiFor,
+} from './baseline-metrics.ts';
+export type {
+  BaselineMetricComputation,
+  BaselineMetricInput,
+  HistoryMetric,
+} from './baseline-metrics.ts';
+
+export { buildHistory } from './history.ts';
+export type { BuildHistoryOptions } from './history.ts';
 
 export { MAP_FEATURE_CAP, buildMapFeatures } from './map-features.ts';
 export type { BuildMapFeaturesOptions } from './map-features.ts';

@@ -349,37 +349,53 @@ export function evidenceRegistry(asOf: string): ReadonlyMap<string, EvidenceItem
 // Subjects as they appear in family cards.
 // ---------------------------------------------------------------------------------------------
 
+/*
+ * The codes and labels below are `factsOf`'s, verbatim (packages/briefing/src/snapshot.ts).
+ *
+ * They used to be `'magnitude'`, `'magnitude_type'`, `'depth'` and `'alert_level'` — a vocabulary
+ * no builder has ever emitted. The component suite is rendered against this file, so the whole of
+ * it was green against a shape the API does not produce, and two HIGH findings of QA round 2
+ * (H-1, H-2) were things the existing tests asserted were correct. `fixtures.test.ts` now parses
+ * every fixture through the frozen schema **and** checks every code against the builders' own
+ * lists, so the next divergence fails there instead of shipping.
+ *
+ * There is no magnitude-type fact and no magnitude-type comparison, because there is none in the
+ * product: `snapshot.ts` reads `magnitude_type` into the member solutions and drops it on the way
+ * out. Putting one back here is part of H-3, not of keeping this file honest.
+ */
 const magnitude = (value: number, evidenceId: string): Fact => ({
-  code: 'magnitude',
+  code: 'MAGNITUDE',
   label: 'Magnitude',
   value: { kind: 'number', value, unit: null, decimals: 1 },
   evidenceIds: [evidenceId],
 });
-const magnitudeType = (value: string, evidenceId: string): Fact => ({
-  code: 'magnitude_type',
-  label: 'Magnitude type',
-  value: { kind: 'text', value },
-  evidenceIds: [evidenceId],
-});
 const depth = (value: number, evidenceId: string): Fact => ({
-  code: 'depth',
+  code: 'DEPTH',
   label: 'Depth',
   value: { kind: 'number', value, unit: 'km', decimals: 0 },
   evidenceIds: [evidenceId],
 });
+const observedAt = (value: string, evidenceId: string): Fact => ({
+  code: 'OBSERVED_AT',
+  label: 'Reported',
+  value: { kind: 'timestamp', value },
+  evidenceIds: [evidenceId],
+});
+const gdacsSeverity = (evidenceId: string): Fact => ({
+  code: 'SEVERITY',
+  label: 'Alert level',
+  value: { kind: 'severity', severity: { scheme: 'GDACS_ALERT', value: 'Green' } },
+  evidenceIds: [evidenceId],
+});
 
 export const EQ_FACTS = {
-  usgs: [magnitude(4.7, EV.usgsV2), magnitudeType('Mww', EV.usgsV2), depth(10, EV.usgsV2)],
-  emsc: [magnitude(4.6, EV.emscV1), magnitudeType('mb', EV.emscV1), depth(12, EV.emscV1)],
+  usgs: [magnitude(4.7, EV.usgsV2), depth(10, EV.usgsV2), observedAt(T.eqObserved, EV.usgsV2)],
+  emsc: [magnitude(4.6, EV.emscV1), depth(12, EV.emscV1), observedAt(T.eqObserved, EV.emscV1)],
   gdacs: [
     magnitude(4.7, EV.gdacsEq),
     depth(10, EV.gdacsEq),
-    {
-      code: 'alert_level',
-      label: 'GDACS alert level',
-      value: { kind: 'severity', severity: { scheme: 'GDACS_ALERT', value: 'Green' } },
-      evidenceIds: [EV.gdacsEq],
-    },
+    gdacsSeverity(EV.gdacsEq),
+    observedAt(T.eqObserved, EV.gdacsEq),
   ],
 } as const satisfies Record<string, readonly Fact[]>;
 
@@ -403,7 +419,7 @@ export const EQ_AGREEMENT: Agreement = {
   ],
   comparisons: [
     {
-      code: 'magnitude',
+      code: 'MAGNITUDE',
       label: 'Magnitude',
       values: [
         {
@@ -423,27 +439,7 @@ export const EQ_AGREEMENT: Agreement = {
       isConflict: false,
     },
     {
-      code: 'magnitude_type',
-      label: 'Magnitude type',
-      values: [
-        {
-          sourceId: 'usgs',
-          contributor: 'us',
-          value: { kind: 'text', value: 'Mww' },
-          evidenceId: EV.usgsV2,
-        },
-        {
-          sourceId: 'emsc',
-          contributor: 'EMSC',
-          value: { kind: 'text', value: 'mb' },
-          evidenceId: EV.emscV1,
-        },
-      ],
-      spread: null,
-      isConflict: false,
-    },
-    {
-      code: 'depth',
+      code: 'DEPTH',
       label: 'Depth',
       values: [
         {
@@ -460,26 +456,6 @@ export const EQ_AGREEMENT: Agreement = {
         },
       ],
       spread: { kind: 'number', value: 2, unit: 'km', decimals: 0 },
-      isConflict: false,
-    },
-    {
-      code: 'origin_time',
-      label: 'Origin time',
-      values: [
-        {
-          sourceId: 'usgs',
-          contributor: 'us',
-          value: { kind: 'timestamp', value: T.eqObserved },
-          evidenceId: EV.usgsV2,
-        },
-        {
-          sourceId: 'emsc',
-          contributor: 'EMSC',
-          value: { kind: 'timestamp', value: '2026-09-22T11:47:10.000Z' },
-          evidenceId: EV.emscV1,
-        },
-      ],
-      spread: { kind: 'number', value: 2, unit: 's', decimals: 0 },
       isConflict: false,
     },
   ],
@@ -589,7 +565,11 @@ export const OLDER_EQ_SUMMARY: SubjectSummary = {
   providerSeverity: null,
   distanceKm: 96.1,
   hypocentralDistanceKm: 97.1,
-  facts: [magnitude(3.4, EV.usgsOlder), magnitudeType('mb', EV.usgsOlder), depth(14, EV.usgsOlder)],
+  facts: [
+    magnitude(3.4, EV.usgsOlder),
+    depth(14, EV.usgsOlder),
+    observedAt(T.olderEqObserved, EV.usgsOlder),
+  ],
   relevance: {
     level: 'LOW',
     reasons: [
@@ -634,23 +614,36 @@ export const FIRE_SUMMARY: SubjectSummary = {
   providerSeverity: null,
   distanceKm: 38.9,
   hypocentralDistanceKm: null,
+  /* `buildFireSubject`'s five facts, in its order, with its codes and its labels. */
   facts: [
     {
-      code: 'detections_24h',
-      label: 'Thermal detections (24 h)',
+      code: 'DETECTIONS_24H',
+      label: 'Detections in the last 24 hours',
       value: { kind: 'count', value: 8 },
       evidenceIds: [EV.fcv3],
     },
     {
-      code: 'overpasses_24h',
-      label: 'Satellite overpasses (24 h)',
+      code: 'DETECTIONS_TOTAL',
+      label: 'Detections in total',
+      value: { kind: 'count', value: 14 },
+      evidenceIds: [EV.fcv3],
+    },
+    {
+      code: 'OVERPASSES_24H',
+      label: 'Satellite overpasses in the last 24 hours',
       value: { kind: 'count', value: 2 },
       evidenceIds: [EV.fcv3],
     },
     {
-      code: 'frp_sum_24h',
-      label: 'Fire radiative power (24 h)',
-      value: { kind: 'number', value: 41.7, unit: 'MW', decimals: 1 },
+      code: 'FRP_SUM_24H',
+      label: 'Fire radiative power, last 24 hours',
+      value: { kind: 'number', value: 41.7, unit: 'MW', decimals: 0 },
+      evidenceIds: [EV.fcv3],
+    },
+    {
+      code: 'LAST_DETECTED_AT',
+      label: 'Most recent detection',
+      value: { kind: 'timestamp', value: T.fireLast },
       evidenceIds: [EV.fcv3],
     },
   ],
@@ -671,14 +664,7 @@ export const FLOOD_SUMMARY: SubjectSummary = {
   providerSeverity: { scheme: 'GDACS_ALERT', value: 'Green' },
   distanceKm: 171.4,
   hypocentralDistanceKm: null,
-  facts: [
-    {
-      code: 'alert_level',
-      label: 'GDACS alert level',
-      value: { kind: 'severity', severity: { scheme: 'GDACS_ALERT', value: 'Green' } },
-      evidenceIds: [EV.gdacsFlood],
-    },
-  ],
+  facts: [gdacsSeverity(EV.gdacsFlood), observedAt(T.floodObserved, EV.gdacsFlood)],
   relevance: FLOOD_RELEVANCE,
   agreement: {
     level: 'SINGLE_SOURCE',

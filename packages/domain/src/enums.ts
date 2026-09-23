@@ -183,6 +183,80 @@ export const AGREEMENT_LEVELS = [
 ] as const;
 export type AgreementLevel = (typeof AGREEMENT_LEVELS)[number];
 
+/**
+ * The fields an `Agreement` compares across sources — the codes `toAgreementView` actually emits.
+ *
+ * It was `z.string()` in the read-model schema, and that is the hole QA round 2's H-2 went
+ * through: `apps/web` looked up `'magnitude'` and `'magnitude_type'` in lower case, every builder
+ * emitted `'MAGNITUDE'` and `'DEPTH'` in capitals, and neither the contract test nor the
+ * typechecker had anything to compare. A card then showed one number under "sources agree" for an
+ * event two sources had measured differently, and the component suite asserted that it was right,
+ * against a mock that spelled the codes the component's way.
+ *
+ * **This is a narrowing of what the server already emits, not a new field.** The two values below
+ * are the complete set `packages/briefing/src/snapshot.ts` constructs; `/api/v1` is frozen and
+ * nothing here widens it.
+ *
+ * `MAGNITUDE_TYPE` is deliberately **absent**. `apps/web` looked for it and the P9a mock supplied
+ * it, but no builder has ever emitted one, so admitting it here would be writing a contract for
+ * something that does not exist. Adding it is QA round 2's H-3 — a moment magnitude and a
+ * body-wave magnitude are presently compared as a 0.1 spread with neither scale named — and it
+ * belongs with the fix that makes the comparison honest, not with this list.
+ */
+export const FIELD_COMPARISON_CODES = ['MAGNITUDE', 'DEPTH'] as const;
+export type FieldComparisonCode = (typeof FIELD_COMPARISON_CODES)[number];
+
+/**
+ * The codes a `Fact` can carry — every value the read-model builders emit, and no other.
+ *
+ * `Fact.code` is still `string` in the contract, and deliberately: `apps/web`'s event page looks
+ * up a `'tsunami_flag'` fact that no builder produces (it is a hazard *attribute*, a JSONB key,
+ * which `DOMAIN_MODEL.md` §4.7 keeps out of the columns), and narrowing the type would turn that
+ * dead lookup into a compile error in a file this round may not edit. The list is published here
+ * anyway, because it is what the fixtures are checked against and what the builders assert their
+ * literals against — the two ends that drifted apart at `12567bf`.
+ *
+ * Emitted by `factsOf` (the first four) and by `buildFireSubject` (the rest), both in
+ * `packages/briefing/src/snapshot.ts`.
+ */
+export const FACT_CODES = [
+  'MAGNITUDE',
+  'DEPTH',
+  'SEVERITY',
+  'OBSERVED_AT',
+  'DETECTIONS_24H',
+  'DETECTIONS_TOTAL',
+  'OVERPASSES_24H',
+  'FRP_SUM_24H',
+  'LAST_DETECTED_AT',
+] as const;
+export type FactCode = (typeof FACT_CODES)[number];
+
+/**
+ * The codes one version-to-version revision can carry, from `describeRevision`
+ * (`packages/briefing/src/timeline.ts`), with the value names it reports as `changedFields`.
+ */
+export const REVISION_CHANGE_CODES = [
+  'LIFECYCLE',
+  'MAGNITUDE',
+  'DEPTH',
+  'EPICENTRE_MOVED',
+  'OBSERVED_AT',
+  'SEVERITY',
+  'PROVIDER_STATUS',
+] as const;
+export type RevisionChangeCode = (typeof REVISION_CHANGE_CODES)[number];
+
+export const REVISION_CHANGED_FIELDS = [
+  'lifecycleStatus',
+  'magnitude',
+  'depthKm',
+  'centroid',
+  'observedAt',
+  'severity',
+  'providerStatus',
+] as const;
+
 /** Why a source record is attached to a canonical event. */
 export const LINK_RELATIONS = ['PRIMARY', 'SAME_EVENT', 'DERIVED_COPY'] as const;
 export type LinkRelation = (typeof LINK_RELATIONS)[number];

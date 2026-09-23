@@ -129,10 +129,21 @@ function SourcesRow({
   readonly timeZone: string;
 }) {
   const agreement = item.agreement;
-  const magnitude = agreement?.comparisons.find((comparison) => comparison.code === 'magnitude');
-  const magnitudeType = agreement?.comparisons.find(
-    (comparison) => comparison.code === 'magnitude_type',
-  );
+  /*
+   * `MAGNITUDE`, in the read model's own case.
+   *
+   * This looked for `'magnitude'` and `'magnitude_type'` in lower case while every builder — and
+   * `packages/changes`' classifier, which reads the same items — emits `SCREAMING_SNAKE`. Both
+   * lookups missed on every item, the render fell through to `item.facts.slice(0, 1)`, and a card
+   * showed **one** number next to "Agreement: sources agree" for an event USGS put at 5.4 and
+   * EMSC at 5.3 (QA round 2, H-2). `FieldComparison.code` is now the enum the builder emits, so
+   * the next spelling that disagrees fails to compile rather than rendering a plausible card.
+   *
+   * There is no `MAGNITUDE_TYPE` lookup any more, and its absence is the finding rather than the
+   * fix: no builder emits one, so the card cannot show which scale each value is on. That is
+   * H-3, and it needs the comparison to exist before anything here can render it.
+   */
+  const magnitude = agreement?.comparisons.find((comparison) => comparison.code === 'MAGNITUDE');
   const evidence = [
     ...new Set(
       agreement?.comparisons.flatMap((c) => c.values.map((v) => v.evidenceId)) ?? item.evidenceIds,
@@ -146,21 +157,15 @@ function SourcesRow({
               {fact.label}: {formatFactValue(fact.value, timeZone)}
             </span>
           ))
-        : magnitude.values.map((value) => {
-            const type = magnitudeType?.values.find((entry) => entry.sourceId === value.sourceId);
-            return (
-              <span
-                key={`${value.sourceId}:${value.evidenceId}`}
-                className="inline-flex items-center gap-1"
-              >
-                <SourceBadge sourceId={value.sourceId} />
-                <span className="tabular">
-                  {type === undefined ? '' : `${formatFactValue(type.value)} `}
-                  {formatFactValue(value.value)}
-                </span>
-              </span>
-            );
-          })}
+        : magnitude.values.map((value) => (
+            <span
+              key={`${value.sourceId}:${value.evidenceId}`}
+              className="inline-flex items-center gap-1"
+            >
+              <SourceBadge sourceId={value.sourceId} />
+              <span className="tabular">{formatFactValue(value.value)}</span>
+            </span>
+          ))}
       {agreement === null ? null : (
         <span className="text-fg-muted">
           · {COPY.card.agreement}: {COPY.agreement[agreement.level]} ·{' '}
@@ -252,7 +257,15 @@ export function HazardCard({
         </Row>
         <Row label={COPY.card.context}>
           {metric === undefined ? (
-            <p className="text-fg-muted">{COPY.card.insufficientHistory}</p>
+            /*
+             * No metric is not thin data. `COPY.card.insufficientHistory` is reserved for a
+             * baseline that ran and refused — which `ContextRow` renders from the metric's own
+             * `INSUFFICIENT_HISTORY` status — and saying it here made every card a false
+             * statement about GeoNerva's coverage (QA round 2, H-1).
+             */
+            <p className="text-fg-muted" data-metric-status="NONE">
+              {COPY.card.noBaseline}
+            </p>
           ) : (
             <ContextRow metric={metric} />
           )}

@@ -240,6 +240,18 @@ export const COPY = {
       `${String(count)} change${count === 1 ? '' : 's'} in the last ${window}`,
     notCovered: (familyLabel: string) => `${familyLabel} are not covered for this location.`,
     insufficientHistory: 'Not enough history to establish a baseline.',
+    /*
+     * The sentence for a card that was handed **no** metric, which is a different fact from a
+     * metric that refused.
+     *
+     * `insufficientHistory` is PRODUCT §7's sanctioned copy for the case where GeoNerva's record
+     * really is thin, and it is a claim about GeoNerva's own coverage. Rendering it because a
+     * builder supplied nothing said that claim on every card of every page while `/history`
+     * answered the same question from 259 reference windows (QA round 2, H-1). What is true when
+     * there is no metric is only that none arrived, so that is what this says.
+     */
+    noBaseline:
+      'No historical comparison was computed for this card. It is not a statement about how much history GeoNerva holds here.',
     noItems: 'None reported by the sources checked.',
     percentile: (value: number) => `${ordinal(value)} percentile`,
     agreement: 'Agreement',

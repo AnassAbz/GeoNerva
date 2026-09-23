@@ -904,7 +904,11 @@
                                       "type": "object",
                                       "properties": {
                                         "code": {
-                                          "type": "string"
+                                          "type": "string",
+                                          "enum": [
+                                            "MAGNITUDE",
+                                            "DEPTH"
+                                          ]
                                         },
                                         "label": {
                                           "type": "string"
@@ -3633,7 +3637,11 @@
                             "type": "object",
                             "properties": {
                               "code": {
-                                "type": "string"
+                                "type": "string",
+                                "enum": [
+                                  "MAGNITUDE",
+                                  "DEPTH"
+                                ]
                               },
                               "label": {
                                 "type": "string"

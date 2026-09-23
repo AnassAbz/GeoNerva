@@ -34,11 +34,7 @@
 
 import type { Kysely } from 'kysely';
 
-import {
-  assessAgreement,
-  chooseHeadlineMagnitude,
-  type MemberSolution,
-} from '@geonerva/correlation';
+import { assessAgreement, chooseHeadlineMagnitude } from '@geonerva/correlation';
 import {
   clusterVersionsAsOf,
   derivationsAsOf,
@@ -68,9 +64,11 @@ import {
   providerSeveritySchema,
   type Agreement,
   type AsOfContext,
+  type BaselineMetricView,
   type DataConfidence,
   type EvidenceId,
   type Fact,
+  type FactCode,
   type FamilyCard,
   type HazardFamily,
   type HazardType,
@@ -108,9 +106,16 @@ import {
   type FireDistanceBasis,
 } from '@geonerva/relevance';
 
+import {
+  computeBaselineMetric,
+  primaryMetricFor,
+  radiiFor,
+  type BaselineMetricInput,
+} from './baseline-metrics.ts';
 import { contentSha256 } from './content-hash.ts';
 import { resolveCoverage, familyWords, type FamilyCoverageResult } from './coverage.ts';
 import { replayHorizonFor } from './replay-horizon.ts';
+import { memberSolutionsOf, numberOf } from './solutions.ts';
 
 /**
  * How far each family looks.
@@ -183,6 +188,23 @@ export interface BuildSnapshotOptions {
   readonly generatedAt?: Date;
   readonly maxItemsPerFamily?: number;
   readonly retentionProfile?: 'lean' | 'standard';
+  /**
+   * Whether the cards carry their family's baseline metric (DOMAIN_MODEL §4.14). Default `true`.
+   *
+   * `buildBriefing` passes `false` for the **earlier** of its two snapshots, and only for that
+   * one. The earlier snapshot exists to be diffed and for nothing else, and `diffSnapshots` never
+   * reads `metrics` — `packages/changes` says so in its own config: the `ACTIVITY_*` family that
+   * would read them is documented as "unreachable until `packages/baselines` exists", and the
+   * classifier reaches only `facts`, `relevance`, `availability` and `sourceHealth`. So computing
+   * the earlier snapshot's baselines would double §8's cost per briefing to produce a value
+   * nothing in the response can observe, which is the half of ARCHITECTURE §13.1's latency budget
+   * that buys nothing.
+   *
+   * It is a deviation from "two snapshots through one builder", so it is stated here rather than
+   * left to be discovered: the two snapshots are still built by one function at one engine
+   * version, and the only asymmetry is a field the diff does not look at.
+   */
+  readonly baselineMetrics?: boolean;
 }
 
 export interface SnapshotBuild {
@@ -190,6 +212,15 @@ export interface SnapshotBuild {
   readonly asOfContext: AsOfContext;
   /** Every evidence ID the snapshot references, deduplicated and sorted (invariant I9). */
   readonly evidenceIds: readonly EvidenceId[];
+  /**
+   * The content-addressed ids this build **minted** — today the `EV:BAS:` of each card's baseline.
+   *
+   * `buildBriefing` needs them separately from `evidenceIds` because `resolveManifest` synthesizes
+   * a manifest entry for a derived kind only when this engine minted the id; a well-formed
+   * `EV:BAS:` from anywhere else is deliberately left unresolvable so the strict gate cannot be
+   * satisfied by a fabricated hash.
+   */
+  readonly mintedEvidenceIds: readonly EvidenceId[];
 }
 
 /** Builds the snapshot. One bounded set of indexed queries, then pure assembly. */
@@ -197,6 +228,22 @@ export async function buildSnapshot(options: BuildSnapshotOptions): Promise<Snap
   const { db, location, asOf, engineVersion } = options;
   const point = { lat: location.lat, lon: location.lon };
   const maxItems = options.maxItemsPerFamily ?? DEFAULT_MAX_ITEMS_PER_FAMILY;
+
+  /*
+   * The baselines are started **first** and awaited last.
+   *
+   * §8's answer for a family depends on the location and the knowledge time and on nothing this
+   * function computes, so there is no ordering between it and the coverage, health and derivation
+   * reads below — and `ARCHITECTURE.md` §13.1's 600 ms budget is the reason that matters. Run
+   * after the cards, five metrics would add their own latency to the briefing's; run beside them,
+   * the briefing costs roughly what its slowest single read costs.
+   *
+   * Nothing is caught. A baseline that throws is a bug in a read GeoNerva claims is bounded
+   * (`assertBelowLimit`'s "reaching it is an error, never a truncation"), and swallowing it would
+   * put a card with no baseline in front of a reader with no trace of why.
+   */
+  const metricsPending =
+    options.baselineMetrics === false ? null : baselineMetricsFor({ db, location, asOf });
 
   const [coverageRows, health, cutoffs, derivations] = await Promise.all([
     productCoverageFor(db, point),
@@ -228,28 +275,45 @@ export async function buildSnapshot(options: BuildSnapshotOptions): Promise<Snap
   const families = {} as Record<HazardFamily, FamilyCard>;
   const evidence = new Set<EvidenceId>();
 
-  for (const family of HAZARD_FAMILIES) {
-    const card = await buildFamilyCard({
-      db,
-      family,
-      location,
-      asOf,
-      engineVersion,
-      maxItems,
-      coverage: coverage[family],
-      healthByKey,
-      derivation: derivationStateFor(family, derivationByKind),
-      /*
-       * The horizon is compared against **now**, not against `asOf`.
-       *
-       * `replayHorizonFor` expresses the window relative to the knowledge time it is asked about,
-       * which is what the response should publish; whether the *data* still exists depends on how
-       * long ago that knowledge time was in real terms. Retention has run since.
-       */
-      beyondReplayHorizon: buildNow.getTime() - asOf.getTime() > FAMILY_RETENTION_MS[family],
-    });
+  /*
+   * The six families are built together. Each one's reads are independent of the other five —
+   * they share the coverage, health and derivation results already in hand and then query their
+   * own subjects — so the loop that awaited them one after another was six round trips of
+   * latency where one suffices. Assembly order is still `HAZARD_FAMILIES`, below, so the
+   * snapshot's content hash does not depend on which query finished first (invariant I14).
+   */
+  const metricsByFamily = await (metricsPending ?? Promise.resolve(null));
+  const built = await Promise.all(
+    HAZARD_FAMILIES.map(async (family) =>
+      buildFamilyCard({
+        db,
+        family,
+        location,
+        asOf,
+        engineVersion,
+        maxItems,
+        coverage: coverage[family],
+        healthByKey,
+        derivation: derivationStateFor(family, derivationByKind),
+        metric: metricsByFamily?.get(family) ?? null,
+        /*
+         * The horizon is compared against **now**, not against `asOf`.
+         *
+         * `replayHorizonFor` expresses the window relative to the knowledge time it is asked
+         * about, which is what the response should publish; whether the *data* still exists
+         * depends on how long ago that knowledge time was in real terms. Retention has run since.
+         */
+        beyondReplayHorizon: buildNow.getTime() - asOf.getTime() > FAMILY_RETENTION_MS[family],
+      }),
+    ),
+  );
+  const minted = new Set<EvidenceId>();
+  for (const [index, family] of HAZARD_FAMILIES.entries()) {
+    const card = built[index];
+    if (card === undefined) continue;
     families[family] = card.card;
     for (const id of card.evidenceIds) evidence.add(id);
+    for (const metric of card.card.metrics) minted.add(metric.id);
   }
 
   const overall = buildOverall(families);
@@ -310,7 +374,38 @@ export async function buildSnapshot(options: BuildSnapshotOptions): Promise<Snap
 
   const asOfContext = asOfContextFor(asOf, cutoffs, replayHorizon, buildNow);
 
-  return { snapshot, asOfContext, evidenceIds: [...evidence].sort(compare) };
+  return {
+    snapshot,
+    asOfContext,
+    evidenceIds: [...evidence].sort(compare),
+    mintedEvidenceIds: [...minted].sort(compare),
+  };
+}
+
+/**
+ * Every family's primary baseline metric, computed together.
+ *
+ * `primaryMetricFor` is `/history`'s own "the first is its default", and the radius is
+ * `radiiFor`'s default, so the card leads with exactly the metric and the radius the Historical
+ * context section below it charts. A family §8 has no baseline for — weather warnings — is absent
+ * from the map rather than present with a refusal, because there is no computation to refuse.
+ */
+async function baselineMetricsFor(
+  input: Pick<BaselineMetricInput, 'db' | 'location' | 'asOf'>,
+): Promise<ReadonlyMap<HazardFamily, BaselineMetricView>> {
+  const computed = await Promise.all(
+    HAZARD_FAMILIES.map(async (family) => {
+      const metric = primaryMetricFor(family);
+      if (metric === null) return null;
+      const radiusKm = radiiFor(metric)[0];
+      if (radiusKm === undefined) return null;
+      const result = await computeBaselineMetric({ ...input, family, metric, radiusKm });
+      return [family, result.metric] as const;
+    }),
+  );
+  return new Map(
+    computed.filter((entry): entry is [HazardFamily, BaselineMetricView] => entry !== null),
+  );
 }
 
 /**
@@ -397,6 +492,8 @@ interface FamilyCardInput {
   readonly coverage: FamilyCoverageResult;
   readonly healthByKey: ReadonlyMap<string, SourceHealthAsOf>;
   readonly derivation: { readonly kind: string; readonly lastSucceededAt: Date | null } | undefined;
+  /** This family's primary baseline, already computed, or `null` when §8 has none for it. */
+  readonly metric: BaselineMetricView | null;
   readonly beyondReplayHorizon: boolean;
 }
 
@@ -477,6 +574,14 @@ async function buildFamilyCard(
 
   for (const item of items) for (const id of item.evidenceIds) evidence.add(id);
 
+  /*
+   * The baseline's own `EV:BAS:` id is evidence of this card, so it joins the set the briefing
+   * checks against its manifest (invariant I9). It is added only on the branch that actually puts
+   * the metric on the card, so a withheld baseline is not cited by a card that does not show it.
+   */
+  const metrics = availability === 'AVAILABLE' && input.metric !== null ? [input.metric] : [];
+  for (const metric of metrics) evidence.add(metric.id);
+
   const dataConfidence = buildDataConfidence(input, availabilitySources, items, verdict);
 
   return {
@@ -497,7 +602,17 @@ async function buildFamilyCard(
        * would be the zero invariant I11 forbids, wearing a different name.
        */
       itemsTotal: availability === 'AVAILABLE' ? shown.length : 0,
-      metrics: [],
+      /*
+       * The family's baseline (DOMAIN_MODEL §4.14), carried only on an `AVAILABLE` card.
+       *
+       * The same reasoning as `itemsTotal` directly above, and for the same invariant. A metric's
+       * `observedValue` is a count — `{ kind: 'count', value: 0 }` for a quiet week — and putting
+       * that on a card GeoNerva has just said it cannot describe is the zero I11 forbids wearing
+       * a third name. The baseline is still computed and still served by `/history`, which is a
+       * statement about the *record*, not about what the feeds can see right now; what is
+       * withheld is only the card's claim to it.
+       */
+      metrics,
       dataConfidence,
       sourceHealth,
       caveats: caveatsFor(input, verdict),
@@ -837,25 +952,25 @@ function buildFireSubject(
     hypocentralDistanceKm: null,
     facts: [
       {
-        code: 'DETECTIONS_24H',
+        code: 'DETECTIONS_24H' satisfies FactCode,
         label: 'Detections in the last 24 hours',
         value: { kind: 'count', value: cluster.n_24h },
         evidenceIds,
       },
       {
-        code: 'DETECTIONS_TOTAL',
+        code: 'DETECTIONS_TOTAL' satisfies FactCode,
         label: 'Detections in total',
         value: { kind: 'count', value: cluster.n_total },
         evidenceIds,
       },
       {
-        code: 'OVERPASSES_24H',
+        code: 'OVERPASSES_24H' satisfies FactCode,
         label: 'Satellite overpasses in the last 24 hours',
         value: { kind: 'count', value: cluster.overpasses_24h },
         evidenceIds,
       },
       {
-        code: 'FRP_SUM_24H',
+        code: 'FRP_SUM_24H' satisfies FactCode,
         label: 'Fire radiative power, last 24 hours',
         value:
           cluster.frp_sum_24h === null
@@ -864,7 +979,7 @@ function buildFireSubject(
         evidenceIds,
       },
       {
-        code: 'LAST_DETECTED_AT',
+        code: 'LAST_DETECTED_AT' satisfies FactCode,
         label: 'Most recent detection',
         value: { kind: 'timestamp', value: cluster.last_detected_at.toISOString() },
         evidenceIds,
@@ -995,26 +1110,11 @@ export function hazardTypesOf(family: HazardFamily): readonly HazardType[] {
  * Shared by the briefing card, the map and the event page, because the headline magnitude and the
  * agreement are computed from exactly this, and three copies of the mapping would be three
  * chances for a derived copy to be counted as a second opinion (ADR-006).
+ *
+ * It lives in `solutions.ts` now — the baseline metrics need it too, and this module depends on
+ * *them* — and is re-exported here so every existing importer is unaffected.
  */
-export function memberSolutionsOf(
-  rows: readonly ObservationRow[],
-  linkByRecord: ReadonlyMap<string, LinkRow>,
-): MemberSolution[] {
-  return rows.map((row) => ({
-    sourceId: row.source_id,
-    sourceRecordId: row.source_record_id,
-    relation:
-      linkByRecord.get(row.source_record_id)?.relation === 'DERIVED_COPY'
-        ? 'DERIVED_COPY'
-        : 'SAME_EVENT',
-    epicentre: { lat: row.lat, lon: row.lon },
-    magnitude: numberOf(row.magnitude),
-    magnitudeType: row.magnitude_type,
-    depthKm: numberOf(row.depth_km),
-    providerStatus: row.provider_status,
-    contributor: row.contributor,
-  }));
-}
+export { memberSolutionsOf, numberOf } from './solutions.ts';
 
 /** Assembles one subject from the members of its canonical event. */
 function buildSubject(
@@ -1326,7 +1426,7 @@ export function factsOf(
   const facts: Fact[] = [];
   if (anchor.hazard_type === 'EARTHQUAKE') {
     facts.push({
-      code: 'MAGNITUDE',
+      code: 'MAGNITUDE' satisfies FactCode,
       label: 'Magnitude',
       value:
         magnitude === null
@@ -1335,7 +1435,7 @@ export function factsOf(
       evidenceIds,
     });
     facts.push({
-      code: 'DEPTH',
+      code: 'DEPTH' satisfies FactCode,
       label: 'Depth',
       value:
         depthKm === null
@@ -1347,14 +1447,14 @@ export function factsOf(
   const severity = providerSeverityOf(anchor);
   if (severity !== null) {
     facts.push({
-      code: 'SEVERITY',
+      code: 'SEVERITY' satisfies FactCode,
       label: 'Alert level',
       value: { kind: 'severity', severity },
       evidenceIds,
     });
   }
   facts.push({
-    code: 'OBSERVED_AT',
+    code: 'OBSERVED_AT' satisfies FactCode,
     label: 'Reported',
     value: { kind: 'timestamp', value: anchor.observed_at.toISOString() },
     evidenceIds,
@@ -1533,13 +1633,6 @@ export function asLifecycleStatus(value: string): LifecycleStatus | null {
   return (LIFECYCLE_STATUSES as readonly string[]).includes(value)
     ? (value as LifecycleStatus)
     : null;
-}
-
-/** A `numeric` column arrives as a string; an unparseable one is absent, never zero. */
-export function numberOf(value: string | null): number | null {
-  if (value === null) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function round(value: number, decimals: number): number {

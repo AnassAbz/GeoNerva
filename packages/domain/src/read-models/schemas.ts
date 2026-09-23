@@ -45,6 +45,7 @@ import { z } from 'zod';
 
 import {
   AGREEMENT_LEVELS,
+  FIELD_COMPARISON_CODES,
   BASELINE_BANDS,
   TREND_BANDS,
   BASELINE_STATUSES,
@@ -358,7 +359,12 @@ export type RelevanceAssessmentMatches = Expect<
 >;
 
 export const fieldComparisonSchema = z.object({
-  code: z.string(),
+  /*
+   * The enum the builder emits, not `z.string()`. See `FIELD_COMPARISON_CODES` for why this is a
+   * narrowing of the frozen contract rather than a change to it, and for what is deliberately not
+   * in the list.
+   */
+  code: z.enum(FIELD_COMPARISON_CODES),
   label: z.string(),
   values: z.array(
     z.object({

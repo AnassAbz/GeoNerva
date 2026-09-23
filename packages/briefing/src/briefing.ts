@@ -132,7 +132,11 @@ export async function buildBriefing(
   };
   const [now, previous] = await Promise.all([
     buildSnapshot({ ...snapshotOptions, asOf }),
-    buildSnapshot({ ...snapshotOptions, asOf: fromAsOf }),
+    /*
+     * Without baselines: see `BuildSnapshotOptions.baselineMetrics`. The earlier snapshot is
+     * diffed and then discarded, and `diffSnapshots` does not read `metrics`.
+     */
+    buildSnapshot({ ...snapshotOptions, asOf: fromAsOf, baselineMetrics: false }),
   ]);
 
   const diff = diffSnapshots(previous.snapshot, now.snapshot, { fromAsOf, toAsOf: asOf });
@@ -152,6 +156,20 @@ export async function buildBriefing(
     ...changes.detail,
     ...changes.suppressed,
   ].map((signal) => signal.id);
+
+  /*
+   * Every content-addressed id this build minted: the change signals above, and each card's
+   * `EV:BAS:` baseline.
+   *
+   * `resolveManifest` synthesizes an entry for `BAS`/`REL`/`CHG` **only** for ids in this set, so
+   * that a fabricated hash stays unresolvable. Its own comment named this moment — "it becomes
+   * load-bearing the moment `packages/baselines` starts contributing `EV:BAS:` ids to the
+   * referenced set" — and this is it. Without the baselines here, every briefing would throw
+   * `EvidenceManifestError` for its own cards' citations; with them, DOMAIN_MODEL §4.11's
+   * "embedded in the briefing manifest" is true for the first time, and invariant I9 covers the
+   * one derivation a card shows above the fold.
+   */
+  const minted = new Set<EvidenceId>([...mintedChangeIds, ...now.mintedEvidenceIds]);
 
   const copy = buildCopy({
     location,
@@ -175,7 +193,7 @@ export async function buildBriefing(
     ...now.evidenceIds,
     ...previous.evidenceIds,
     ...diff.all.flatMap((signal) => signal.evidenceIds),
-    ...mintedChangeIds,
+    ...minted,
   ]);
 
   /*
@@ -189,7 +207,7 @@ export async function buildBriefing(
    * resolvable citations to evidence this snapshot never used — indistinguishable from real
    * support, which is exactly the "looks like proof" failure the strict default exists for.
    */
-  const manifest = await resolveManifest(db, asOf, [...referenced], new Set(mintedChangeIds));
+  const manifest = await resolveManifest(db, asOf, [...referenced], minted);
   const resolved = new Set(manifest.map((item) => item.id));
   const unresolvedEvidenceIds = [...new Set([...referenced, ...(options.ai?.evidenceIds ?? [])])]
     .filter((id) => !resolved.has(id))

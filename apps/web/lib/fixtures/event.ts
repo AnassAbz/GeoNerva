@@ -50,21 +50,17 @@ export function earthquakeDetail(options: EventFixtureOptions = {}): EventDetail
         evidenceIds: [EV.usgsV2],
       },
       centroid: GEOMETRY.eqEpicentre,
-      facts: [
-        ...EQ_FACTS.usgs,
-        {
-          code: 'origin_time',
-          label: 'Origin time',
-          value: { kind: 'timestamp', value: T.eqObserved },
-          evidenceIds: [EV.usgsV2],
-        },
-        {
-          code: 'tsunami_flag',
-          label: 'Tsunami flag (USGS)',
-          value: { kind: 'boolean', value: false },
-          evidenceIds: [EV.usgsV2],
-        },
-      ],
+      /*
+       * `factsOf`'s facts and nothing else. The two extra entries here — `origin_time`, which is
+       * `OBSERVED_AT` under another name, and `tsunami_flag`, which is a hazard *attribute* in a
+       * JSONB column and has never been a fact — are the drift QA round 2 §4 describes.
+       *
+       * Dropping `tsunami_flag` makes `app/event/[publicId]/page.tsx:100` render no tsunami row,
+       * which is what it already does against the real API: no builder emits that code. That
+       * lookup is a third instance of this bug and is reported rather than fixed here, because
+       * the `page.tsx` files are another agent's this round.
+       */
+      facts: [...EQ_FACTS.usgs],
       evidenceIds: [EV.usgsV2],
     },
     observations: [
@@ -154,21 +150,28 @@ export function earthquakeDetail(options: EventFixtureOptions = {}): EventDetail
         observedAt: T.eqObserved,
         sourceUpdatedAt: T.usgsV2Updated,
         lifecycleStatus: 'UPDATED',
-        summary:
-          'USGS revised the magnitude from mb 4.6 to Mww 4.7 and marked the solution reviewed.',
-        changedFields: ['magnitude', 'magnitude_type', 'review_status'],
+        /*
+         * `describeRevision`'s own sentence, field names and change codes
+         * (packages/briefing/src/timeline.ts). This read "from mb 4.6 to Mww 4.7", with
+         * `changedFields: ['magnitude', 'magnitude_type', 'review_status']` and a
+         * `magnitude_type` change — three field names the revision describer has never produced,
+         * for a quantity it does not track. `apps/web/e2e/dashboard.spec.ts:88` asserts the real
+         * sentence against the database; this now says the same thing.
+         */
+        summary: 'USGS revised the magnitude from M4.6 to M4.7 and marked it reviewed.',
+        changedFields: ['magnitude', 'providerStatus'],
         changes: [
           {
-            code: 'magnitude',
+            code: 'MAGNITUDE',
             label: 'Magnitude',
             before: { kind: 'number', value: 4.6, unit: null, decimals: 1 },
             after: { kind: 'number', value: 4.7, unit: null, decimals: 1 },
           },
           {
-            code: 'magnitude_type',
-            label: 'Magnitude type',
-            before: { kind: 'text', value: 'mb' },
-            after: { kind: 'text', value: 'Mww' },
+            code: 'PROVIDER_STATUS',
+            label: 'Review status',
+            before: { kind: 'text', value: 'automatic' },
+            after: { kind: 'text', value: 'reviewed' },
           },
         ],
         evidenceId: EV.usgsV2,
@@ -399,8 +402,14 @@ export function floodDetail(options: EventFixtureOptions = {}): EventDetail {
         observedAt: T.floodObserved,
         sourceUpdatedAt: T.floodUpdated,
         lifecycleStatus: 'UPDATED',
-        summary: 'GDACS published episode 3; the alert level stays Green.',
-        changedFields: ['episode'],
+        /*
+         * `describeRevision`'s sentence for exactly this case. GDACS raising its episode number
+         * changes nothing the read model shows, and the describer says so in those words; the
+         * fixture instead invented a `changedFields: ['episode']` — a field name it has never
+         * produced — with an empty `changes` array beside it.
+         */
+        summary: 'GDACS updated its record without changing the values GeoNerva shows.',
+        changedFields: [],
         changes: [],
         evidenceId: EV.gdacsFlood,
       },
