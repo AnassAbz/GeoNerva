@@ -75,6 +75,26 @@ jobs:
     name: Build · E2E
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # `pnpm test:e2e` seeds a scenario database and starts a production server against it
+    # (apps/web/playwright.config.ts). This job declared neither, so it could only ever have
+    # failed at the seed step — and it had never run on a hosted runner to say so (E-1).
+    services:
+      postgis:
+        image: postgis/postgis:17-3.4@sha256:d0b5a6ecab18997637f55a83cb4a9467391de5645916cfa1b6f2a8d19eee7be5
+        env:
+          POSTGRES_DB: geonerva
+          POSTGRES_USER: geonerva
+          POSTGRES_PASSWORD: geonerva
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U geonerva -d geonerva"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      # The seeder creates and migrates this database itself; it only has to be loopback and named
+      # `*_test`, which its own guard enforces (F-6). Set explicitly rather than relying on the
+      # default, whose port 54320 belongs to the local compose file and exists on no runner.
+      GEONERVA_E2E_DATABASE_URL: postgresql://geonerva:geonerva@127.0.0.1:5432/geonerva_e2e_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -1,0 +1,77 @@
+# The nightly check that the deployment is still telling the truth (docs/TESTING.md §9 and §10).
+#
+# §9 names this file, and until P10 it did not exist. It runs `scripts/smoke.ts` — nine checks over
+# HTTP, no database, no writes — against whatever `GEONERVA_SMOKE_URL` points at, and reports the
+# soak rate alongside it when a read-only database URL is available.
+#
+# Third-party actions are pinned to full commit SHAs (supply-chain hardening, docs/SECURITY.md M8).
+name: Live smoke
+
+on:
+  schedule:
+    # 06:10 UTC: after the nightly ingestion window, and off the hour, because the hour is when
+    # every scheduled workflow on the platform starts at once.
+    - cron: '10 6 * * *'
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Base URL to smoke (defaults to the GEONERVA_SMOKE_URL variable)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Production smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Lifted to the job so a *step* can test whether it is set: the `secrets` context is not
+      # available in a step-level `if`, and `env` is.
+      SOAK_DATABASE_URL: ${{ secrets.GEONERVA_SOAK_DATABASE_URL }}
+    # A repository with no deployment yet should not have a red nightly cron. The step below skips
+    # cleanly when the URL is unset, rather than failing to describe a deployment that is not there.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: corepack enable
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Resolve the target
+        id: target
+        env:
+          INPUT_URL: ${{ inputs.url }}
+          VARIABLE_URL: ${{ vars.GEONERVA_SMOKE_URL }}
+        run: |
+          url="${INPUT_URL:-$VARIABLE_URL}"
+          if [ -z "$url" ]; then
+            echo "No GEONERVA_SMOKE_URL set and no url input given; nothing to smoke." >&2
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "url=$url" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Smoke (docs/TESTING.md §10)
+        if: steps.target.outputs.skip != 'true'
+        run: pnpm smoke "${{ steps.target.outputs.url }}"
+
+      # The soak rate needs a database connection, which a public repository's scheduled job should
+      # only have if the owner deliberately gave it one. Skipped when the secret is absent, and
+      # never fatal: the smoke is the check, this is the context around it.
+      - name: Soak rate over the last 24 h
+        if: steps.target.outputs.skip != 'true' && env.SOAK_DATABASE_URL != ''
+        continue-on-error: true
+        env:
+          DATABASE_URL_WORKER: ${{ env.SOAK_DATABASE_URL }}
+        run: pnpm soak --hours 24

@@ -1,0 +1,92 @@
+# A historical backfill, run deliberately and by hand (IMPLEMENTATION_PLAN.md §3, P10 task 4).
+#
+# `geonerva-worker backfill` is already resumable: re-running the same range resumes the same plan
+# rather than starting a second one, so the safe way to run a long backfill is to run this
+# repeatedly — bounded by `--max-intervals` each sitting — until it reports COMPLETED
+# (apps/worker/src/cli/backfill.ts). This workflow is that button, with the range spelled out in
+# the run's own inputs so the record of what was asked for is the record of what ran.
+#
+# **Only `workflow_dispatch`.** A backfill writes to the production database and consumes a
+# provider's rate limit; nothing should start one on a schedule or on a push.
+#
+# Third-party actions are pinned to full commit SHAs (supply-chain hardening, docs/SECURITY.md M8).
+name: Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Source to backfill'
+        required: true
+        type: choice
+        options: [usgs, emsc]
+      from:
+        description: 'Start of the range (ISO date, inclusive)'
+        required: true
+        type: string
+      to:
+        description: 'End of the range (ISO date, inclusive)'
+        required: true
+        type: string
+      max_intervals:
+        description: 'Bound this sitting; re-run to continue the same plan'
+        required: false
+        default: '24'
+        type: string
+      min_magnitude:
+        description: 'Minimum magnitude, where the source supports it'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# One backfill at a time. Two plans for overlapping ranges would contend for the same run lease
+# and neither would finish faster for it.
+concurrency:
+  group: backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    name: ${{ inputs.source }} ${{ inputs.from }} → ${{ inputs.to }}
+    runs-on: ubuntu-latest
+    # Generous, because a bounded sitting still fetches from a provider at its own pace; the
+    # `--max-intervals` bound is what actually keeps a run finite.
+    timeout-minutes: 120
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: corepack enable
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # Fails before touching anything if the environment is wrong, and prints a redacted summary
+      # so the log says which database and which build this was.
+      - name: Check the configuration
+        env:
+          NODE_ENV: production
+          DATABASE_URL_WORKER: ${{ secrets.GEONERVA_WORKER_DATABASE_URL }}
+          GEONERVA_BUILD: ${{ github.sha }}
+        run: node apps/worker/src/main.ts check-config
+
+      - name: Backfill
+        env:
+          NODE_ENV: production
+          DATABASE_URL_WORKER: ${{ secrets.GEONERVA_WORKER_DATABASE_URL }}
+          GEONERVA_BUILD: ${{ github.sha }}
+          FIRMS_MAP_KEY: ${{ secrets.GEONERVA_FIRMS_MAP_KEY }}
+        run: |
+          args=(backfill --source "${{ inputs.source }}" --from "${{ inputs.from }}" --to "${{ inputs.to }}")
+          if [ -n "${{ inputs.max_intervals }}" ]; then
+            args+=(--max-intervals "${{ inputs.max_intervals }}")
+          fi
+          if [ -n "${{ inputs.min_magnitude }}" ]; then
+            args+=(--min-magnitude "${{ inputs.min_magnitude }}")
+          fi
+          node apps/worker/src/main.ts "${args[@]}"
