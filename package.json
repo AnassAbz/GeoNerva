@@ -19,6 +19,7 @@
     "openapi": "node scripts/generate-openapi.ts",
     "bench:api": "node scripts/bench-api.ts",
     "soak": "node scripts/soak-report.ts",
+    "smoke": "node scripts/smoke.ts",
     "geonames:import": "node scripts/import-geonames.ts",
     "test": "pnpm test:unit",
     "test:unit": "vitest run --project unit",
