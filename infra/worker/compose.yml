@@ -1,0 +1,71 @@
+# The worker as it runs on a VM (IMPLEMENTATION_PLAN.md §3, P10 task 1).
+#
+#   docker compose -f infra/worker/compose.yml --env-file /etc/geonerva/worker.env up -d
+#   docker compose -f infra/worker/compose.yml logs -f
+#
+# `docs/DEPLOYMENT.md` is the runbook; this file is the part of it that is executable. It is
+# separate from `infra/docker-compose.yml`, which starts a *database* for local development and has
+# no business being on a production host.
+#
+# ### The two settings that are not cosmetic
+#
+#   * `stop_grace_period` is 90 s, and that is a data-correctness setting rather than a courtesy.
+#     The worker holds a lease — one `RUNNING` row per source and product — and releases it by
+#     handling SIGTERM and closing the run as `ABORTED`. Killed before it finishes, it leaves the
+#     lease behind, and that source will not poll again until the lease is judged abandoned
+#     (`DEFAULT_LEASE_STALE_AFTER_MS`, thirty minutes). Ninety seconds comfortably exceeds a poll.
+#   * `read_only: true`, because the worker writes nothing to disk: configuration arrives in the
+#     environment, data goes to PostgreSQL, and logs are one JSON object per line on stdout. There
+#     is no tmpfs here on purpose — if some future dependency starts wanting scratch space, this
+#     should fail loudly rather than quietly acquire a writable surface nobody reviewed.
+
+name: geonerva-worker
+
+services:
+  worker:
+    # Built from infra/worker/Dockerfile. A deployment pins a digest here, exactly as
+    # infra/docker-compose.yml pins PostGIS; `${GEONERVA_WORKER_IMAGE}` keeps that choice in the
+    # environment file rather than in git, so a rollback is an env change and a restart.
+    image: ${GEONERVA_WORKER_IMAGE:-geonerva-worker:dev}
+    command: ['start']
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: production
+      # Which build this is. Read back by the soak report, so it must be the same string the image
+      # was tagged with. Empty is tolerated and means "unattributed" (packages/config).
+      GEONERVA_BUILD: ${GEONERVA_BUILD:-}
+      # Session-mode or direct connection: the worker needs prepared statements, long transactions
+      # and COPY, so it must NOT use Supabase's transaction pooler. Requires TLS in production —
+      # packages/db/src/connection-url.ts refuses anything weaker than sslmode=require and always
+      # verifies the certificate.
+      DATABASE_URL_WORKER: ${DATABASE_URL_WORKER:?set it in the env file}
+      RETENTION_PROFILE: ${RETENTION_PROFILE:-lean}
+      FIRMS_MAP_KEY: ${FIRMS_MAP_KEY:-}
+      AI_MODE: ${AI_MODE:-disabled}
+
+    read_only: true
+    stop_grace_period: 90s
+    stop_signal: SIGTERM
+
+    # Nothing here needs to raise a privilege, so nothing may.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # A free VM is small, and an unbounded worker competing with the host is how a box becomes
+    # unreachable. These are ceilings, not reservations.
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          pids: 256
+
+    # The container writes JSON lines to stdout and never rotates anything itself; the runtime is
+    # the right place for that, and an unrotated log is how a free VM fills its disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '5'

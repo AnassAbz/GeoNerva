@@ -9,6 +9,7 @@ import { checkConfig } from './cli/check-config.ts';
 import { installCrashHandlers } from './cli/crash-handlers.ts';
 import { runSource } from './cli/run-source.ts';
 import { startWorker } from './cli/start.ts';
+import { describeStartupError, STARTUP_EXIT_CODE } from './cli/startup-error.ts';
 import { describeUnexpectedError } from './cli/unexpected-error.ts';
 
 const USAGE = `Usage: geonerva-worker <command>
@@ -69,6 +70,17 @@ installCrashHandlers(process);
 try {
   process.exitCode = await main(process.argv.slice(2));
 } catch (error) {
-  console.error(describeUnexpectedError(error));
-  process.exitCode = 70; // EX_SOFTWARE
+  /*
+   * A misconfigured environment and a refused database URL are the two failures a deployment
+   * actually hits, and both name a variable and a rule rather than a value. Withholding them
+   * leaves an operator watching a container restart with nothing to act on.
+   */
+  const startup = describeStartupError(error);
+  if (startup !== null) {
+    console.error(`✗ ${startup}`);
+    process.exitCode = STARTUP_EXIT_CODE;
+  } else {
+    console.error(describeUnexpectedError(error));
+    process.exitCode = 70; // EX_SOFTWARE
+  }
 }
