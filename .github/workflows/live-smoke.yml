@@ -62,9 +62,13 @@ jobs:
             echo "url=$url" >> "$GITHUB_OUTPUT"
           fi
 
+      # Through the environment, not through `${{ }}` inside `run:`. The URL originates in a
+      # workflow_dispatch input, which GitHub expands into the script before bash sees it.
       - name: Smoke (docs/TESTING.md §10)
         if: steps.target.outputs.skip != 'true'
-        run: pnpm smoke "${{ steps.target.outputs.url }}"
+        env:
+          SMOKE_URL: ${{ steps.target.outputs.url }}
+        run: pnpm smoke "$SMOKE_URL"
 
       # The soak rate needs a database connection, which a public repository's scheduled job should
       # only have if the owner deliberately gave it one. Skipped when the secret is absent, and

