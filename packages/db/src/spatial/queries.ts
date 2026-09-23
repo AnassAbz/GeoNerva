@@ -11,6 +11,7 @@ import { sql, type Kysely } from 'kysely';
 
 import type { BoundingBox, LatLon } from '@geonerva/domain';
 
+import { clusterLineageAsOf } from '../asof-membership.ts';
 import type { DB } from '../generated/database.ts';
 import {
   areaCoversPoint,
@@ -244,17 +245,26 @@ export interface ClusterHullResult {
 }
 
 /**
- * Builds the hull of a cluster's detections: convex hull of the pixel centres, buffered by half a
- * pixel, as geography.
+ * Builds the hull of a cluster's detections **as known at `asOf`**: convex hull of the pixel
+ * centres, buffered by half a pixel, as geography.
  *
  * `ST_ConvexHull` is geometry-only, which is why the points are cast, hulled, and cast back
  * before buffering in metres. A one-detection cluster produces a circle and a two-detection
  * cluster a capsule; both are honest representations of "we saw heat here", and neither is a fire
  * perimeter.
+ *
+ * **`asOf` is required, and it is the clustering run's own knowledge time** (ADR-039). This is the
+ * summary side of the same fact the as-of reads resolve, and it has to resolve it the same way: a
+ * merge is no longer written into `fire_detections.cluster_id`, so a hull built from that column
+ * alone would shrink to the survivor's pre-merge footprint the moment two clusters joined, and the
+ * `detectionCount` that becomes `n_total` would undercount by everything the merge absorbed. The
+ * read side would then find more members than the summary counted, for every merged cluster,
+ * forever.
  */
 export async function buildClusterHull(
   db: Kysely<DB>,
   clusterId: string,
+  asOf: Date,
   bufferMeters: number = VIIRS_HALF_PIXEL_M,
 ): Promise<ClusterHullResult> {
   const hullExpression = bufferedConvexHull(sql`d.geog`, bufferMeters);
@@ -264,11 +274,15 @@ export async function buildClusterHull(
     centroid: string | null;
     n: string;
   }>`
+    ${clusterLineageAsOf(clusterId, asOf)}
     SELECT ${expressionAsGeoJson(hullExpression)} AS hull,
            ST_AsGeoJSON(ST_Centroid(ST_Collect(d.geog::geometry)), 6) AS centroid,
            count(*)::text AS n
-    FROM geonerva.fire_detections d
-    WHERE d.cluster_id = ${clusterId}::uuid
+    FROM target t
+    JOIN lineage l ON l.target_id = t.id
+    JOIN geonerva.fire_detections d ON d.cluster_id = l.cluster_id
+    WHERE d.cluster_assigned_at IS NOT NULL
+      AND d.cluster_assigned_at <= ${asOf}
   `.execute(db);
 
   const row = result.rows[0];
@@ -285,15 +299,20 @@ export async function buildClusterHull(
   };
 }
 
-/** The nearest detections to a point, for "distance to the nearest detection" in relevance. */
+/**
+ * The nearest detections to a point, for "distance to the nearest detection" in relevance.
+ *
+ * It answers about detections, not about **a cluster's** detections: scoping by cluster means
+ * resolving membership at a knowledge time, and `nearestClusterDetections` in the as-of layer is
+ * the one place that is done (ADR-039). A `clusterId` filter here would have read the mutable
+ * column and quietly disagreed with it.
+ */
 export async function nearestDetections(
   db: Kysely<DB>,
   point: LatLon,
   limit: number,
-  options: { clusterId?: string; since?: Date } = {},
+  options: { since?: Date } = {},
 ): Promise<{ id: string; acquired_at: Date; distance_m: number; cluster_id: string | null }[]> {
-  const clusterFilter =
-    options.clusterId === undefined ? sql`TRUE` : sql`d.cluster_id = ${options.clusterId}::uuid`;
   const sinceFilter =
     options.since === undefined ? sql`TRUE` : sql`d.acquired_at >= ${options.since}`;
 
@@ -308,7 +327,7 @@ export async function nearestDetections(
            ${distanceMeters('d.geog', point)}::double precision AS distance_m,
            d.cluster_id::text AS cluster_id
     FROM geonerva.fire_detections d
-    WHERE ${clusterFilter} AND ${sinceFilter}
+    WHERE ${sinceFilter}
     ORDER BY ${knnDistance('d.geog', point)}
     LIMIT ${limit}
   `.execute(db);

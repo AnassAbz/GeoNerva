@@ -1,10 +1,11 @@
 /**
  * `buildFireClusterDetail` against real PostGIS.
  *
- * The property that matters most here is the one ADR-039 is about: the member detections are
- * reconstructed from a column written in place, so they may be shown only when their count agrees
- * with the summary version's own `n_total`. A plausible sample that is not the set the summary
- * counted would be a replay showing the present.
+ * The property that matters most here is the one ADR-039 is about: the member detections are read
+ * as of the summary version's own knowledge time, and they may be shown only when their count
+ * agrees with its `n_total` — which, since ADR-039, says that the whole set is still held rather
+ * than that it is the right set. A per-day breakdown missing the rows retention dropped, shown
+ * against a total that counts them, would misdescribe when the fire burned.
  */
 
 import { sql, type Kysely } from 'kysely';
@@ -36,6 +37,13 @@ let db: Kysely<DB>;
 const T0 = new Date('2026-09-19T10:00:00.000Z');
 const minutes = (n: number): Date => new Date(T0.getTime() + n * 60_000);
 const hours = (n: number): Date => minutes(n * 60);
+
+/*
+ * When a cluster assignment became true (ADR-039). These helpers ingest at `minutes(35)` and
+ * summarize shortly after, so the clustering run that assigned them ran at the same point; it is a
+ * knowledge time, and a replay before it must not see the membership.
+ */
+const ASSIGNED_AT = minutes(35);
 
 const CENTRE = { lat: 31.5, lon: -8.3 };
 const MARRAKECH: LocationRef = {
@@ -135,6 +143,7 @@ async function cluster(options: {
       db,
       id,
       ids.rows.map((row) => row.id),
+      ASSIGNED_AT,
     );
   }
   return id;
@@ -225,6 +234,7 @@ describe('buildFireClusterDetail: the cluster at a knowledge time', () => {
       db,
       id,
       late.rows.map((row) => row.id),
+      ASSIGNED_AT,
     );
     const detail = await detailOf('FR-26-PPPPPP', hours(2));
     expect(detail.detections).toMatchObject({ total: 3, truncated: false });
@@ -283,6 +293,7 @@ describe('buildFireClusterDetail: the cluster at a knowledge time', () => {
       db,
       id,
       unassigned.rows.map((row) => row.id),
+      ASSIGNED_AT,
     );
     await sql`
       INSERT INTO geonerva.fire_missing_data_days (product_id, day, recorded_at)

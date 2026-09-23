@@ -277,8 +277,15 @@ export interface FireDetections {
   bright_ti4: number | null;
   bright_ti5: number | null;
   /**
-   * Assigned once. A detection never changes cluster except through a cluster merge, which is
-   *    recorded on the cluster rather than by rewriting detections.
+   * When this detection's cluster assignment became true (the clustering run's as_of). NULL means
+   *    the assignment predates migration 0020 and its knowledge time is unknown, so as-of reads exclude
+   *    it rather than assume one (ADR-039).
+   */
+  cluster_assigned_at: Timestamp | null;
+  /**
+   * The cluster this detection was assigned to, and never reassigned: a merge is recorded on the
+   *    cluster row instead, so membership at a past knowledge time is the assigned cluster followed
+   *    through the merges known by then (ADR-039).
    */
   cluster_id: string | null;
   confidence_class: string | null;

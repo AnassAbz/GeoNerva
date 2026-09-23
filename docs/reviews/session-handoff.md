@@ -9,9 +9,10 @@
   (`tests/adversarial/vitest.config.ts`) is **13/13**.
 - The previous phase's record is `docs/reviews/gate-g8.md`; P8 passed its gate at checkpoint 2.
 
-**The gate-numbering warning every report since G7 carries.** The continuation prompts and
-`docs/IMPLEMENTATION_PLAN.md` number gates differently — the plan gives its own P8 the criterion
-"G6". State which scheme a report uses.
+**Gate numbering is now settled: see `docs/reviews/README.md`.** The plan is the source of truth,
+new reports are named after the phase they close (`gate-p10.md`, `gate-p11.md`), and the table
+there maps every existing `gate-g*.md` file to its phase and to the plan's gate. The old files keep
+their names, because they are cited from `DECISIONS.md` and from each other.
 
 ## Where P9 got to
 
@@ -36,9 +37,36 @@ contract or the output, so they are worth knowing:
 by ADR-041's first condition, and its second is demonstrated by "a baseline after its run history
 is pruned" in `packages/briefing/src/history.int.test.ts` — read that before enabling it.
 
-**ADR-039 is still Proposed**, and two fixes route around it: the fire page withholds what it
-cannot verify, and a rolling 24-hour window is recounted only for a live read, because counting a
-past window with today's cluster membership is the leak that ADR is about.
+**ADR-039 is Accepted (2026-09-23) and built**, in migration **0020**. A replay must preserve the
+historical knowledge state, so cluster membership is now a bitemporal fact:
+`fire_detections.cluster_assigned_at` carries the clustering run's own `as_of`, a merge no longer
+re-points `cluster_id`, and `clusterLineageAsOf` resolves membership at a knowledge time for all
+three fire read paths. `NULL` means "assigned before 0020, knowledge time unknowable" and is
+excluded from every replay rather than guessed at.
+
+What changed for a reader:
+
+- The fire page still withholds the sample and the per-day counts when the whole set is not there,
+  but the **reason** is retention (72 h), not membership doubt, and the page now says so. The old
+  sentence told readers something that is no longer true.
+- A rolling 24-hour window is still recounted only for a live read — again for retention, not
+  membership: past the window a recount would report a smaller fire than GeoNerva reported then.
+- ARCHITECTURE §7.5's detections at zoom ≥ 8 are **still unbuilt**, now for scope rather than
+  correctness, and PRODUCT §6.5 and §7.5 both say so instead of reading as though they ship.
+
+Its regression suite is `packages/db/src/replay-membership.int.test.ts` (8 tests): it reads a
+replay, changes the world, and reads the same replay again. Fifteen mutation controls over the
+lineage walk, the four read paths and both writers were all killed — three of them only after
+the tests were strengthened to close the gaps surviving mutants exposed. Invariant **I16** in
+`docs/TESTING.md` §6 is the rule in one sentence.
+
+Adversarial review of the change found two things worth carrying forward. The lineage walk has to
+be **driven by the target**: seeded from `fire_clusters` instead, PostgreSQL cannot push the target
+filter into the recursive CTE and every fire read becomes a sequential scan of the whole 72-hour
+detection set. And a cluster assigned before 0020 has no knowledge time, so for up to one retention
+window after deploying this, those clusters withhold their detections and measure distance to the
+hull — the page names both possible reasons rather than asserting retention, because the response
+cannot tell them apart.
 
 ### Things that will bite if you do not know them
 

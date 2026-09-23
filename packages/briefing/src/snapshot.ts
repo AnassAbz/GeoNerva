@@ -760,9 +760,10 @@ async function readFireSubjects(input: FamilyCardInput): Promise<FoundSubjects> 
 
   /*
    * The distance `assessFire` asks for is to the **nearest detection**, not to the centroid. It is
-   * exact when the cluster's members can be reconstructed and verified against the version's own
-   * count; otherwise it is the distance to the buffered hull, which is never larger than the true
-   * value, so a card errs towards "closer" rather than away.
+   * exact when the whole set the version counted is still held: the members are read at the
+   * version's own knowledge time (ADR-039), and what the count is checked against is retention.
+   * Otherwise it is the distance to the buffered hull, which is never larger than the true value,
+   * so a card errs towards "closer" rather than away.
    */
   const nearest = await nearestClusterDetections(input.db, {
     clusters: clusters.map((cluster) => ({
@@ -778,8 +779,9 @@ async function readFireSubjects(input: FamilyCardInput): Promise<FoundSubjects> 
   /*
    * The rolling 24-hour figures, recounted to the knowledge time for a live request, so the card
    * and the cluster page cannot state different numbers for one cluster (QA round 2, M-2). A
-   * replay keeps the stored figures: counting a past window with today's membership is the leak
-   * ADR-039 is open about.
+   * replay keeps the stored figures: membership is resolved as of the replayed moment since
+   * ADR-039, but a recount can only count rows still stored, so past the retention window it would
+   * report a smaller fire than GeoNerva reported at the time.
    */
   const live = input.now.getTime() - input.asOf.getTime() <= LIVE_RECOUNT_WITHIN_MS;
   const recounts = new Map<string, ClusterWindowCounts>();
@@ -1025,11 +1027,13 @@ export interface FireDistance {
 /**
  * The distance `assessFire` is given, and its honest name.
  *
- * Exact to the nearest detection when the members were verified. Otherwise the buffered hull,
- * which every detection pixel lies inside and so is never farther than the nearest one. Without a
- * hull a single-detection cluster's centroid *is* its detection, so that is still exact; for a
- * larger cluster the centroid is only its centre — possibly farther than its nearest detection —
- * and is named as such.
+ * Exact to the nearest detection when the whole set the version counted is still held. A partial
+ * set is refused even though every row in it is a genuine member (ADR-039): if retention dropped
+ * the closest detection, the nearest survivor is further away, and the error would push the fire
+ * away from the reader. The fallback is the buffered hull, which every detection pixel lies inside
+ * and so is never farther than the nearest one. Without a hull a single-detection cluster's
+ * centroid *is* its detection, so that is still exact; for a larger cluster the centroid is only
+ * its centre — possibly farther than its nearest detection — and is named as such.
  */
 export function fireDistanceOf(input: {
   readonly verifiedNearestM: number | null;

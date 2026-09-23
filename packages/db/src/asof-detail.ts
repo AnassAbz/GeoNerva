@@ -20,6 +20,7 @@ import { sql, type Kysely } from 'kysely';
 
 import type { LatLon } from '@geonerva/domain';
 
+import { clusterLineageAsOf } from './asof-membership.ts';
 import type { DB } from './generated/database.ts';
 export interface CanonicalEventRow {
   readonly id: string;
@@ -494,7 +495,10 @@ export interface ClusterDetectionRow {
 }
 
 export interface ClusterDetectionReconstruction {
-  /** How many detections the reconstruction found. Compare with the version's `n_total`. */
+  /**
+   * How many of the version's detections are still held. Equal to `n_total` unless retention has
+   * dropped some since; never a sign that membership was resolved wrongly.
+   */
   readonly count: number;
   readonly sample: ClusterDetectionRow[];
   readonly byDay: {
@@ -506,17 +510,19 @@ export interface ClusterDetectionReconstruction {
 }
 
 /**
- * The detections behind one summary version, **reconstructed** — and only trustworthy when the
- * caller checks the count.
+ * The detections behind one summary version, **read as of its knowledge time** (ADR-039).
  *
- * Membership is `fire_detections.cluster_id`, which is written in place at assignment and again
- * on merge, with no record of when (ADR-039). So this cannot *read* the set a version summarized;
- * it can only rebuild a candidate from the present: detections assigned to this cluster now,
- * ingested by the version's own knowledge time, and acquired no later than its newest detection.
- * If a merge moved detections in after that version, or retention dropped some since, the
- * candidate differs from the true set — and its size then differs from the version's `n_total`,
- * which *is* a fact at that knowledge time. A caller that finds the counts equal may present the
- * set; one that does not must withhold it.
+ * This used to be a reconstruction from the present, because membership lived in a column written
+ * in place at assignment and again on merge, with no record of when. Since migration 0020 both
+ * facts carry their own knowledge time — `cluster_assigned_at`, and `merged_at` on the absorbed
+ * cluster — so the set a version summarized can be *read* rather than guessed at: the detections
+ * whose assignment was known by then, in the clusters that had been absorbed into this one by
+ * then.
+ *
+ * `count` can still be smaller than the version's `n_total`, and that is now a statement about
+ * **retention** rather than about membership: the lean profile keeps detections for 72 hours, so a
+ * version older than that summarized rows nobody holds any more. A caller decides what to do about
+ * that; it is no longer evidence that the set is the wrong one.
  */
 export async function reconstructClusterDetections(
   db: Kysely<DB>,
@@ -538,16 +544,27 @@ export async function reconstructClusterDetections(
     point === null
       ? sql`NULL::double precision`
       : sql`ST_Distance(d.geog, ${point})::double precision`;
+  /*
+   * Membership as of `knownAt`: the clusters absorbed into this one by then, and the detections
+   * whose assignment was known by then. The acquisition window is kept because a version
+   * summarizes the detections between its own first and last, and a later one within the same
+   * cluster is not part of *this* version's set.
+   */
   const members = sql`
-    geonerva.fire_detections d
-    WHERE d.cluster_id = ${options.clusterId}::uuid
+    target t
+    JOIN lineage l ON l.target_id = t.id
+    JOIN geonerva.fire_detections d ON d.cluster_id = l.cluster_id
+    WHERE d.cluster_assigned_at IS NOT NULL
+      AND d.cluster_assigned_at <= ${options.knownAt}
       AND d.ingested_at <= ${options.knownAt}
       AND d.acquired_at >= ${options.firstDetectedAt}
       AND d.acquired_at <= ${options.lastDetectedAt}
   `;
+  const lineage = clusterLineageAsOf(options.clusterId, options.knownAt);
 
   const [sample, days, summary] = await Promise.all([
     sql<ClusterDetectionRow>`
+      ${lineage}
       SELECT d.acquired_at, d.lat, d.lon, d.product_id, d.confidence_class, d.confidence_raw,
              d.frp, d.bright_ti4, d.bright_ti5, d.daynight::text AS daynight, d.scan, d.track,
              ${distance} AS distance_m
@@ -556,6 +573,7 @@ export async function reconstructClusterDetections(
       LIMIT ${options.cap}
     `.execute(db),
     sql<{ day: string; count: number; frp_sum: number | null }>`
+      ${lineage}
       SELECT to_char((d.acquired_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS day,
              count(*)::integer AS count,
              sum(d.frp)::double precision AS frp_sum
@@ -564,6 +582,7 @@ export async function reconstructClusterDetections(
       ORDER BY 1
     `.execute(db),
     sql<{ count: number; nearest_m: number | null }>`
+      ${lineage}
       SELECT count(*)::integer AS count, min(${distance}) AS nearest_m
       FROM ${members}
     `.execute(db),

@@ -280,21 +280,28 @@ export async function createCluster(db: Db, input: CreateClusterInput): Promise<
 }
 
 /**
- * Assigns detections to a cluster.
+ * Assigns detections to a cluster, recording **when** the assignment became true.
  *
  * A detection's cluster is assigned once and never reassigned; when two clusters turn out to be
  * connected, the *clusters* merge and the merge is recorded on the cluster row. That keeps
  * membership immutable and makes the history of an area of thermal activity readable.
+ *
+ * `assignedAt` is the clustering run's `as_of`, and it is what makes membership a bitemporal fact
+ * rather than a column describing the present (ADR-039). Without it a replay of a knowledge time
+ * before the assignment would have drawn the detection inside a cluster it did not yet belong to —
+ * future knowledge leaking backward, which is the one thing the as-of layer exists to prevent.
  */
 export async function assignDetectionsToCluster(
   db: Db,
   clusterId: string,
   detectionIds: readonly string[],
+  assignedAt: Date,
 ): Promise<number> {
   if (detectionIds.length === 0) return 0;
   const result = await sql`
     UPDATE geonerva.fire_detections
-    SET cluster_id = ${clusterId}::uuid
+    SET cluster_id = ${clusterId}::uuid,
+        cluster_assigned_at = ${assignedAt}
     WHERE id = ANY(${sql.val(detectionIds)}::bigint[])
       AND cluster_id IS NULL
   `.execute(db);
@@ -395,9 +402,15 @@ export async function insertClusterVersionIfChanged(
  * Merges clusters into a survivor.
  *
  * The **oldest** cluster survives, because users may already have seen its public id, and its
- * history is the longer one. Detections are re-pointed — the one case where a detection's
- * `cluster_id` changes — and the absorbed clusters keep their rows and versions so that a replay
+ * history is the longer one. The absorbed clusters keep their rows and versions so that a replay
  * before the merge still shows two separate areas of activity.
+ *
+ * **Detections are not re-pointed** (ADR-039). Rewriting `cluster_id` was the second in-place
+ * write on the highest-volume table, and it erased where a detection had been: after a merge, a
+ * replay of a knowledge time *before* it would have shown one area of activity where GeoNerva had
+ * seen two. The merge is already a fact with a knowledge time on the cluster row, so a read at `T`
+ * follows `merged_into` for merges with `merged_at <= T` and stops — which is the same answer for
+ * the present and the only correct answer for the past.
  */
 export async function mergeClusters(
   trx: Transaction<DB>,
@@ -407,16 +420,28 @@ export async function mergeClusters(
 ): Promise<number> {
   if (absorbedIds.length === 0) return 0;
 
-  await sql`
+  /*
+   * The cycle guard, and it takes both halves. Without it two calls can point a pair of clusters
+   * at each other, and then the as-of lineage walk finds no survivor to seed from and silently
+   * returns *nothing* — every detection beneath them disappears from every read, at every
+   * knowledge time (ADR-039).
+   *
+   * A merge is a one-way step out of the graph, so neither end may already have taken it: an
+   * absorbed cluster must be unmerged (`merged_into IS NULL`), and so must the survivor, or the
+   * chain would fork. Guarding only the absorbed side is not enough — merging a live cluster
+   * *into* one that was merged away closes the loop just as well. `source_records.ts` guards its
+   * own merges the same way.
+   */
+  const absorbed = await sql`
     UPDATE geonerva.fire_clusters
     SET status = 'MERGED', merged_into = ${survivorId}::uuid, merged_at = ${mergedAt}
-    WHERE id = ANY(${sql.val(absorbedIds)}::uuid[]) AND id <> ${survivorId}::uuid
-  `.execute(trx);
-
-  const moved = await sql`
-    UPDATE geonerva.fire_detections
-    SET cluster_id = ${survivorId}::uuid
-    WHERE cluster_id = ANY(${sql.val(absorbedIds)}::uuid[])
+    WHERE id = ANY(${sql.val(absorbedIds)}::uuid[])
+      AND id <> ${survivorId}::uuid
+      AND merged_into IS NULL
+      AND EXISTS (
+        SELECT 1 FROM geonerva.fire_clusters s
+        WHERE s.id = ${survivorId}::uuid AND s.merged_into IS NULL
+      )
   `.execute(trx);
 
   await sql`
@@ -424,7 +449,16 @@ export async function mergeClusters(
     WHERE cluster_id = ANY(${sql.val(absorbedIds)}::uuid[])
   `.execute(trx);
 
-  return Number(moved.numAffectedRows ?? 0n);
+  /*
+   * The number of clusters this call absorbed, not of detections moved: nothing moves any more. A
+   * caller that wants the members of the survivor asks for them at a knowledge time, where the
+   * merge is applied or not according to whether it had happened.
+   *
+   * Measured from the `UPDATE`, not counted from the argument. An id that does not exist, or one
+   * already merged into something else, is not absorbed by this call, and saying it was would make
+   * the return value a restatement of the request.
+   */
+  return Number(absorbed.numAffectedRows ?? 0n);
 }
 
 /** Records a day on which FIRMS reported no satellite data, so trends can exclude it. */

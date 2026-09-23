@@ -17,12 +17,20 @@
  *
  * ### What is deliberately not drawn: individual detections
  *
- * §7.5 asks for individual FIRMS detections at zoom ≥ 8. They are **not** returned at any zoom,
- * and the reason is a contract gap rather than effort: a `MapFeature` must name a subject, a
- * detection's only subject is its cluster, and `fire_detections.cluster_id` is written in place —
- * at assignment and again on merge — with no record of when. At a past knowledge time GeoNerva
- * cannot say which cluster a detection belonged to, or whether it belonged to one at all, so
- * drawing it under a cluster would show a replay the future. ADR-039 sets out the options.
+ * §7.5 asks for individual FIRMS detections at zoom ≥ 8. They are still **not** returned at any
+ * zoom, and the reason has changed. It used to be a correctness one: a `MapFeature` must name a
+ * subject, a detection's only subject is its cluster, and membership was written in place — at
+ * assignment and again on merge — with no record of when, so drawing a detection under a cluster
+ * would have shown a replay the future. ADR-039 removed that: since migration 0020 membership is
+ * readable as of any knowledge time, and the query this endpoint would need is the one
+ * `nearestClusterDetections` already runs.
+ *
+ * What remains is scope. Detections at zoom ≥ 8 are a product capability with its own payload
+ * budget, clustering-at-zoom behaviour and cap semantics, none of which the frozen
+ * `MapFeaturesResponse` describes, and adding them under a passed gate would be a feature
+ * shipped without a review. So it stays unbuilt and openly recorded as unbuilt (PRODUCT §6.5,
+ * ARCHITECTURE §7.5): the map never claims to show detections, and no reader is told a cluster
+ * pin is one.
  *
  * ### Truncation and the total
  *

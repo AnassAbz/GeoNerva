@@ -3,28 +3,39 @@
  * detections; the mandatory caveat is always shown first, and nothing on the page calls it a
  * confirmed fire (docs/PRODUCT.md §7, ADR-020).
  *
- * ### When the members cannot be verified (ADR-039, Proposed and binding while Proposed)
+ * ### When the whole member set cannot be shown (ADR-039, Accepted 2026-09-23)
  *
- * A cluster's summary versions are clean facts at a knowledge time. Its *member* detections are
- * not: `fire_detections.cluster_id` is written in place at assignment and rewritten on merge, with
- * no record of when. So the read model rebuilds the member set from the present and accepts it
- * only when its size equals the version's `n_total` — the one count that is a fact at that
- * knowledge time. When it does not match, the builder withholds the sample and the daily counts
- * and sets `truncated: true`, and `total` stays the version's own count.
+ * A cluster's summary versions are clean facts at a knowledge time, and since ADR-039 its *member*
+ * detections are too: each assignment carries the clustering run's own `as_of`, so the read model
+ * **reads** the set the version counted instead of rebuilding a candidate from the present.
+ *
+ * Two things can still leave it with fewer rows than the version counted, and the builder cannot
+ * tell them apart from the count alone:
+ *
+ *  - **retention** dropped some — 72 hours on this deployment's profile, against an `n_total` that
+ *    goes on counting them;
+ *  - the assignment **predates migration 0020**, so it has no knowledge time, is unreadable at any
+ *    past moment, and is excluded rather than guessed at. This one is transitional: it affects
+ *    clusters that existed before the migration, until their detections age out of the window.
+ *
+ * Either way the builder withholds the sample and the daily counts, sets `truncated: true`, and
+ * leaves `total` as the version's own count. The sentence below therefore names both possibilities
+ * rather than asserting one — the first draft of it claimed retention, which for a pre-0020
+ * cluster is a specific falsehood about rows that are still in the table.
  *
  * This page renders that withholding as a withholding. It says which figure it still stands behind
  * (the version's count), what it is not showing (the per-day counts and the individual
- * detections), and why — because the alternative, a plausible subset presented as the cluster, is
- * the replay leak in its most convincing form.
+ * detections), and why — because a per-day histogram missing a day's rows, shown against a total
+ * that counts them, would misdescribe when the fire burned.
  *
  * ### The map draws no detections, at any zoom
  *
  * `fireMapFeatures` emits one `fire_cluster` feature for the centroid and nothing else. ADR-039
- * forbids emitting a `fire_detection` feature for the same reason: a detection's only possible
- * subject is its cluster, and that membership is not knowable as of a past time. Nothing is added
- * here at zoom ≥ 8, which leaves docs/PRODUCT.md §6.5's "detections at zoom ≥ 8" stale pending the
- * owner's decision on ADR-039 — a documentation gap, not a silent omission: the map never claims
- * to show detections.
+ * removed the reason it had to: membership is knowable as of a past time now. What stops it is
+ * scope — ARCHITECTURE §7.5's detections at zoom ≥ 8 carry their own payload budget and cap
+ * semantics, which the frozen `MapFeaturesResponse` does not describe — so nothing is added here
+ * at zoom ≥ 8 and both §7.5 and docs/PRODUCT.md §6.5 record the layer as unbuilt. Not a silent
+ * omission: the map never claims to show detections.
  *
  * ### Where the response is allowed to start
  *
@@ -280,9 +291,9 @@ type Detections = FireClusterDetail['detections'];
  * `truncated` alone cannot tell those apart: the builder sets it to `n_total > sample.length`,
  * which is equally true of a 900-detection cluster whose sample stopped at its cap of 500. The
  * distinguishing fact is that a withholding builder also empties `byDay`, and it does that in one
- * case only — the rebuilt member set did not match the version's `n_total` (ADR-039). Reading the
- * two signals together is what keeps a capped sample from being explained away as unverifiable,
- * and an unverifiable one from being shown as a sample.
+ * case only — it holds fewer of the version's detections than the version counted (ADR-039).
+ * Reading the two signals together is what keeps a capped sample from being explained away as
+ * incomplete, and an incomplete one from being shown as a sample.
  */
 export function detectionsWithheld(detections: Detections): boolean {
   return detections.truncated && detections.sample.length === 0 && detections.byDay.length === 0;
@@ -297,9 +308,9 @@ export function detectionsWithheld(detections: Detections): boolean {
  * have been told the count is sound and the list is missing.
  */
 const WITHHELD = {
-  heading: 'The individual detections cannot be verified for this cluster',
+  heading: 'The individual detections for this cluster cannot be shown',
   body: (total: string) =>
-    `GeoNerva counted ${total} thermal detections in this cluster at the knowledge time of the summary above, and that is the figure it stands behind. It cannot confirm which individual detections made up that count: a detection’s membership of a cluster is stored without the time it was decided, so a list rebuilt from today’s records need not be the list the summary counted. Rather than show part of the cluster as though it were the whole of it, the per-day counts and the sample of detections are left out here.`,
+    `GeoNerva counted ${total} thermal detections in this cluster at the knowledge time of the summary above, and that is the figure it stands behind. It cannot show the individual detections behind that count: either they are no longer held — individual detections are kept for 72 hours in this deployment — or they were assigned to this cluster before GeoNerva began recording when an assignment was made. Rather than show part of the cluster as though it were the whole of it, the per-day counts and the sample of detections are left out here.`,
   sample: 'No individual detections are listed for this cluster.',
   why: 'Why these are not listed',
 } as const;

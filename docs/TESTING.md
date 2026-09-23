@@ -118,6 +118,7 @@ Two clarifications from building it (P9, 2026-09-22), both of which this section
 | I13 | `observed_at ≤ ingested_at + 5 min` for all stored versions |
 | I14 | Snapshot is a pure function: same (location, as_of, engine_version, DB state) → same `content_sha256` |
 | I15 | No API response contains coordinates with more than 2 decimals for user-supplied locations |
+| I16 | **Replay of derived state:** for any T, a fire cluster's membership is the assignments and merges known by T — changing a cluster after T never changes a replay of T, and an assignment with no knowledge time is in no replay (ADR-039, `packages/db/src/replay-membership.int.test.ts`) |
 
 ## 7. Data-quality invariants (runtime, in the worker)
 

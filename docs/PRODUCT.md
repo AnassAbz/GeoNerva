@@ -184,7 +184,7 @@ Three visual registers, consistent everywhere:
   - location
   - radius rings (per selected family)
   - canonical events (EQ circles sized by magnitude, distinct shape per family)
-  - fire clusters (low zoom) / detections (zoom ≥ 8)
+  - fire clusters, at every zoom. Individual detections at zoom ≥ 8 (ARCHITECTURE §7.5) are **not built**: ADR-039 removed the correctness objection, and the remaining work is scope — payload budget, zoom behaviour and cap semantics the frozen `MapFeaturesResponse` does not describe. The map does not claim to show them.
   - flood areas (hatched fill, labelled "modelled area")
   - cyclone track (solid = observed, dashed = forecast), wind buffers, cone
   - volcanoes

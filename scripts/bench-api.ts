@@ -343,6 +343,9 @@ async function seed(db: Kysely<DB>): Promise<Seeded> {
       db,
       id,
       ids.rows.map((row) => row.id),
+      // The knowledge time of the clustering run this benchmark stands in for (ADR-039); the same
+      // moment its first summary version is stamped with, below.
+      new Date(NOW.getTime() - 30 * 60_000),
     );
     await insertClusterVersionIfChanged(db, {
       clusterId: id,

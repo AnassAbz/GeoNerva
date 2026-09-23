@@ -504,9 +504,10 @@ export const COPY = {
      * min before the knowledge time in the seeded scenario, by which point three of the eight
      * detections had fallen out of the window and the honest count was five. The chart directly
      * below said five for today and nine for yesterday, so the page contradicted itself (QA round
-     * 2, M-2). Recomputing per request is not available — a detection's cluster membership is not
-     * knowable as of a time until ADR-039 is resolved, and the raw detections are pruned at 72 h —
-     * so the fix is to say which 24 hours these are.
+     * 2, M-2). A live request recounts the window; a replay cannot, because the raw detections
+     * are pruned at 72 h and a recount would report less fire than GeoNerva reported at the
+     * time (membership itself is knowable as of a time since ADR-039). Either way the page says
+     * which 24 hours these are.
      */
     detections24h: 'Thermal detections',
     overpasses: 'Satellite overpasses',

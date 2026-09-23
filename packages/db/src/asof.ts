@@ -40,6 +40,7 @@ import {
   type SourceHealth,
 } from '@geonerva/domain';
 
+import { clusterLineageAsOf, clusterLineageForWanted } from './asof-membership.ts';
 import type { DB } from './generated/database.ts';
 import { splitViewport } from './spatial/viewport.ts';
 
@@ -502,19 +503,25 @@ export async function clusterVersionsAsOf(
 
 export interface ClusterNearestDetectionRow {
   readonly cluster_id: string;
-  /** How many members the reconstruction found. Trust `nearest_m` only if this is the version's `n_total`. */
+  /**
+   * How many of the version's members are still held. Membership is resolved as of the version's
+   * knowledge time (ADR-039); a shortfall against `n_total` is retention, and `nearest_m` is then
+   * the nearest *surviving* member rather than the nearest one.
+   */
   readonly count: number;
   readonly nearest_m: number | null;
 }
 
 /**
- * For each cluster, the members reconstructed as known at its summary version's `as_of`, and the
- * distance from a point to the nearest of them — batched, one query for a whole card.
+ * For each cluster, the members **as known at** its summary version's `as_of`, and the distance
+ * from a point to the nearest of them — batched, one query for a whole card.
  *
- * The reconstruction and its caveat are `reconstructClusterDetections`': membership is written in
- * place (ADR-039), so the caller must compare `count` with the version's `n_total` and use
- * `nearest_m` only when they agree. `first_detected_at` bounds the scan to the partitions the
- * cluster can have members in.
+ * Membership is read at that knowledge time rather than from the present (ADR-039): the assignment
+ * must have been known by then, and only merges known by then fold one cluster's detections into
+ * another's. `count` can still fall short of the version's `n_total` because retention drops rows,
+ * and a caller that needs the nearest member rather than the nearest *survivor* compares the two
+ * before using `nearest_m`. `first_detected_at` bounds the scan to the partitions the cluster can
+ * have members in.
  */
 export async function nearestClusterDetections(
   db: Kysely<DB>,
@@ -530,7 +537,7 @@ export async function nearestClusterDetections(
 ): Promise<ClusterNearestDetectionRow[]> {
   if (options.clusters.length === 0) return [];
   const result = await sql<ClusterNearestDetectionRow>`
-    WITH wanted AS (
+    WITH RECURSIVE wanted AS (
       SELECT *
       FROM unnest(
         ${sql.val(options.clusters.map((entry) => entry.clusterId))}::uuid[],
@@ -538,14 +545,22 @@ export async function nearestClusterDetections(
         ${sql.val(options.clusters.map((entry) => entry.firstDetectedAt))}::timestamptz[],
         ${sql.val(options.clusters.map((entry) => entry.lastDetectedAt))}::timestamptz[]
       ) AS w(cluster_id, known_at, first_detected_at, last_detected_at)
-    )
+    ),
+    -- The same walk as the single-cluster reads, seeded per requested cluster because each
+    -- carries its own knowledge time (ADR-039, clusterLineageForWanted). A merge that had not
+    -- happened by known_at contributes no edge, so a summary version from before a merge still
+    -- measures against the members it actually had.
+    lineage(target_id, known_at, cluster_id) AS (${clusterLineageForWanted()})
     SELECT w.cluster_id::text AS cluster_id,
            count(d.id)::integer AS count,
            min(ST_Distance(d.geog, ST_SetSRID(ST_MakePoint(${options.point.lon}, ${options.point.lat}), 4326)::geography))::double precision
              AS nearest_m
     FROM wanted w
+    LEFT JOIN lineage l ON l.target_id = w.cluster_id AND l.known_at = w.known_at
     LEFT JOIN geonerva.fire_detections d
-      ON d.cluster_id = w.cluster_id
+      ON d.cluster_id = l.cluster_id
+     AND d.cluster_assigned_at IS NOT NULL
+     AND d.cluster_assigned_at <= w.known_at
      AND d.ingested_at <= w.known_at
      AND d.acquired_at >= w.first_detected_at
      AND d.acquired_at <= w.last_detected_at
@@ -1250,10 +1265,11 @@ export interface ClusterWindowCounts {
  * detections on two overpasses where the rows held five on one, because three had fallen out of
  * the window eighteen minutes before the knowledge time.
  *
- * **Only sound for a live read.** Membership lives in `fire_detections.cluster_id`, which is
- * updated in place and carries no knowledge time, so this returns *today's* membership over a past
- * window — which is exactly the leak ADR-039 is open about. Callers use it when the request is for
- * the present and fall back to the stored summary otherwise.
+ * Membership is resolved **as of `asOf`** (ADR-039), so this is as correct for a replay as for the
+ * present: a detection assigned after that moment is not counted, and a merge that happened after
+ * it does not move anyone. What a replay still must not do is recount a window the stored summary
+ * already answered for — the two can differ legitimately, because retention drops detections the
+ * summary counted — so callers use this for a live read and the stored figures otherwise.
  *
  * An overpass is a distinct `(product, ten-minute bucket)`, which is the definition
  * `FireClusterSummaryView.distinctOverpasses24h` documents.
@@ -1267,12 +1283,16 @@ export async function clusterWindowCountsAsOf(
   },
 ): Promise<ClusterWindowCounts> {
   const result = await sql<{ detections: string; overpasses: string; frp_sum: number | null }>`
+    ${clusterLineageAsOf(options.clusterId, options.asOf)}
     SELECT count(*)::text AS detections,
            count(DISTINCT (d.product_id, floor(extract(epoch from d.acquired_at) / 600)))::text
              AS overpasses,
            sum(d.frp)::real AS frp_sum
-    FROM geonerva.fire_detections d
-    WHERE d.cluster_id = ${options.clusterId}::uuid
+    FROM target t
+    JOIN lineage l ON l.target_id = t.id
+    JOIN geonerva.fire_detections d ON d.cluster_id = l.cluster_id
+    WHERE d.cluster_assigned_at IS NOT NULL
+      AND d.cluster_assigned_at <= ${options.asOf}
       AND d.ingested_at <= ${options.asOf}
       AND d.acquired_at <= ${options.asOf}
       AND d.acquired_at > ${options.asOf}::timestamptz

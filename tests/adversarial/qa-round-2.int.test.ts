@@ -158,7 +158,7 @@ async function readAll() {
      * `now` is the anchor, because this harness models the product *at* the anchor — which is
      * exactly what `GEONERVA_FAKE_NOW` does for the end-to-end run against the same seed. Left to
      * default, `now` is the real wall clock and every read here is a replay, which is the one case
-     * where a rolling 24-hour window may **not** be recounted (ADR-039), so F-3 could never pass
+     * where a rolling 24-hour window may **not** be recounted (72-hour retention, ADR-039), so F-3 could never pass
      * however the product behaved. Added by the orchestrator when M-2's recount landed.
      */
     now: AS_OF,

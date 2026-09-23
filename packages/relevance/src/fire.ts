@@ -80,9 +80,11 @@ export const FIRE_HIGH_OVERPASSES_24H = 2;
  * detections — a detection leaving the trailing edge of the window is silent — so a summary that
  * has stopped being rewritten reports the busiest version of a window that may since have
  * emptied. QA round 2 measured exactly that: a summary computed at 05:20 said 8 detections on 2
- * overpasses; at 13:06 the rows held 5 on 1. Recomputing per request is not available (ADR-039:
- * cluster membership is not knowable as of a time, and detections are pruned at 72 h), so the only
- * honest move left is to stop treating a stale window as a current one.
+ * overpasses; at 13:06 the rows held 5 on 1. A **live** request recounts the window now that
+ * membership carries its knowledge time (ADR-039). A replay still cannot: detections are pruned
+ * at 72 h, so recounting an older window would report a smaller fire than GeoNerva reported at
+ * the time. For those, the only honest move left is to stop treating a stale window as a
+ * current one.
  *
  * ### Why ninety minutes, from the data rather than from taste
  *
@@ -149,8 +151,9 @@ export interface FireInput {
    * the moment of the request. The worker computes these when it clusters; a reader arriving
    * hours later sees a window that has since moved on, and the sentences below say "the most
    * recent 24-hour window counted" rather than "the last 24 hours" for that reason (QA round
-   * 2, M-2). Recomputing per request is not available: membership is not knowable as of a time
-   * until ADR-039 is resolved, and the detections are pruned at 72 h.
+   * 2, M-2). A live request recounts the window — membership is resolved as of a knowledge
+   * time since ADR-039 — but a replay keeps the stored figure, because the detections are
+   * pruned at 72 h and a recount would report a fire smaller than the one reported then.
    */
   readonly n24h: number;
   /**

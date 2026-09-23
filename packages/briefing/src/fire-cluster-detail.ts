@@ -6,24 +6,31 @@
  * from satellite **thermal detections**, never a wildfire, with no perimeter. The mandatory caveat
  * is the relevance package's own constant, so there is one sentence and it cannot drift.
  *
- * ### The detections are shown only when they can be verified
+ * ### The detections are shown only when the whole set is still held
  *
  * A cluster's summary versions are clean facts: each carries the knowledge time it was computed
- * for, and a replay reads the latest one at or before `T`. Its *member detections* are not —
- * `fire_detections.cluster_id` is written in place, at assignment and again on merge, with no
- * record of when (ADR-039). So the set behind a version is **reconstructed** from the present and
- * then checked against the one number the version does record at `T`: `n_total`. When they agree,
- * the reconstruction is that set and is shown. When they do not — a merge since, retention since —
- * the sample and the daily counts are withheld, `truncated` says detections were left out, and
- * `total` is still the version's own count. Showing a plausible set that is not the one the
- * summary counted would be the replay leak in its most convincing form.
+ * for, and a replay reads the latest one at or before `T`. Since ADR-039 its *member detections*
+ * are facts of the same kind — `cluster_assigned_at` says when each assignment became true and a
+ * merge is recorded on the cluster rather than rewritten into the detections — so the set behind a
+ * version is **read** at its knowledge time rather than guessed at from the present.
+ *
+ * What can still differ is how much of that set survives. Retention drops detections (72 hours on
+ * the lean profile) while the version keeps counting them in `n_total`, so a replay of an older
+ * moment reads fewer rows than the summary counted. The comparison with `n_total` is therefore
+ * still made, but it now answers a different question — *is the whole set still here?* — and a
+ * shortfall means retention, not that membership was resolved wrongly. When rows are missing the
+ * sample and the daily counts are withheld, `truncated` says detections were left out, and `total`
+ * remains the version's own count: a histogram missing a day's rows, shown against a total that
+ * includes them, would misdescribe when the fire burned.
  *
  * ### Distance
  *
  * With a location, `distanceKm` is to the centroid and `nearestDetectionKm` is to the nearest
- * *verified* detection. Without verified detections the nearest-detection distance falls back to
- * the distance to the cluster's buffered hull, which can only be *smaller* than the true value —
- * every detection pixel lies inside it — so relevance errs towards "closer", never away.
+ * detection of a **complete** set. A partial set is not used even though its members are real
+ * ones: if retention dropped the closest detection, the nearest survivor is further away, and
+ * reporting it would move the fire away from the reader. The fallback is the distance to the
+ * cluster's buffered hull, which can only be *smaller* than the true value — every detection pixel
+ * lies inside it — so relevance errs towards "closer", never away.
  */
 
 import {
@@ -149,9 +156,14 @@ export async function buildFireClusterDetail(
     cap: DETECTION_SAMPLE_CAP,
     ...(point === undefined ? {} : { point }),
   });
-  const verified = reconstruction.count === latest.n_total;
+  /*
+   * Every row of the set this version counted is still held. Membership itself is not in question
+   * (ADR-039); this is a retention check, and it is what decides whether the per-day breakdown can
+   * be shown as a description of the version's own detections.
+   */
+  const complete = reconstruction.count === latest.n_total;
 
-  const days = verified ? reconstruction.byDay.map((entry) => entry.day) : [];
+  const days = complete ? reconstruction.byDay.map((entry) => entry.day) : [];
   const missing = await missingDataDaysAsOf(db, {
     productIds: latest.product_ids,
     days,
@@ -179,7 +191,7 @@ export async function buildFireClusterDetail(
     point === undefined
       ? null
       : fireDistanceOf({
-          verifiedNearestM: verified ? reconstruction.nearest_m : null,
+          verifiedNearestM: complete ? reconstruction.nearest_m : null,
           areaDistanceM: latest.area_distance_m,
           hasHull: latest.hull_geojson !== null,
           nTotal: latest.n_total,
@@ -189,10 +201,13 @@ export async function buildFireClusterDetail(
    *
    * `n_24h` and `overpasses_24h` were computed when the worker last clustered; shown hours later
    * as "the last 24 hours" they overstated the fire — eight detections where the rows held five
-   * (QA round 2, M-2). A live read can count them again honestly. A **replay** cannot: membership
-   * lives in `fire_detections.cluster_id`, which is updated in place, so counting a past window
-   * with today's membership is the leak ADR-039 is open about. There the stored figures stand, and
-   * `countedTo` says which twenty-four hours they are.
+   * (QA round 2, M-2). A live read can count them again honestly.
+   *
+   * A **replay** still must not recount, and since ADR-039 the reason is retention rather than
+   * membership: the recount resolves membership as of the replayed moment correctly, but it can
+   * only count rows that are still stored, so beyond the retention window it would report a
+   * smaller fire than GeoNerva reported at the time. The stored figures are what it published
+   * then, so they stand, and `countedTo` says which twenty-four hours they are.
    */
   const now = options.now ?? new Date();
   const live = now.getTime() - asOf.getTime() <= LIVE_RECOUNT_WITHIN_MS;
@@ -226,7 +241,7 @@ export async function buildFireClusterDetail(
       : round(latest.centroid_distance_m / 1000, 1);
 
   const sensors = sensorsOf(latest.product_ids, catalog.products);
-  const sample = verified
+  const sample = complete
     ? reconstruction.sample
         .map(detectionView)
         .filter((view): view is FireDetectionView => view !== null)
@@ -276,7 +291,7 @@ export async function buildFireClusterDetail(
       truncated: latest.n_total > sample.length,
       cap: DETECTION_SAMPLE_CAP,
       sample,
-      byDay: verified
+      byDay: complete
         ? reconstruction.byDay.map((entry) => ({
             day: entry.day,
             count: entry.count,

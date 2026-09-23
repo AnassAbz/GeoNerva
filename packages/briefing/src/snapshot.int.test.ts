@@ -51,6 +51,17 @@ beforeEach(async () => {
 const T0 = new Date('2026-09-20T08:00:00.000Z');
 const INGEST = new Date('2026-09-20T09:00:00.000Z');
 const AS_OF = new Date('2026-09-20T10:00:00.000Z');
+
+/*
+ * When a cluster assignment became true (ADR-039).
+ *
+ * `INGEST`, because that is the `as_of` these fixtures give their cluster versions: a clustering
+ * run assigns and summarizes in one pass, under one knowledge time. It is not a detail — a version
+ * whose `as_of` precedes the assignment has no members to measure, which is exactly what a replay
+ * of that moment should say, and setting this later than `INGEST` makes every fire distance fall
+ * back to the hull.
+ */
+const ASSIGNED_AT = INGEST;
 const ENGINE = 'snapshot-test-1';
 
 /** Marrakech. Chosen because ECCC does not cover it, which is the `NOT_COVERED` case. */
@@ -1064,6 +1075,7 @@ describe('fire proximity is to the nearest detection, not to the centroid (P7 de
       db,
       clusterId,
       ids.rows.map((row) => row.id),
+      ASSIGNED_AT,
     );
   }
 
@@ -1173,6 +1185,7 @@ describe('fire proximity is to the nearest detection, not to the centroid (P7 de
       db,
       cluster.rows[0]?.id ?? '',
       unassigned.rows.map((row) => row.id),
+      ASSIGNED_AT,
     );
   }
 

@@ -1,5 +1,5 @@
 /**
- * The fire-cluster page's detection sections, verified and withheld (ADR-039).
+ * The fire-cluster page's detection sections, whole and withheld (ADR-039).
  *
  * The page is a server component, so the two sections it delegates to are exported and rendered
  * directly here. What is being pinned is the honesty of the withheld state: the page says what it
@@ -65,7 +65,7 @@ describe('a verified cluster still lists its days and its sample', () => {
 
   it('does not show the withheld explanation', () => {
     renderSections(verified);
-    expect(screen.queryByText(/cannot be verified for this cluster/u)).not.toBeInTheDocument();
+    expect(screen.queryByText(/cannot be shown/u)).not.toBeInTheDocument();
   });
 });
 
@@ -75,9 +75,11 @@ describe('a withheld cluster says what it cannot show and why', () => {
     const byDay = screen.getByRole('region', { name: 'Thermal detections per day' });
     expect(within(byDay).queryAllByRole('listitem')).toEqual([]);
     expect(
-      within(byDay).getByText('The individual detections cannot be verified for this cluster'),
+      within(byDay).getByText('The individual detections for this cluster cannot be shown'),
     ).toBeInTheDocument();
-    const reason = within(byDay).getByText(/membership of a cluster is stored without the time/u);
+    const reason = within(byDay).getByText(/kept for 72 hours in this deployment/u);
+    /* Both causes are named, because the response cannot say which one applies (ADR-039). */
+    expect(reason.textContent).toMatch(/before GeoNerva began recording when an assignment/u);
     expect(reason).toBeInTheDocument();
     /* The count it still stands behind is named in the same breath as the withholding. */
     expect(reason.textContent).toMatch(/counted 14 thermal detections/u);

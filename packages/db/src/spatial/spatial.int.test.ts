@@ -39,6 +39,15 @@ let db: Kysely<DB>;
 
 const T0 = new Date('2026-09-19T10:00:00.000Z');
 
+/* When a cluster assignment became true (ADR-039): these fixtures cluster as they ingest. */
+/**
+ * The knowledge time a summary is built for. After `ASSIGNED_AT`, because a clustering run
+ * summarizes the assignments it has just made (ADR-039).
+ */
+const KNOWN_AT = new Date('2026-09-20T01:00:00.000Z');
+
+const ASSIGNED_AT = T0;
+
 beforeAll(async () => {
   testDb = await setupTestDatabase();
   db = createDb(testDb.pool);
@@ -444,9 +453,15 @@ describe('fire hull construction', () => {
         ingestedAt: T0,
       })),
     );
-    await sql`UPDATE geonerva.fire_detections SET cluster_id = ${clusterId}::uuid`.execute(db);
+    // An assignment carries the moment it became true (ADR-039); the constraint added in
+    // migration 0020 refuses one without it, because a membership with no knowledge time
+    // cannot be read at a past one.
+    await sql`UPDATE geonerva.fire_detections
+              SET cluster_id = ${clusterId}::uuid, cluster_assigned_at = ${ASSIGNED_AT}`.execute(
+      db,
+    );
 
-    const hull = await buildClusterHull(db, clusterId);
+    const hull = await buildClusterHull(db, clusterId, KNOWN_AT);
     expect(hull.detectionCount).toBe(4);
     expect(hull.hullGeoJson).not.toBeNull();
 
@@ -461,6 +476,15 @@ describe('fire hull construction', () => {
       WHERE d.cluster_id = ${clusterId}::uuid
     `.execute(db);
     expect(areas.rows[0]?.buffered).toBeGreaterThan(areas.rows[0]?.raw ?? 0);
+
+    /*
+     * The summary side resolves membership at its own knowledge time too (ADR-039). Asked for a
+     * moment before the clustering run that made these assignments, the cluster had no members
+     * yet, and a hull over members it did not have would be a shape GeoNerva never saw.
+     */
+    await expect(
+      buildClusterHull(db, clusterId, new Date(ASSIGNED_AT.getTime() - 1)),
+    ).rejects.toThrow(/has no detections/u);
   });
 
   it('produces a circle for a single detection rather than failing', async () => {
@@ -490,9 +514,10 @@ describe('fire hull construction', () => {
         ingestedAt: T0,
       },
     ]);
-    await sql`UPDATE geonerva.fire_detections SET cluster_id = ${single}::uuid`.execute(db);
+    await sql`UPDATE geonerva.fire_detections
+              SET cluster_id = ${single}::uuid, cluster_assigned_at = ${ASSIGNED_AT}`.execute(db);
 
-    const hull = await buildClusterHull(db, single);
+    const hull = await buildClusterHull(db, single, KNOWN_AT);
     expect(hull.detectionCount).toBe(1);
     const area = await sql<{ area: number }>`
       SELECT ST_Area(ST_GeomFromGeoJSON(${hull.hullGeoJson})::geography) AS area

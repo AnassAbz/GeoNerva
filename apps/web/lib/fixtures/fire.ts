@@ -3,13 +3,15 @@
  *
  * Two shapes, because the endpoint serves two (ADR-039):
  *
- *  - `detections: 'verified'` (the default) — the member set rebuilt from the present matched the
- *    version's `n_total`, so the sample and the daily counts are the set the summary counted.
- *  - `detections: 'withheld'` — it did not match, so the builder publishes `truncated: true` with
- *    an empty sample and no daily counts, and `total` stays the version's own count. The place is
- *    dropped in that variant too: with no verified detections the builder measures to the buffered
- *    hull instead, and `FIRE_RELEVANCE`'s reason text names a nearest *detection*, which is
- *    exactly the claim this state cannot make.
+ *  - `detections: 'verified'` (the default) — every detection the version counted is still held,
+ *    so the sample and the daily counts are the set the summary counted. The variant keeps its
+ *    name: what it models is a set the page can stand behind whole.
+ *  - `detections: 'withheld'` — retention has dropped some of them (72 hours in this deployment),
+ *    so the builder publishes `truncated: true` with an empty sample and no daily counts, and
+ *    `total` stays the version's own count. The place is dropped in that variant too: without the
+ *    whole set the builder measures to the buffered hull instead, because the nearest *surviving*
+ *    detection can only be farther away than the nearest one, and `FIRE_RELEVANCE`'s reason text
+ *    names a nearest detection — exactly the claim this state cannot make.
  */
 
 import type { FireClusterDetail, FireDetectionView } from '@geonerva/domain';

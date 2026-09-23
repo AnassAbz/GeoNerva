@@ -26,7 +26,7 @@ Rules:
 - All four are `timestamptz`, stored in UTC. Display converts to the selected location's IANA timezone (and always offers UTC on hover).
 - Provider timestamps without an offset (GDACS) are parsed as UTC **explicitly** in the adapter; the adapter test asserts it.
 - `observed_at` may be *later* than `ingested_at` never; if a provider reports a future `observed_at` (> `ingested_at` + 5 min) the record is rejected with `FUTURE_OBSERVATION` (except forecast geometry, which is modelled via `valid_from/valid_to`, not `observed_at`).
-- **Replay invariant:** the view of the world "as of T" contains exactly the versions with `ingested_at ≤ T`, and for each record only the latest such version. Nothing else. A property test enforces this across every read path (`TESTING.md` §6).
+- **Replay invariant:** the view of the world "as of T" contains exactly the versions with `ingested_at ≤ T`, and for each record only the latest such version. Nothing else. A property test enforces this across every read path (`TESTING.md` §6). **Derived state that is not a version obeys the same rule through its own knowledge time** — fire cluster membership is the worked example (ADR-039): a replay of T uses the assignments and merges known by T, and nothing that became true afterwards. That half is held by example, not by the property harness — `packages/db/src/replay-membership.int.test.ts`, invariant I16.
 - `ingested_at` is a batch timestamp, not the fetch start, and it is identical for every version in the batch and for the run's `committed_at`. An integration test asserts all three.
 - **Precisely when it is read [corrected P3 2026-09-19].** It is `clock_timestamp()` taken as the *first* statement of the persist transaction, not the last. It has to be: identity resolution needs a `first_ingested_at` for records it creates, and that loop is most of the batch's duration. So the stamp precedes the real `COMMIT` by however long the writes take — seconds for a 2,000-record batch.
   What this does and does not guarantee:
@@ -205,13 +205,15 @@ Normalization excludes volatile fields that don't change meaning (e.g. USGS feed
 
 Immutable. Key `(product_id, acquired_at, lat_e4, lon_e4)` (coordinates rounded to 1e-4° ≈ 11 m for the key; full precision kept). Columns preserve every FIRMS attribute. `confidence_class` normalized to `LOW|NOMINAL|HIGH` for VIIRS; the raw value is kept in `confidence_raw`. No revisions (NRT → SP would be a separate product). Retention: rolling window (profile-dependent, §8).
 
+The detection itself is immutable; its **cluster membership** is a separate fact with its own knowledge time (`cluster_id` + `cluster_assigned_at`, §4.10).
+
 ### 4.10 FireActivityCluster
 
 A group of detections that GeoNerva treats as one area of thermal activity. **Not** called a wildfire.
 
 - Identity: `fire_clusters(id, public_id, created_at, status ACTIVE|COOLING|INACTIVE|MERGED, merged_into?)`.
 - Versions: `fire_cluster_versions` written by each clustering run *only if the summary changed*: `as_of`, `detection_count_total`, `detection_count_24h`, `distinct_overpasses_24h`, `first_detected_at`, `last_detected_at`, `frp_sum_24h`, `frp_max`, `max_confidence`, `sensors[]`, `hull` (Polygon, buffered by half pixel size), `centroid`.
-- Membership: `fire_detections.cluster_id` (assigned once; a detection never changes cluster except via cluster merge, which is recorded on the cluster).
+- Membership (**bitemporal**, ADR-039): `fire_detections.cluster_id` with `cluster_assigned_at`, the clustering run's own `as_of`. A detection is assigned once and is never re-pointed — a merge is recorded on the absorbed cluster (`merged_into`, `merged_at`) and resolved at read time — so membership at a knowledge time T is the assigned cluster, followed through the merges known by T. `cluster_assigned_at IS NULL` means the assignment predates migration 0020 and its knowledge time is unknowable, so as-of reads exclude it rather than assume one.
 - Lifecycle: `ACTIVE` (detection within 24 h) → `COOLING` (24–72 h) → `INACTIVE` (> 72 h). Two active clusters that become connected are merged (older survives). A cluster never splits in v1 (documented simplification; splitting creates identity churn with little user value).
 - Clustering algorithm: see `ARCHITECTURE.md` §7.4.
 
@@ -471,11 +473,14 @@ fire_detections(
   confidence_class text, confidence_raw text, frp real, bright_ti4 real, bright_ti5 real,
   scan real, track real, daynight char(1), provider_version text,
   ingestion_run_id uuid, ingested_at timestamptz NOT NULL, cluster_id uuid NULL,
+  cluster_assigned_at timestamptz NULL,           -- the clustering run's as_of (ADR-039)
   PRIMARY KEY (acquired_at, id),
-  UNIQUE (product_id, acquired_at, lat_e4, lon_e4))
+  UNIQUE (product_id, acquired_at, lat_e4, lon_e4),
+  CHECK ((cluster_id IS NULL) = (cluster_assigned_at IS NULL)))  -- NOT VALID: pre-0020 rows
   PARTITION BY RANGE (acquired_at)                -- daily partitions; retention = DROP PARTITION
   INDEX GIST (geog) (per partition)
   INDEX (cluster_id)
+  INDEX (cluster_id, cluster_assigned_at) WHERE cluster_id IS NOT NULL
 
 fire_clusters(
   id uuid PK, public_id text UNIQUE, created_at timestamptz, status text,

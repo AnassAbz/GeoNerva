@@ -1102,14 +1102,26 @@ export async function seedMarrakechScenario(
       .select('id')
       .where('cluster_id', 'is', null)
       .execute();
+    const version = versions[index];
+    /*
+     * Before the assignment, not after it: the knowledge time the assignment is stamped with comes
+     * from this version (ADR-039). An overpass with no version of its own therefore seeds no
+     * membership either, which is the honest shape — there is no clustering run to attribute it
+     * to. `versions` covers the overpass loop in this scenario, so nothing is skipped today.
+     */
+    if (version === undefined) continue;
+    /*
+     * The clustering run's own `as_of` is when the assignment became true (ADR-039). Seeding it
+     * from the version that summarizes the set is what a real run does: it assigns and summarizes
+     * in one pass, under one knowledge time.
+     */
     await assignDetectionsToCluster(
       db,
       clusterId,
       unassigned.map((row) => row.id),
+      version.asOf,
     );
 
-    const version = versions[index];
-    if (version === undefined) continue;
     await insertClusterVersionIfChanged(db, {
       clusterId,
       asOf: version.asOf,

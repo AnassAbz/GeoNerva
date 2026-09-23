@@ -85,9 +85,10 @@ describe('the withheld fire cluster (ADR-039)', () => {
 
   it('emits no map feature for an individual detection, verified or not', () => {
     /*
-     * `fireMapFeatures` is the only way a feature reaches the fire page's map, and ADR-039 forbids
-     * the `fire_detection` kind until membership is bitemporal — including for a cluster whose
-     * members *were* verified, because the sample is a reconstruction from the present either way.
+     * `fireMapFeatures` is the only way a feature reaches the fire page's map, and it emits no
+     * `fire_detection` kind for either variant. ADR-039 made membership bitemporal, so the reason
+     * is no longer correctness: ARCHITECTURE §7.5's detections-at-zoom layer is recorded as
+     * unbuilt, and a page that quietly started drawing detections would ship it unreviewed.
      */
     for (const detections of ['verified', 'withheld'] as const) {
       const features = fireMapFeatures(fireClusterDetail({ detections }));

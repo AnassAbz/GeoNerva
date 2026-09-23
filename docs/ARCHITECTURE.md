@@ -245,6 +245,7 @@ The target is a p95 under 600 ms warm for a location with fewer than 200 candida
 - `observationsAsOf(T)`: latest version per record with `ingested_at ≤ T`, excluding records merged before T.
 - `linksAsOf(T)`
 - `clusterVersionsAsOf(T)`
+- `clusterLineageAsOf(clusterId, T)` and `clusterLineageForWanted()` (`packages/db/src/asof-membership.ts`): which clusters' detections count as one cluster's at T — the assigned cluster followed through the merges known by T, for a single read and for a batch whose rows each carry their own T. Every read of a cluster's member detections joins one of them, and so does the summary-side hull (ADR-039).
 - `healthAsOf(T)`
 
 When `T = now`, the query planner uses the `*_heads` / `*_state` caches instead; a test asserts that both paths return identical results on fixtures.
@@ -370,6 +371,7 @@ Run in the worker after each FIRMS batch.
   - Other existing clusters in the component are marked `MERGED` into it.
   - Components made only of new detections get a new cluster.
   - Input ordering is by `(acquired_at, id)`.
+- **Membership carries its knowledge time (ADR-039).** An assignment is stamped with the clustering run's own `as_of` in `fire_detections.cluster_assigned_at`, and a merge **does not re-point `cluster_id`** — it is recorded on the absorbed cluster (`merged_into`, `merged_at`) and resolved at read time. So a replay of a moment before a merge still shows the two areas of activity GeoNerva was showing then, and a detection assigned after T is in no cluster at T. An assignment made before migration 0020 has no knowledge time and is excluded from every as-of read rather than guessed at.
 - **Summary:** counts, 24 h counts, distinct overpasses (distinct `(product, acquired_at)` within 10 min), FRP sum/max, confidence mix, a convex hull buffered by half a pixel, and the centroid. A new version is written only if its hash changed.
 - **Why not DBSCAN:**
   - Single-linkage with `minPts = 1` is exactly what's wanted, because an isolated detection is still a (tiny) cluster with honest labelling.
@@ -380,7 +382,7 @@ Run in the worker after each FIRMS batch.
 ### 7.5 Map data delivery
 
 - **Low zoom (< 6):** canonical events plus **fire cluster centroids** only, never raw detections. The response is capped at 2,000 features.
-- **Zoom ≥ 8:** individual detections within the viewport, capped at 5,000; above the cap the response says `truncated`.
+- **Zoom ≥ 8:** individual detections within the viewport, capped at 5,000; above the cap the response says `truncated`. **Not built.** It was blocked on membership having no knowledge time; ADR-039 removed that, and what remains is scope — payload budget, zoom behaviour and cap semantics the frozen `MapFeaturesResponse` does not describe. Until it is built, **one cap of 2,000 applies at every zoom and no `fire_detection` feature is ever produced**, which is what `buildMapFeatures` says in its own header. The map never claims to show detections (PRODUCT §6.5).
 - **Format:** GeoJSON in P0. Vector tiles via `ST_AsMVT` are a P1 optimization if payloads prove too large.
 - **Caching:** bboxes are quantized to a tile-aligned grid for cache hits.
 
@@ -733,6 +735,7 @@ into a throwaway database on the same PostgreSQL 17 / PostGIS 3.4 image as CI, n
 | `observation_versions` (250k EQ + 5k GDACS + 5k spare) | 260,000 | **148.3 MB** | 86.7 MB | 61.6 MB |
 | `fire_detections`, per daily partition (146k/day) | 146,000 | **47.8 MB** | 23.3 MB | 24.4 MB |
 | `fire_detections`, 72 h retention (3 partitions) | 438,000 | **143.3 MB** | 69.9 MB | 73.3 MB |
+| ↳ ADR-039's `cluster_assigned_at` + `fire_detections_membership_idx`, less the `(cluster_id)` index 0021 drops for it (estimated, not measured) | 438,000 | **+3.5 MB** | +3.5 MB | ±0 MB |
 | `source_records` | 260,000 | **42.3 MB** | 20.5 MB | 21.8 MB |
 | everything else at this point (empty caches, seeds, migrations) | — | ~1.4 MB | — | — |
 | **Measured total** | | **335.3 MB (67 % of the 500 MB budget)** | | |
