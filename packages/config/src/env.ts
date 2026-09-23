@@ -189,10 +189,40 @@ const webObject = z.object({
 
 const webSchema = webObject;
 
+/**
+ * Which build is running: a commit SHA, an image tag, whatever the deployment stamps in.
+ *
+ * Optional, because a developer running the worker from a checkout has no build to name, and
+ * demanding one would make `pnpm --filter @geonerva/worker start` fail for no benefit. What it is
+ * **not** optional for is a soak: `worker_heartbeat.version` and `ingestion_runs.worker_version`
+ * carry this value, and a 24 h run that cannot attribute a failure to a build is not evidence
+ * (`docs/reviews/p10-plan.md` §2.4). The deployment manifests set it; `docs/DEPLOYMENT.md` says how.
+ *
+ * Bounded and character-restricted because it is written to a text column that a read model
+ * exposes (`EvidenceItem.workerVersion`): a build stamp is an identifier, not free text.
+ */
+const buildIdentity = z
+  .string()
+  .trim()
+  /*
+   * Empty reads as absent, like every other optional variable here. A container image declares
+   * `ENV GEONERVA_BUILD=""` so that the variable exists to be overridden, and a deployment that
+   * forgets to override it should run unstamped rather than refuse to start over a cosmetic field.
+   */
+  .transform((value) => (value === '' ? undefined : value))
+  .optional()
+  .refine((value) => value === undefined || value.length <= 64, {
+    message: 'must be at most 64 characters',
+  })
+  .refine((value) => value === undefined || /^[A-Za-z0-9._+-]+$/u.test(value), {
+    message: 'must be a plain identifier (letters, digits, dot, underscore, plus, hyphen)',
+  });
+
 const workerObject = z
   .object({
     ...common,
     DATABASE_URL_WORKER: postgresUrl,
+    GEONERVA_BUILD: buildIdentity,
     FIRMS_MAP_KEY: optionalNonEmpty,
     WORKER_TRIGGER_SECRET: secret.optional(),
     AI_MODE: z.enum(AI_MODES).default('disabled'),

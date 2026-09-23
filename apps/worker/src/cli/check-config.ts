@@ -13,6 +13,7 @@ export function describeWorkerConfig(config: WorkerConfig): string[] {
       : config.AI_MODE;
   return [
     `NODE_ENV            ${config.NODE_ENV}`,
+    `GEONERVA_BUILD      ${config.GEONERVA_BUILD ?? 'unset (runs will be unattributed)'}`,
     `RETENTION_PROFILE   ${config.RETENTION_PROFILE}`,
     `DATABASE_URL_WORKER set (${hostOf(config.DATABASE_URL_WORKER)})`,
     `FIRMS_MAP_KEY       ${config.FIRMS_MAP_KEY === undefined ? 'absent (keyless FIRMS mode)' : 'set'}`,

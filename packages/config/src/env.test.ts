@@ -116,6 +116,43 @@ describe('loadWorkerConfig', () => {
     expect(config.AI_DAILY_BUDGET_USD).toBe(1);
   });
 
+  /*
+   * The build stamp is what `worker_heartbeat.version` and `ingestion_runs.worker_version` carry,
+   * so a 24 h soak can say which build produced a failure (p10-plan §2.4). It is optional because
+   * a checkout has no build to name, and an image sets it empty so a deployment can override it —
+   * which is why empty must mean absent rather than invalid.
+   */
+  describe('GEONERVA_BUILD', () => {
+    it('is absent when unset or empty, rather than a reason to refuse to start', () => {
+      expect(loadWorkerConfig(validWorker).GEONERVA_BUILD).toBeUndefined();
+      expect(
+        loadWorkerConfig({ ...validWorker, GEONERVA_BUILD: '' }).GEONERVA_BUILD,
+      ).toBeUndefined();
+      expect(
+        loadWorkerConfig({ ...validWorker, GEONERVA_BUILD: '  ' }).GEONERVA_BUILD,
+      ).toBeUndefined();
+    });
+
+    it('accepts the shapes a deployment actually stamps', () => {
+      for (const value of ['ef6e970', 'v1.0.0', '2026-09-23.3', 'main+ef6e970']) {
+        expect(loadWorkerConfig({ ...validWorker, GEONERVA_BUILD: value }).GEONERVA_BUILD).toBe(
+          value,
+        );
+      }
+    });
+
+    it('refuses free text, because it is written to a column a read model exposes', () => {
+      expect(
+        issuesOf(() => loadWorkerConfig({ ...validWorker, GEONERVA_BUILD: 'built by me' })),
+      ).toEqual([
+        'GEONERVA_BUILD: must be a plain identifier (letters, digits, dot, underscore, plus, hyphen)',
+      ]);
+      expect(
+        issuesOf(() => loadWorkerConfig({ ...validWorker, GEONERVA_BUILD: 'a'.repeat(65) })),
+      ).toEqual(['GEONERVA_BUILD: must be at most 64 characters']);
+    });
+  });
+
   it('requires an Anthropic key only when AI_MODE=anthropic', () => {
     expect(loadWorkerConfig({ ...validWorker, AI_MODE: 'disabled' }).ANTHROPIC_API_KEY).toBe(
       undefined,

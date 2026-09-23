@@ -80,10 +80,23 @@ export async function startWorker(
   const handle = createDatabase(workerPoolOptions(config.DATABASE_URL_WORKER, config.NODE_ENV));
 
   try {
+    /*
+     * Which build is running, recorded on every run and every heartbeat.
+     *
+     * `NODE_ENV` used to be written into `worker_heartbeat.version`, which answered a question
+     * nobody asks: a soak that sees failures needs to know *which build* produced them, and
+     * "production" is true of every build ever deployed. `GEONERVA_BUILD` is what the deployment
+     * stamps in; a checkout that has not set it records nothing rather than something misleading
+     * (`docs/reviews/p10-plan.md` §2.4).
+     */
+    const workerVersion = config.GEONERVA_BUILD ?? null;
+
     // F-12: a production process says so on start-up, so a misconfigured deployment is visible
     // in the first log line rather than in whatever behaves oddly later.
     logger.log('info', 'worker.starting', {
-      detail: `NODE_ENV=${config.NODE_ENV} retention=${config.RETENTION_PROFILE} ai=${config.AI_MODE}`,
+      detail:
+        `NODE_ENV=${config.NODE_ENV} retention=${config.RETENTION_PROFILE} ` +
+        `ai=${config.AI_MODE} build=${workerVersion ?? '(unset)'}`,
     });
 
     const jobs: ScheduledJob[] = [];
@@ -105,6 +118,8 @@ export async function startWorker(
             trigger: 'SCHEDULE',
             logger,
             signal: jobSignal,
+            // So a failure in the soak can be attributed to a build rather than to "production".
+            ...(workerVersion === null ? {} : { workerVersion }),
           }),
       });
     }
@@ -113,7 +128,7 @@ export async function startWorker(
       jobs,
       signal,
       logger,
-      heartbeat: (at) => recordWorkerHeartbeat(handle.db, at, config.NODE_ENV),
+      heartbeat: (at) => recordWorkerHeartbeat(handle.db, at, workerVersion),
     });
     console.error(describeSummaries(summaries));
     return 0;

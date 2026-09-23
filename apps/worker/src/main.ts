@@ -6,6 +6,7 @@
  */
 import { runBackfillCommand } from './cli/backfill.ts';
 import { checkConfig } from './cli/check-config.ts';
+import { installCrashHandlers } from './cli/crash-handlers.ts';
 import { runSource } from './cli/run-source.ts';
 import { startWorker } from './cli/start.ts';
 import { describeUnexpectedError } from './cli/unexpected-error.ts';
@@ -57,6 +58,13 @@ async function main(argv: readonly string[]): Promise<number> {
       return 2;
   }
 }
+
+/*
+ * Before anything can throw: the `try` below covers what this command awaits, and these two cover
+ * what it cannot — a rejection or a throw from a timer, an event handler or a floating promise
+ * (F-2b). Without them Node prints the value, and the worker's errors carry connection strings.
+ */
+installCrashHandlers(process);
 
 try {
   process.exitCode = await main(process.argv.slice(2));
