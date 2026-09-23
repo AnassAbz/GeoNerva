@@ -273,6 +273,29 @@ export async function canonicalEventForAlias(
 }
 
 /**
+ * The knowledge time of the last **successful** correlation run, or `null` when none has ever
+ * succeeded.
+ *
+ * This is the other half of the scheduler's gate (ADR-044), and it deliberately reads `as_of`
+ * rather than `finished_at`. A fact ingested *while* a run was in flight has
+ * `ingested_at < finished_at` and yet was excluded by that run's own knowledge bound, so comparing
+ * the fact store against `finished_at` would report "nothing new" and strand it until some
+ * unrelated earthquake arrived. `as_of` is the bound the run actually applied, so it is the only
+ * honest thing to compare against.
+ *
+ * `derivationsAsOf` is not reused here: it answers the availability model's question — *has the
+ * derivation succeeded, and when did it finish* — and does not carry `as_of`.
+ */
+export async function lastSuccessfulCorrelationAsOf(db: Db): Promise<Date | null> {
+  const result = await sql<{ as_of: Date | null }>`
+    SELECT max(as_of) AS as_of
+    FROM geonerva.analysis_runs
+    WHERE kind = 'CORRELATION' AND status = 'SUCCEEDED'
+  `.execute(db);
+  return result.rows[0]?.as_of ?? null;
+}
+
+/**
  * The newest earthquake fact visible at `asOf`, by ingestion time.
  *
  * This is the input `resolveAvailability` compares a derivation's last success against: if a fact

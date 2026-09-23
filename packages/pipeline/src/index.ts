@@ -40,3 +40,5 @@ export {
   seedSingleSourceEvents,
 } from './correlate.ts';
 export type { CorrelateOptions, CorrelateResult, SeedResult } from './correlate.ts';
+export { runCorrelation } from './correlate-job.ts';
+export type { CorrelationJobOptions } from './correlate-job.ts';

@@ -136,6 +136,7 @@ export {
   canonicalEventForAlias,
   earthquakeRecordsToCorrelate,
   eventMembers,
+  lastSuccessfulCorrelationAsOf,
   newestEarthquakeIngestAt,
   recordsNeedingSeedEvent,
 } from './correlation.ts';

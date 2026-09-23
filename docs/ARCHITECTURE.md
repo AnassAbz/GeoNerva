@@ -178,7 +178,9 @@ Corrections from the P3 implementation, which is the authoritative shape:
 4. normalize         pure; content_sha256 per record
 5. persist (1 txn)   upsert raw payloads (by hash) → resolve record identity (aliases) → insert versions where hash differs
                      → update heads → stamp ingested_at = clock_timestamp() on the batch → run SUCCEEDED/PARTIAL → COMMIT
-6. post-commit       correlation (EQ) / clustering (FIRMS) for affected records → projections → snapshot materialization
+6. post-commit       nothing. Correlation is **not** a step of ingestion: it is its own
+                     scheduled job (§4.5, ADR-044), so a run that commits facts is finished
+                     when it has committed them.
 ```
 
 - Failures are classified as `HTTP_4XX | HTTP_5XX | TIMEOUT | TOO_LARGE | SCHEMA_DRIFT | EMPTY_SUSPICIOUS | RATE_LIMITED | DB_ERROR | LEASE_EXPIRED | NETWORK | CONFIG_ERROR | ABORTED | UNKNOWN` (ADR-032).
@@ -201,6 +203,34 @@ Corrections from the P3 implementation, which is the authoritative shape:
 - Retries use exponential backoff with jitter and honour `Retry-After`.
 - A per-source circuit breaker opens after 5 consecutive failures and probes every 15 minutes.
 - Step 6 failures never roll back facts. They are recorded as `analysis_runs` failures and retried on the next cycle, because projections are rebuildable.
+
+### 4.5 Correlation, as its own scheduled job (ADR-044)
+
+Correlation turns observations into canonical events. It is **not** chained onto the end of an
+ingestion run, and it is not a manual step: the worker schedules it beside the ingestion jobs, at
+**60 s** where the sources are polled at 300 s, so canonical state never sits more than about a
+minute behind the fact store.
+
+Three properties make that affordable and safe:
+
+- **It is gated.** Before doing anything it asks whether an earthquake fact has been ingested since
+  the knowledge time of the last *successful* run. If not it returns `SKIPPED` and writes nothing —
+  no `analysis_runs` row, because the ledger records events rather than heartbeats. The comparison
+  is against the previous run's `as_of`, never its `finished_at`: a fact that arrived while a run
+  was in flight has `ingested_at < finished_at` and was still excluded by that run's knowledge
+  bound, so gating on the wall clock would strand it.
+- **It is serialised** by a PostgreSQL advisory lock taken on one pinned connection. Correlation
+  mints identities, so two overlapping runs can each open an event for the same earthquake before
+  the other's projection lands. `pg_try_advisory_lock` declines rather than queues, and the server
+  drops the lock when the session ends, so a killed worker leaves nothing to clean up.
+- **It never throws.** Like `runIngestion`, it converts every expected failure into an outcome and
+  one terminal `correlation.run` log line. A failure leaves the `analysis_runs` row `FAILED`, which
+  means `lastSucceededAt` does not move, which means the availability model keeps refusing to vouch
+  for the family (§9.8). Nothing has to remember to degrade: it degrades by not succeeding.
+
+`SEED` (floods, cyclones, other) and `CLUSTERING` (fire activity) are **not** scheduled. Those
+families therefore report `DERIVATION_NOT_RUN` in a real deployment, honestly and permanently,
+until the same treatment is given to them.
 
 ### 4.3 Per-source ingestion plan
 

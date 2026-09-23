@@ -79,6 +79,27 @@ Two lessons worth carrying, because neither is about this script:
 - **The gate report is part of the verification, not a record of it.** Writing this section is what
   would have caught the dead checks a day earlier; the review caught them instead.
 
+## 3a. The blocker deploying found, and ADR-044
+
+Deploying the product for real surfaced something no review had: **`correlateEarthquakes` was called
+from nothing**. Not from the worker, not from a CLI, not from a cron — only from its own test. The
+first live deployment ingested 245 genuine USGS earthquakes and served
+*"GeoNerva cannot currently report on earthquakes"* until correlation was run by hand.
+
+The product was **right** about it. `derivationVerdict` returned `UNAVAILABLE` / `DERIVATION_NOT_RUN`
+with `mayRenderZero: false`, so no reader was ever told the world was quiet. That is invariant I11
+doing exactly its job, and it is why this was a usability disaster rather than a correctness one.
+
+**ADR-044** schedules correlation in the worker: gated on whether anything has been ingested since
+the last successful run's *knowledge time*, serialised by a PostgreSQL advisory lock, and unable to
+throw past its own boundary. The lock closes `gate-g6.md`'s open item 1 — *"two overlapping
+`CORRELATION` runs can each open a canonical event for one earthquake"* — which had been deferred to
+this phase. Verified live: an ingestion at 09:58:40 brought one new version, and correlation ran by
+itself 37 seconds later.
+
+Still unscheduled, and now written down rather than assumed: `SEED` (floods, cyclones, other) and
+`CLUSTERING` (fire activity). Those families report `DERIVATION_NOT_RUN` in production, honestly.
+
 ## 4. Defects this phase found in its own work
 
 - **`pnpm deploy` cannot ship this worker.** ADR-026 runs TypeScript directly, and Node refuses to

@@ -19,12 +19,24 @@ import {
 } from '@geonerva/db';
 import {
   createJsonLogger,
+  runCorrelation,
   runIngestion,
   runScheduler,
   type ScheduledJob,
   type SchedulerSummary,
 } from '@geonerva/pipeline';
 import { createSourceClient, usgsAdapter, type SourceAdapter } from '@geonerva/sources';
+
+/**
+ * How often correlation looks for work, and by how much that is jittered.
+ *
+ * A constant rather than a row in `sources.policy`: correlation is not a source, and inventing a
+ * pseudo-source row to carry its interval would corrupt `listSources`, coverage and `/data-status`,
+ * each of which iterates real sources. `DEFAULT_BREAKER` and the heartbeat interval are the
+ * existing precedents for a scheduling constant living in code. The number is argued in ADR-044.
+ */
+const CORRELATION_INTERVAL_MS = 60_000;
+const CORRELATION_JITTER_RATIO = 0.1;
 
 /** The adapters this build polls on a schedule. */
 const SCHEDULED_ADAPTERS: readonly SourceAdapter<never>[] = [usgsAdapter as SourceAdapter<never>];
@@ -123,6 +135,24 @@ export async function startWorker(
           }),
       });
     }
+
+    /*
+     * Correlation, beside the ingestion jobs (ADR-044). Until this existed the worker ingested
+     * observations and never produced a canonical event, and the product said so — honestly, and
+     * uselessly.
+     *
+     * Sixty seconds, where the sources are polled every three hundred. The two timers are
+     * independent and jittered, so matching the poll interval would let a correlation tick land
+     * just before a poll and leave canonical state a full extra interval behind the facts. What
+     * makes a one-minute tick affordable is that `runCorrelation` gates on whether anything has
+     * been ingested since the last successful run, and does nothing when the answer is no.
+     */
+    jobs.push({
+      name: 'correlation:earthquakes',
+      intervalMs: CORRELATION_INTERVAL_MS,
+      jitterRatio: CORRELATION_JITTER_RATIO,
+      run: () => runCorrelation({ db: handle.db, logger }),
+    });
 
     const summaries = await runScheduler({
       jobs,

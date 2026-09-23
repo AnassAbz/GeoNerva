@@ -113,7 +113,26 @@ the container sit down.
 
 Only **USGS** is scheduled (`SCHEDULED_ADAPTERS` in `apps/worker/src/cli/start.ts`). The other
 adapters exist and are not polled; `/data-status` says so, and the smoke check treats a disabled
-source as a declared outage rather than a fault.
+source as a declared outage rather than a fault. **Disable, in the `sources` table, any source this
+deployment does not poll** — a source that is advertised as enabled and never polled reads
+`UNAVAILABLE`, which is what smoke check 2 is for.
+
+**Correlation runs itself** (ADR-044). `scheduler.started` names both jobs:
+
+```
+usgs:comcat every 300s, correlation:earthquakes every 60s
+```
+
+and a healthy deployment shows `correlation.run` lines alternating between `SKIPPED` (nothing
+ingested since the last run — the normal state) and `SUCCEEDED` with its counters. If you see only
+`SKIPPED` while ingestion reports `newVersions` above zero, correlation is not keeping up and the
+briefing will say so on its own: the earthquake card degrades to `DERIVATION_STALE` and refuses to
+report a zero. Until this job existed the worker ingested forever and produced no events at all,
+which is the failure this runbook most wants you not to meet again.
+
+Floods, cyclones and fire activity depend on derivations (`SEED`, `CLUSTERING`) that **nothing
+schedules yet**, so those families report "has not finished processing it" in production. That is
+accurate rather than broken, and it is the next thing of this shape to fix.
 
 ---
 
