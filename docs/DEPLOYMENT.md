@@ -111,12 +111,27 @@ again until the lease is judged abandoned, half an hour later.
 rule in backfill continuity treats a long silence as a break, so plan restarts rather than letting
 the container sit down.
 
-**USGS and EMSC** are scheduled (`SCHEDULED_ADAPTERS` in `apps/worker/src/cli/start.ts`). GDACS and
-FIRMS exist and are not polled; `/data-status` says so, and the smoke check treats a disabled source
-as a declared outage rather than a fault. **Disable, in the `sources` table, any source this
-deployment does not poll** — a source advertised as enabled and never polled reads `UNAVAILABLE`,
-which is what smoke check 2 is for. Enabling a source is therefore two changes that must agree: the
-adapter list in code, and the `enabled` flag in the database.
+**All four v1 sources are scheduled**: USGS, EMSC, six GDACS families and both FIRMS sensors, plus
+three derivations. `SCHEDULED_FEEDS` in `apps/worker/src/cli/start.ts` is the single list of what
+this worker polls, and it is the list the start-up drift check judges. Note that FIRMS is **not** a
+`SourceAdapter` — it writes detections rather than observation versions — so it has its own job and
+must be declared in `SCHEDULED_FEEDS` explicitly. It once was not, and FIRMS ingested 92,616
+detections while its source row was disabled without a single warning.
+
+**Enablement is two switches and the runtime enforces both.** A feed ingests only when
+`source.enabled && product.enabled`; a product enabled under a disabled source is refused *before*
+the run lease, so no run row, no health evidence and — the part that matters — no coverage is
+recorded for hours nobody was allowed to read. The refusal is logged at `warn` as
+`ingestion.source_disabled`, because a live product under a dead source is usually not what the
+operator intended. **Disable, in the `sources` table, any source this deployment does not poll** —
+a source advertised as enabled and never polled reads `UNAVAILABLE`, which is what smoke check 2 is
+for. The start-up drift check reports both directions of disagreement by name, at `warn`, and is
+deliberately never fatal: the database is the documented control surface for switching a feed off.
+
+**Changing an `enabled` flag by hand: run it as its own statement.** `psql -c "UPDATE …; SELECT …"`
+sends the whole string as one implicit transaction, so a syntax error in a *later* statement rolls
+the update back silently — while the earlier statement's output still shows the new value. That
+cost an hour here and produced a convincing false conclusion.
 
 **EMSC carries one operational caveat that USGS does not.** Its poll reads `EMSC_POLL_LOOKBACK_MS`
 — fifteen minutes, three of its five-minute intervals, so consecutive polls overlap twice over and

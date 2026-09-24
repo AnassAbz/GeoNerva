@@ -3,6 +3,14 @@
 > Status: **architecture phase, verified 2026-09-19; P0 fixture capture and verification completed 2026-09-19** (see §10 for V1–V9 resolutions and §11 for demo-place coverage). Every fact below was checked against official documentation and/or live responses on that date. Statements changed by P0 are marked **[P0 2026-09-19]**. Fixtures and their manifests live in `packages/test-fixtures/sources/<source>/`; capture scripts in `scripts/capture-fixtures/`.
 >
 > This document is the contract between the outside world and GeoNerva. If a provider changes, this file changes first, then the adapter, then the fixtures.
+>
+> **Live status, 2026-09-23 (release candidate).** All four v1 sources are scheduled and reporting
+> `FRESH`: USGS ComCat, EMSC, six GDACS families (`FL`, `VO`, `DR`, `TC`, `WF`, `EQ`) and both
+> FIRMS sensors (`VIIRS_NOAA20_NRT`, `VIIRS_NOAA21_NRT`). ECCC remains **disabled** — it is
+> Canada-only and no weather-warning source is offered, so `WEATHER_ALERTS` reports `NOT_COVERED`
+> rather than an empty list. FIRMS runs **keyless**: no `FIRMS_MAP_KEY` is configured, so it reads
+> the public 24-hour global files, which cannot be backfilled and cannot be narrowed to an area.
+> Suomi-NPP and MODIS remain excluded per ADR-009 and are not polled.
 
 ## 0. Source matrix (v1)
 
