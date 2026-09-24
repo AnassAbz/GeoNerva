@@ -51,6 +51,7 @@ import {
   healthAsOf,
   observationEvidenceAsOf,
   placeByGeonameId,
+  reconstructClusterDetections,
   runEvidenceAsOf,
   runSummariesAsOf,
   runTally24hAsOf,
@@ -87,6 +88,7 @@ import { logEvent } from './log.ts';
 import {
   buildEvidenceDetail,
   clusterPayload,
+  detectionSetPayload,
   correlationPayload,
   observationPayload,
   runPayload,
@@ -189,12 +191,15 @@ export interface EvidenceRequest {
  * asking for one is a `NOT_FOUND` rather than an error: there is nothing to serve, and saying so
  * is more useful than pretending the id was malformed.
  *
- * `EV:FDS` is the case G7 found the hard way — a real kind that nothing resolved, which broke every
- * briefing for a location with fire activity. It is resolved *in a manifest*, by
- * `resolveManifest` in `packages/briefing`, through the cluster version it summarizes. **This
- * endpoint refuses it**, with an explanation pointing at that cluster version: the detection set
- * has no row of its own, so there is nothing to serve. An earlier version of this comment claimed
- * the opposite of the code fifteen lines below it.
+ * `EV:FDS` **resolves**, and getting there took a resolver rather than a query. The detection set
+ * has no row of its own, so it is reconstructed through membership at the summarising version's
+ * knowledge time (ADR-039) — which is exactly what `DOMAIN_MODEL.md` §4.11 means by "resolvable via
+ * membership". This endpoint used to refuse it with an explanation pointing at the cluster version,
+ * which left the documented contract and the served behaviour disagreeing; the contract was right.
+ *
+ * No detection rows are served (`cap: 0`). What makes the citation checkable is the count, whether
+ * retention still holds all of it, and the per-day shape — the same restraint ADR-038 applies to
+ * raw payloads: the lifecycle and integrity of a fact, never its bytes.
  */
 export async function getEvidence(db: Kysely, request: EvidenceRequest): Promise<EvidenceDetail> {
   const parsed = tryParseEvidenceId(request.id);
@@ -211,14 +216,6 @@ export async function getEvidence(db: Kysely, request: EvidenceRequest): Promise
       code: 'NOT_FOUND',
       detail:
         'That evidence is a computation identified by the hash of its own inputs. It is carried in full inside the response that referenced it, and there is no separate record to fetch.',
-    });
-  }
-
-  if (parsed.kind === 'FDS') {
-    throw new ApiProblemError({
-      code: 'NOT_FOUND',
-      detail:
-        'That evidence names the set of satellite detections behind a fire-cluster summary. The set has no record of its own; fetch the cluster version it belongs to, which carries the count.',
     });
   }
 
@@ -283,11 +280,31 @@ async function evidencePayload(
       const row = await correlationEvidenceAsOf(db, { asOf, linkId: ref.linkId });
       return row === null ? null : correlationPayload(row);
     }
+    case 'FDS': {
+      const version = await clusterEvidenceAsOf(db, {
+        asOf,
+        clusterVersionId: ref.clusterVersionId,
+      });
+      if (version === null) return null;
+      /*
+       * `cap: 0` — the count and the per-day breakdown are computed independently of the sample,
+       * so this asks for the shape of the set without serving a single pixel. The window is the
+       * version's own first and last acquisition, because a later detection in the same cluster is
+       * not part of *this* version's set.
+       */
+      const reconstruction = await reconstructClusterDetections(db, {
+        clusterId: version.cluster_id,
+        knownAt: version.as_of,
+        firstDetectedAt: version.first_detected_at,
+        lastDetectedAt: version.last_detected_at,
+        cap: 0,
+      });
+      return detectionSetPayload(ref, version, reconstruction);
+    }
     /*
-     * Refused above, and spelled out rather than swept into a `default` so that adding a ninth
+     * Content-addressed, and spelled out rather than swept into a `default` so that adding a ninth
      * evidence kind is a type error here instead of a silent `NOT_FOUND`.
      */
-    case 'FDS':
     case 'BAS':
     case 'REL':
     case 'CHG':

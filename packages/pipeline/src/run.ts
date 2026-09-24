@@ -563,6 +563,29 @@ export async function runIngestion<TRaw>(options: RunIngestionOptions<TRaw>): Pr
   }
 
   /*
+   * **Both switches, not one** (the enablement invariant).
+   *
+   * Enabling a feed is two changes — the source and the product — and reading only the product
+   * let FIRMS ingest 92,616 detections and build 34,087 clusters while `sources.firms.enabled` was
+   * false. A product enabled under a disabled source is not a feed this deployment offers.
+   *
+   * Refused **before the run lease**, exactly as a disabled product is, so there is no run row, no
+   * health evidence and — the part that matters most — no coverage recorded for hours nobody was
+   * allowed to read. `warn`, not `info`: a disabled product is a routine decision, whereas a live
+   * product under a dead source is a configuration the operator probably did not intend.
+   */
+  if (!product.sourceEnabled) {
+    const reason = `source ${descriptor.sourceId} is disabled`;
+    logger.log('warn', 'ingestion.source_disabled', {
+      ...base,
+      stage: 'lease',
+      status: 'SKIPPED',
+      detail: reason,
+    });
+    return finish('SKIPPED', null, null, reason, EMPTY_COUNTS, null);
+  }
+
+  /*
    * A product switched off in the database must not keep ingesting.
    *
    * `deriveSourceHealth` already reports a disabled product as UNAVAILABLE/DISABLED, so without

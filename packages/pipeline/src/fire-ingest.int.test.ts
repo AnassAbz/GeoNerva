@@ -38,12 +38,41 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
+  /*
+   * Restored before the connection closes, because the **integration files share one test
+   * database**. The `beforeEach` below protects this file's own tests and heals a database a
+   * previous run poisoned, but it does nothing for the files that run *after* this one: leaving
+   * FIRMS switched off made `asof`, `snapshot`, `briefing` and `scenario` read `UNAVAILABLE` and
+   * lose their baselines — eleven failures across four files with no visible connection to the
+   * cause. A test that changes seed state has to put it back.
+   */
+  await ensureFirmsEnabled();
   await db.destroy();
 });
 
 beforeEach(async () => {
   await testDb.truncate();
+  /*
+   * `truncate` does not touch the seed tables, so `sources` and `source_products` carry whatever
+   * the last test left there — **across runs**, because the test database is reused. The
+   * enablement cases below switch FIRMS off deliberately, and without this restore the one that
+   * ends with both switched off poisons the database for every other test in the file and for the
+   * next run of it. That is not hypothetical: it turned 13 passing tests red once, and this
+   * repository has been bitten by the same shape before with a dropped CHECK constraint.
+   *
+   * Restoring here as well as in `afterAll` means a database a previous interrupted run poisoned
+   * heals itself on the next one, rather than needing a hand-written UPDATE.
+   */
+  await ensureFirmsEnabled();
 });
+
+/** The seeded state: the FIRMS source and both its products are enabled (migration 0008). */
+async function ensureFirmsEnabled(): Promise<void> {
+  await sql`UPDATE geonerva.sources SET enabled = true WHERE id = 'firms'`.execute(db);
+  await sql`
+    UPDATE geonerva.source_products SET enabled = true WHERE source_id = 'firms'
+  `.execute(db);
+}
 
 function clientServing(body: Uint8Array, status = 200): HttpClient {
   return createSourceClient(firmsDescriptor('VIIRS_NOAA20_NRT'), {
@@ -508,5 +537,85 @@ describe('the daily fire aggregate (ADR-040)', () => {
         ALTER TABLE geonerva.fire_daily_coverage DROP CONSTRAINT fire_daily_coverage_refuses_writes
       `.execute(db);
     }
+  });
+});
+
+/**
+ * Enablement is **two** switches, and ingestion must respect both.
+ *
+ * This is the invariant a live deployment broke: FIRMS ingested 92,616 detections and produced
+ * 34,087 clusters while `sources.firms.enabled` was `false`, because the check read only
+ * `product.enabled`. The four cases below are the whole truth table, because the failure mode was
+ * precisely that three of them were never asked.
+ *
+ * Refusal happens **before the run lease**, so the assertions check that nothing was written at
+ * all — no detections and, critically, no coverage hours for a window nobody was allowed to read.
+ */
+describe('source and product enablement', () => {
+  /*
+   * Switches are set per case; the file-level `beforeEach` restores them, so no case can leak its
+   * state into the next one.
+   */
+  async function setEnabled(source: boolean, product: boolean): Promise<void> {
+    await sql`UPDATE geonerva.sources SET enabled = ${source} WHERE id = 'firms'`.execute(db);
+    await sql`
+      UPDATE geonerva.source_products SET enabled = ${product}
+      WHERE source_id = 'firms' AND code = 'VIIRS_NOAA20_NRT'
+    `.execute(db);
+  }
+
+  async function coverageHours(): Promise<number> {
+    const result = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM geonerva.feed_coverage_hours h
+      JOIN geonerva.source_products p ON p.id = h.product_id
+      WHERE p.source_id = 'firms'
+    `.execute(db);
+    return Number(result.rows[0]?.n ?? '0');
+  }
+
+  it('runs when the source and the product are both enabled', async () => {
+    await setEnabled(true, true);
+
+    const outcome = await ingest('j1-24h-slice.csv', 200, 'SCHEDULE');
+
+    expect(outcome.status).toBe('SUCCEEDED');
+    expect(await detectionCount()).toBeGreaterThan(0);
+  });
+
+  it('refuses when the source is disabled although the product is enabled', async () => {
+    await setEnabled(false, true);
+
+    const outcome = await ingest('j1-24h-slice.csv', 200, 'SCHEDULE');
+
+    expect(outcome.status).toBe('SKIPPED');
+    expect(outcome.detail).toContain('source firms is disabled');
+    expect(await detectionCount()).toBe(0);
+    /* No false coverage: the ledger must not claim hours this deployment was not reading. */
+    expect(await coverageHours()).toBe(0);
+    /* And it says so out loud, at warn, because it is probably not what the operator intended. */
+    const said = lastLogger.entries.filter((entry) => entry.event === 'ingestion.source_disabled');
+    expect(said).toHaveLength(1);
+    expect(said[0]?.level).toBe('warn');
+  });
+
+  it('refuses when the product is disabled although the source is enabled', async () => {
+    await setEnabled(true, false);
+
+    const outcome = await ingest('j1-24h-slice.csv', 200, 'SCHEDULE');
+
+    expect(outcome.status).toBe('SKIPPED');
+    expect(outcome.detail).toContain('disabled');
+    expect(await detectionCount()).toBe(0);
+    expect(await coverageHours()).toBe(0);
+  });
+
+  it('refuses when both are disabled', async () => {
+    await setEnabled(false, false);
+
+    const outcome = await ingest('j1-24h-slice.csv', 200, 'SCHEDULE');
+
+    expect(outcome.status).toBe('SKIPPED');
+    expect(await detectionCount()).toBe(0);
+    expect(await coverageHours()).toBe(0);
   });
 });

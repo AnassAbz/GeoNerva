@@ -146,6 +146,7 @@ export type {
   EvidenceItem,
   CorrelationEvidenceDetail,
   FireClusterVersionEvidenceDetail,
+  FireDetectionSetEvidenceDetail,
   IngestionRunEvidenceDetail,
   ObservationEvidenceDetail,
   RawPayloadState,

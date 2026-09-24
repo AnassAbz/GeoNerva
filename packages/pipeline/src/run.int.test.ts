@@ -10,7 +10,7 @@
  */
 
 import { sql, type Kysely } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   createDb,
@@ -809,5 +809,38 @@ describe('a database failure mid-persist', () => {
     expect(recovered.status).toBe('SUCCEEDED');
     expect(recovered.counts.newVersions).toBe(230);
     expect(await countOf('observation_versions')).toBe(230);
+  });
+});
+
+/**
+ * Enablement is two switches on the adapter path too.
+ *
+ * The rule was first written for FIRMS, where a disabled source ingested 92,616 detections anyway.
+ * Extending it to `runIngestion` and not testing it here left the mutant "adapter ingestion ignores
+ * the source switch" alive — the gate existed and nothing proved it did anything.
+ */
+describe('source and product enablement', () => {
+  afterEach(async () => {
+    await sql`UPDATE geonerva.sources SET enabled = true WHERE id = 'usgs'`.execute(db);
+  });
+
+  it('refuses when the source is disabled although the product is enabled', async () => {
+    await sql`UPDATE geonerva.sources SET enabled = false WHERE id = 'usgs'`.execute(db);
+
+    const outcome = await ingest(clientServing(() => feedResponse('all_day.geojson')));
+
+    expect(outcome.status).toBe('SKIPPED');
+    expect(outcome.detail).toContain('source usgs is disabled');
+    /* Refused before the lease, so there is no run row to mistake for evidence of a read. */
+    expect(outcome.runId).toBeNull();
+    const runs = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM geonerva.ingestion_runs
+    `.execute(db);
+    expect(Number(runs.rows[0]?.n)).toBe(0);
+  });
+
+  it('runs when both the source and the product are enabled', async () => {
+    const outcome = await ingest(clientServing(() => feedResponse('all_day.geojson')));
+    expect(outcome.status).toBe('SUCCEEDED');
   });
 });

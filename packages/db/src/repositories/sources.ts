@@ -49,6 +49,15 @@ export interface SourceProductRow {
   readonly activeFrom: string | null;
   readonly activeTo: string | null;
   readonly enabled: boolean;
+  /**
+   * Whether the **parent source** is enabled.
+   *
+   * Carried on the product because enablement is two switches and ingestion must respect both: a
+   * product enabled under a disabled source is not a feed this deployment offers. Reading only
+   * `enabled` let FIRMS ingest 92,616 detections and build 34,087 clusters while
+   * `sources.firms.enabled` was false, and nothing refused.
+   */
+  readonly sourceEnabled: boolean;
   readonly policy: unknown;
 }
 
@@ -117,12 +126,14 @@ export async function listSourceProducts(
     active_from: Date | null;
     active_to: Date | null;
     enabled: boolean;
+    source_enabled: boolean;
     policy: unknown;
   }>`
     SELECT p.id, p.source_id, p.code, p.hazard_types, p.capabilities, p.platform, p.instrument,
            p.resolution_m, p.confidence_scale, p.latency_class, p.status, p.active_from,
-           p.active_to, p.enabled, p.policy
+           p.active_to, p.enabled, s.enabled AS source_enabled, p.policy
     FROM geonerva.source_products p
+    JOIN geonerva.sources s ON s.id = p.source_id
     WHERE ${sourceFilter} AND ${enabledFilter} AND ${retiredFilter}
     ORDER BY p.source_id, p.code
   `.execute(db);
@@ -134,6 +145,7 @@ export async function listSourceProducts(
     hazardTypes: row.hazard_types as HazardType[],
     capabilities: row.capabilities as SourceCapability[],
     platform: row.platform,
+    sourceEnabled: row.source_enabled,
     instrument: row.instrument,
     resolutionM: row.resolution_m,
     confidenceScale: row.confidence_scale,

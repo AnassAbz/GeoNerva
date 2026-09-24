@@ -524,9 +524,15 @@ describe('the P7 review findings, as regressions', () => {
     expect(kinds).toContain('FCV');
     expect(kinds).toContain('FDS');
 
-    // The detection set is described and is not claimed to resolve through the evidence endpoint.
+    /*
+     * The detection set is described **and** claims to resolve, because the evidence endpoint now
+     * reconstructs it through membership at the summary's knowledge time rather than refusing the
+     * kind. The manifest and the endpoint have to agree about this flag in both directions: a
+     * manifest promising more than the API can do broke every fire briefing at G7, and a manifest
+     * promising less than it does hides a citation a reader could have followed.
+     */
     const detectionSet = briefing.evidenceManifest.find((item) => item.kind === 'FDS');
-    expect(detectionSet?.resolvable).toBe(false);
+    expect(detectionSet?.resolvable).toBe(true);
     expect(detectionSet?.summary).toContain('detections');
   });
 

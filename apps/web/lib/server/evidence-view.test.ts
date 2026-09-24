@@ -20,6 +20,7 @@ import { EVIDENCE_KINDS, type EvidenceKind, READ_MODEL_SCHEMA_VERSION } from '@g
 
 import type {
   AttributionRow,
+  ClusterDetectionReconstruction,
   ClusterEvidenceRow,
   CorrelationEvidenceRow,
   EvidenceRow,
@@ -29,6 +30,7 @@ import type {
 import {
   buildEvidenceDetail,
   clusterPayload,
+  detectionSetPayload,
   correlationPayload,
   isResolvableKind,
   observationPayload,
@@ -76,21 +78,25 @@ describe('isResolvableKind', () => {
   );
 
   /**
-   * The G7 regression, stated as its own case.
+   * `EV:FDS` resolves, and it is the reason this flag is not simply "is it primary".
    *
-   * `EV:FDS` is in `EVIDENCE_KINDS` and in neither `PRIMARY_EVIDENCE_KINDS` nor
-   * `CONTENT_ADDRESSED_EVIDENCE_KINDS`. A `resolvable` flag written as "not content-addressed"
-   * would mark it `true`, the endpoint would 404 on it, and the manifest would be claiming
-   * something the API cannot do — which is exactly the hole that broke the fire-activity briefing.
+   * It is in `EVIDENCE_KINDS` and in neither `PRIMARY_EVIDENCE_KINDS` nor
+   * `CONTENT_ADDRESSED_EVIDENCE_KINDS`: it names no row, so it is not primary, and its id is not a
+   * hash, so it is not content-addressed. The endpoint serves it anyway by reconstructing the set
+   * through membership at the summary's knowledge time (ADR-039), which `DOMAIN_MODEL.md` has
+   * always called resolvable. The flag must agree with what the endpoint actually does — it
+   * reported `false` while the endpoint returned the payload, and a manifest disagreeing with its
+   * own API in either direction is the hole that broke the fire-activity briefing at G7.
    */
-  it('does not resolve EV:FDS, which is neither primary nor content-addressed', () => {
-    expect(isResolvableKind('FDS')).toBe(false);
+  it('resolves EV:FDS, which is reconstructed rather than row-backed', () => {
+    expect(isResolvableKind('FDS')).toBe(true);
   });
 
   it('classifies every declared kind, so a ninth kind is a visible decision', () => {
     expect(EVIDENCE_KINDS.filter((kind) => isResolvableKind(kind))).toEqual([
       'OBS',
       'FCV',
+      'FDS',
       'RUN',
       'COR',
     ]);
@@ -301,26 +307,27 @@ describe('observationPayload', () => {
   });
 });
 
-describe('clusterPayload', () => {
-  function cluster(overrides: Partial<ClusterEvidenceRow> = {}): ClusterEvidenceRow {
-    return {
-      cluster_version_id: '904',
-      cluster_public_id: 'FR-26-3K7P2A',
-      as_of: new Date('2026-09-21T12:00:00.000Z'),
-      n_total: 148,
-      n_24h: 31,
-      overpasses_24h: 4,
-      first_detected_at: new Date('2026-09-18T02:11:00.000Z'),
-      last_detected_at: new Date('2026-09-21T11:40:00.000Z'),
-      frp_sum_24h: 812.5,
-      frp_max: 96.25,
-      max_confidence: 'HIGH',
-      product_ids: [3, 4],
-      content_sha256: 'c'.repeat(64),
-      ...overrides,
-    };
-  }
+function cluster(overrides: Partial<ClusterEvidenceRow> = {}): ClusterEvidenceRow {
+  return {
+    cluster_version_id: '904',
+    cluster_id: '4e1c0f2a-1c4e-4b8a-9c7f-2a1c4e4b8a9c',
+    cluster_public_id: 'FR-26-3K7P2A',
+    as_of: new Date('2026-09-21T12:00:00.000Z'),
+    n_total: 148,
+    n_24h: 31,
+    overpasses_24h: 4,
+    first_detected_at: new Date('2026-09-18T02:11:00.000Z'),
+    last_detected_at: new Date('2026-09-21T11:40:00.000Z'),
+    frp_sum_24h: 812.5,
+    frp_max: 96.25,
+    max_confidence: 'HIGH',
+    product_ids: [3, 4],
+    content_sha256: 'c'.repeat(64),
+    ...overrides,
+  };
+}
 
+describe('clusterPayload', () => {
   it('maps the summary with its detection counts and its own knowledge time', () => {
     expect(clusterPayload(cluster())).toMatchObject({
       kind: 'FCV',
@@ -642,5 +649,99 @@ describe('buildEvidenceDetail', () => {
       attribution: [],
     });
     expect(detail.attribution).toEqual([]);
+  });
+});
+
+/**
+ * `EV:FDS` — the detection set behind a cluster summary.
+ *
+ * `DOMAIN_MODEL.md` has always called this resolvable "via membership" while the endpoint returned
+ * 404, so the documented contract and the served behaviour disagreed. The contract was right: the
+ * set has no row, but it is reconstructible at the summarising version's knowledge time (ADR-039).
+ *
+ * The two counts carry the whole meaning of this payload, and conflating them is the mistake worth
+ * guarding: a set whose rows retention has partly dropped is **not** a smaller fire.
+ */
+describe('detectionSetPayload', () => {
+  function reconstruction(
+    overrides: Partial<ClusterDetectionReconstruction> = {},
+  ): ClusterDetectionReconstruction {
+    return {
+      count: 148,
+      sample: [],
+      byDay: [
+        { day: '2026-09-18', count: 20, frp_sum: 110.5 },
+        { day: '2026-09-21', count: 128, frp_sum: 702.0 },
+      ],
+      nearest_m: null,
+      ...overrides,
+    };
+  }
+
+  it('states the claimed and held counts, the window and the per-day shape', () => {
+    const payload = detectionSetPayload(
+      { clusterVersionId: '904', count: 148 },
+      cluster(),
+      reconstruction(),
+    );
+
+    expect(payload).toMatchObject({
+      kind: 'FDS',
+      clusterVersionId: '904',
+      clusterPublicId: 'FR-26-3K7P2A',
+      asOf: '2026-09-21T12:00:00.000Z',
+      countClaimed: 148,
+      countHeld: 148,
+      retentionIncomplete: false,
+      firstDetectedAt: '2026-09-18T02:11:00.000Z',
+      lastDetectedAt: '2026-09-21T11:40:00.000Z',
+      clusterVersionEvidenceId: 'EV:FCV:904',
+    });
+    expect(payload).toMatchObject({
+      byDay: [
+        { day: '2026-09-18', count: 20, frpSum: 110.5 },
+        { day: '2026-09-21', count: 128, frpSum: 702 },
+      ],
+    });
+  });
+
+  /*
+   * Retention dropped a partition since the summary was written. The held count is smaller, and the
+   * payload has to say *why* — otherwise a reader compares it with the cluster page's 148 and
+   * concludes that membership resolved differently, which is the one thing ADR-039 guarantees it
+   * did not.
+   */
+  it('flags a set retention has partly dropped, rather than reporting a smaller fire', () => {
+    const payload = detectionSetPayload(
+      { clusterVersionId: '904', count: 148 },
+      cluster(),
+      reconstruction({ count: 96 }),
+    );
+
+    expect(payload).toMatchObject({
+      countClaimed: 148,
+      countHeld: 96,
+      retentionIncomplete: true,
+    });
+  });
+
+  it('serves no detection rows, whatever the reconstruction sampled', () => {
+    /*
+     * A pixel's coordinates are the provider's data and the set can run to hundreds of thousands
+     * of rows. The same restraint ADR-038 applies to raw payloads applies here: the integrity of a
+     * fact, never its bytes. The resolver asks for `cap: 0`, and this pins that even a populated
+     * sample cannot leak through the payload.
+     */
+    const payload = detectionSetPayload(
+      { clusterVersionId: '904', count: 1 },
+      cluster(),
+      reconstruction({
+        count: 1,
+        sample: [{ acquired_at: new Date(), lat: 1, lon: 2 } as never],
+      }),
+    );
+
+    expect(JSON.stringify(payload)).not.toContain('"lat"');
+    expect(Object.keys(payload)).not.toContain('sample');
   });
 });

@@ -1073,18 +1073,25 @@ describe('GET /api/v1/evidence/{id}', () => {
   });
 
   /**
-   * The G7 hole, as an endpoint behaviour.
+   * `EV:FDS` is resolvable, so an unknown one is a *missing row*, not an unresolvable kind.
    *
-   * `EV:FDS` names a detection set with no row of its own. It must be a `NOT_FOUND` that explains
-   * where to look, not a 500 and not an empty 200 — and the explanation is what tells a client the
-   * citation was never resolvable rather than temporarily missing.
+   * It names a detection set that has no row of its own and is reconstructed through membership at
+   * its cluster summary's knowledge time (ADR-039). This endpoint used to refuse the kind outright
+   * with "the set has no record of its own", which contradicted `DOMAIN_MODEL.md` — so the thing to
+   * pin here is that the refusal is now the ordinary not-found, and specifically **not** a claim
+   * that the citation could never be followed. Still not a 500 and not an empty 200.
+   *
+   * A cluster version that *does* exist resolves to a payload; that path is covered by
+   * `detectionSetPayload` in `evidence-view.test.ts` and its mutation controls, because seeding a
+   * cluster with detections is fixture work this endpoint suite does not otherwise carry.
    */
-  it('refuses an EV:FDS id with an explanation rather than failing', async () => {
+  it('treats an unknown EV:FDS id as a missing record, not an unresolvable kind', async () => {
     const response = await evidence(request('/api/v1/evidence/EV:FDS:904:148'));
     expect(response.status).toBe(404);
     const body = await bodyOf(response);
     expect(body['code']).toBe('NOT_FOUND');
-    expect(body['detail']).toContain('fire-cluster summary');
+    expect(body['detail']).toContain('at this knowledge time');
+    expect(body['detail']).not.toContain('has no record of its own');
   });
 
   it.each(['BAS', 'REL', 'CHG'])(

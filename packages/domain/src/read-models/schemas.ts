@@ -118,6 +118,7 @@ import type {
   EvidenceDetailPayload,
   EvidenceItem,
   FireClusterVersionEvidenceDetail,
+  FireDetectionSetEvidenceDetail,
   IngestionRunEvidenceDetail,
   ObservationEvidenceDetail,
   RawPayloadView,
@@ -1090,6 +1091,29 @@ export type FireClusterVersionEvidenceDetailMatches = Expect<
   Exact<z.infer<typeof fireClusterVersionEvidenceDetailSchema>, FireClusterVersionEvidenceDetail>
 >;
 
+export const fireDetectionSetEvidenceDetailSchema = z.object({
+  kind: z.literal('FDS'),
+  clusterVersionId: z.string(),
+  clusterPublicId: z.string(),
+  asOf: isoTimestamp,
+  countClaimed: z.number().int().nonnegative(),
+  countHeld: z.number().int().nonnegative(),
+  retentionIncomplete: z.boolean(),
+  firstDetectedAt: isoTimestamp,
+  lastDetectedAt: isoTimestamp,
+  byDay: z.array(
+    z.object({
+      day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
+      count: z.number().int().nonnegative(),
+      frpSum: z.number().nullable(),
+    }),
+  ),
+  clusterVersionEvidenceId: evidenceId,
+});
+export type FireDetectionSetEvidenceDetailMatches = Expect<
+  Exact<z.infer<typeof fireDetectionSetEvidenceDetailSchema>, FireDetectionSetEvidenceDetail>
+>;
+
 export const ingestionRunEvidenceDetailSchema = z.object({
   kind: z.literal('RUN'),
   runId: z.string(),
@@ -1142,6 +1166,7 @@ export type CorrelationEvidenceDetailMatches = Expect<
 export const evidenceDetailPayloadSchema = z.discriminatedUnion('kind', [
   observationEvidenceDetailSchema,
   fireClusterVersionEvidenceDetailSchema,
+  fireDetectionSetEvidenceDetailSchema,
   ingestionRunEvidenceDetailSchema,
   correlationEvidenceDetailSchema,
 ]);

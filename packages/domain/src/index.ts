@@ -146,6 +146,7 @@ export {
   EVIDENCE_KINDS,
   EvidenceIdError,
   PRIMARY_EVIDENCE_KINDS,
+  RESOLVABLE_EVIDENCE_KINDS,
   evidenceId,
   evidenceIdKind,
   evidenceIdSchema,
@@ -154,6 +155,7 @@ export {
   isContentAddressedEvidenceKind,
   isEvidenceId,
   isPrimaryEvidenceKind,
+  isResolvableEvidenceKind,
   parseEvidenceId,
   tryParseEvidenceId,
 } from './evidence/evidence-id.ts';

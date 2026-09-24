@@ -65,6 +65,7 @@ export {
   observationEvidenceAsOf,
   observationsAsOf,
   productCoverageFor,
+  reconstructClusterDetections,
   runEvidenceAsOf,
   runSummariesAsOf,
   runTally24hAsOf,
@@ -88,6 +89,7 @@ export type { PlaceRow } from '@geonerva/db/places';
 
 export type {
   AttributionRow,
+  ClusterDetectionReconstruction,
   ClusterEvidenceRow,
   CorrelationEvidenceRow,
   EvidenceRow,

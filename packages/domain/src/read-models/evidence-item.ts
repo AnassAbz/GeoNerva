@@ -55,6 +55,7 @@ export interface EvidenceDetail {
 export type EvidenceDetailPayload =
   | ObservationEvidenceDetail
   | FireClusterVersionEvidenceDetail
+  | FireDetectionSetEvidenceDetail
   | IngestionRunEvidenceDetail
   | CorrelationEvidenceDetail;
 
@@ -138,6 +139,49 @@ export interface FireClusterVersionEvidenceDetail {
   /** `EV:FDS:<clusterVersionId>:<count>` — the detection set behind this summary. */
   readonly detectionSetEvidenceId: EvidenceId;
   readonly contentSha256: string;
+}
+
+/**
+ * `EV:FDS:<clusterVersionId>:<count>` — the set of detections behind one cluster summary.
+ *
+ * The set has no row of its own, which is why this took a resolver rather than a query: it is
+ * **reconstructed through membership** at the summarising version's own knowledge time (ADR-039),
+ * which is exactly what `DOMAIN_MODEL.md` §4.11 means by "resolvable via membership". The
+ * detections whose assignment was known by then, in the clusters absorbed into this one by then.
+ *
+ * `countClaimed` is the number the id carries and the number the summary stated. `countHeld` is how
+ * many of them are still stored. They differ only when retention has dropped a daily partition
+ * since — never because membership resolved differently — and `retentionIncomplete` says which
+ * case a reader is looking at, so a smaller number is never mistaken for a smaller fire.
+ *
+ * No detection rows are served. A pixel's coordinates are the provider's data and the set is
+ * potentially hundreds of thousands of rows; what makes the citation checkable is the count, the
+ * daily distribution and the window it was drawn from. That is the same restraint ADR-038 applies
+ * to raw payloads: the lifecycle and the integrity of a fact, not its bytes.
+ */
+export interface FireDetectionSetEvidenceDetail {
+  readonly kind: 'FDS';
+  readonly clusterVersionId: string;
+  readonly clusterPublicId: string;
+  /** The summarising version's knowledge time: the moment membership is resolved at. */
+  readonly asOf: IsoTimestamp;
+  /** The count carried in the evidence id, as the cluster summary stated it. */
+  readonly countClaimed: number;
+  /** How many of those detections are still held at this knowledge time. */
+  readonly countHeld: number;
+  /** True when `countHeld < countClaimed`, which retention explains and membership does not. */
+  readonly retentionIncomplete: boolean;
+  /** The acquisition window the set was drawn from. */
+  readonly firstDetectedAt: IsoTimestamp;
+  readonly lastDetectedAt: IsoTimestamp;
+  /** Detections per acquisition day, so the shape of the set is checkable without its rows. */
+  readonly byDay: readonly {
+    readonly day: string;
+    readonly count: number;
+    readonly frpSum: number | null;
+  }[];
+  /** The summary this set belongs to, so a reader can compare the two. */
+  readonly clusterVersionEvidenceId: EvidenceId;
 }
 
 /** `EV:RUN:<uuid>` — one ingestion run; the evidence behind every health statement. */

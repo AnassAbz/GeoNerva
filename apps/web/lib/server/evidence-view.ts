@@ -13,9 +13,9 @@
  *
  * `EV:FDS` is the case G7 found the hard way. It is neither primary nor content-addressed: it names
  * the detection set behind a cluster version, its count travels in the ID itself, and no row exists
- * for it. It reports `resolvable: false`, which is the honest answer — the endpoint has nothing to
- * serve for it — and a manifest that claimed otherwise is what broke every briefing for a location
- * with fire activity.
+ * for it. It now reports `resolvable: true`, because the endpoint reconstructs the set through
+ * membership at the summary's knowledge time rather than looking for a row — resolvable without
+ * being primary, which is the third category `RESOLVABLE_EVIDENCE_KINDS` exists to name.
  *
  * ### What a detail promises
  *
@@ -27,7 +27,7 @@
  */
 
 import {
-  PRIMARY_EVIDENCE_KINDS,
+  isResolvableEvidenceKind,
   evidenceId,
   parseEvidenceId,
   READ_MODEL_SCHEMA_VERSION,
@@ -45,6 +45,7 @@ import { toAttribution } from './attribution.ts';
 
 import type {
   AttributionRow,
+  ClusterDetectionReconstruction,
   ClusterEvidenceRow,
   CorrelationEvidenceRow,
   EvidenceRow,
@@ -68,9 +69,9 @@ export function toEvidenceItem(row: EvidenceRow): EvidenceItem {
   };
 }
 
-/** True for the four kinds `GET /api/v1/evidence/{id}` can serve a row for. */
+/** True for every kind `GET /api/v1/evidence/{id}` can serve, row-backed or reconstructed. */
 export function isResolvableKind(kind: EvidenceKind): boolean {
-  return (PRIMARY_EVIDENCE_KINDS as readonly EvidenceKind[]).includes(kind);
+  return isResolvableEvidenceKind(kind);
 }
 
 /** Wraps a manifest entry and its payload into the endpoint's frozen response. */
@@ -188,6 +189,42 @@ function webUrlOrNull(value: string | null): string | null {
 }
 
 /** `EV:FCV` — the cluster summary payload, plus the detection-set ID it summarizes. */
+/**
+ * `EV:FDS:<clusterVersionId>:<count>` — the detection set behind one cluster summary.
+ *
+ * The two counts are the point of this payload. `countClaimed` is what the id carries and what the
+ * summary stated; `countHeld` is how many of those detections are still stored at this knowledge
+ * time. They diverge only when retention has dropped a daily partition since — membership is not in
+ * question (ADR-039) — and `retentionIncomplete` names that so a smaller number is never read as a
+ * smaller fire.
+ *
+ * `byDay` is served because it makes the set checkable without serving it: a reader can see the
+ * shape of the fire across acquisition days. Individual pixels are not served at all.
+ */
+export function detectionSetPayload(
+  ref: { readonly clusterVersionId: string; readonly count: number },
+  row: ClusterEvidenceRow,
+  reconstruction: ClusterDetectionReconstruction,
+): EvidenceDetailPayload {
+  return {
+    kind: 'FDS',
+    clusterVersionId: row.cluster_version_id,
+    clusterPublicId: row.cluster_public_id,
+    asOf: row.as_of.toISOString(),
+    countClaimed: ref.count,
+    countHeld: reconstruction.count,
+    retentionIncomplete: reconstruction.count < ref.count,
+    firstDetectedAt: row.first_detected_at.toISOString(),
+    lastDetectedAt: row.last_detected_at.toISOString(),
+    byDay: reconstruction.byDay.map((entry) => ({
+      day: entry.day,
+      count: entry.count,
+      frpSum: entry.frp_sum,
+    })),
+    clusterVersionEvidenceId: evidenceId.fireClusterVersion(row.cluster_version_id),
+  };
+}
+
 export function clusterPayload(row: ClusterEvidenceRow): EvidenceDetailPayload {
   return {
     kind: 'FCV',

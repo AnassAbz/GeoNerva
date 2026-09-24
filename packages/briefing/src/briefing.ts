@@ -431,7 +431,9 @@ async function resolveManifest(
    *
    * It is resolvable exactly when its cluster version is: the count travels in the id, and the
    * thing that makes the citation trustworthy is that the version it summarizes exists at this
-   * knowledge time.
+   * knowledge time. **`resolvable` is true**, because the evidence endpoint now reconstructs the
+   * set through membership rather than refusing it; the manifest and the endpoint have to agree
+   * about that flag, and they disagreed with `DOMAIN_MODEL.md` between them until it did.
    */
   for (const id of byKind.get('FDS') ?? []) {
     const ref = tryParseEvidenceId(id);
@@ -448,7 +450,7 @@ async function resolveManifest(
       observedAt: version?.observed_at?.toISOString() ?? null,
       ingestedAt: version?.ingested_at.toISOString() ?? asOf.toISOString(),
       url: null,
-      resolvable: false,
+      resolvable: true,
     });
   }
 

@@ -64,7 +64,7 @@ import type { IsoTimestamp } from '../value-objects/time.ts';
  * 5 — QA round 2 (M-2): `FireClusterSummaryView.countedTo`, the end of the rolling window its
  *     24-hour figures actually cover.
  */
-export const READ_MODEL_SCHEMA_VERSION = 5;
+export const READ_MODEL_SCHEMA_VERSION = 6;
 
 export type ReadModelSchemaVersion = typeof READ_MODEL_SCHEMA_VERSION;
 

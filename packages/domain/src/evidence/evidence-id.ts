@@ -52,6 +52,19 @@ export type PrimaryEvidenceKind = (typeof PRIMARY_EVIDENCE_KINDS)[number];
 export const CONTENT_ADDRESSED_EVIDENCE_KINDS = ['BAS', 'REL', 'CHG'] as const;
 export type ContentAddressedEvidenceKind = (typeof CONTENT_ADDRESSED_EVIDENCE_KINDS)[number];
 
+/**
+ * Every kind `GET /api/v1/evidence/{id}` can serve.
+ *
+ * Not the same list as the primary kinds, and the difference is `FDS`. A primary kind names a
+ * **row**; `FDS` names the *set of detections* behind a cluster summary, which has no row and is
+ * reconstructed through membership at that summary's knowledge time (ADR-039). It is therefore
+ * resolvable without being primary, which is exactly what `DOMAIN_MODEL.md` means by "resolvable
+ * via membership" — and reporting it `resolvable: false` while the endpoint served it was the last
+ * place that contract and this code disagreed.
+ */
+export const RESOLVABLE_EVIDENCE_KINDS = [...PRIMARY_EVIDENCE_KINDS, 'FDS'] as const;
+export type ResolvableEvidenceKind = (typeof RESOLVABLE_EVIDENCE_KINDS)[number];
+
 /** The canonical string form, e.g. `"EV:OBS:41"`. */
 export type EvidenceId = string;
 
@@ -183,9 +196,14 @@ function isEvidenceKind(value: string): value is EvidenceKind {
   return (EVIDENCE_KINDS as readonly string[]).includes(value);
 }
 
-/** True for kinds resolvable through `GET /api/v1/evidence/{id}`. */
+/** True for the kinds that name a stored row. `FDS` is resolvable but is **not** one of them. */
 export function isPrimaryEvidenceKind(kind: EvidenceKind): kind is PrimaryEvidenceKind {
   return (PRIMARY_EVIDENCE_KINDS as readonly EvidenceKind[]).includes(kind);
+}
+
+/** True for kinds resolvable through `GET /api/v1/evidence/{id}`. */
+export function isResolvableEvidenceKind(kind: EvidenceKind): kind is ResolvableEvidenceKind {
+  return (RESOLVABLE_EVIDENCE_KINDS as readonly EvidenceKind[]).includes(kind);
 }
 
 /** True for kinds whose ID is the hash of the computation behind them. */

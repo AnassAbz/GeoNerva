@@ -144,6 +144,28 @@ export async function runFireIngestion(
       `no source_product ${descriptor.productCode} for source ${descriptor.sourceId}`,
     );
   }
+  /*
+   * **Both switches, not one** (the enablement invariant).
+   *
+   * Enabling a feed is two changes — the source and the product — and reading only the product let
+   * FIRMS ingest 92,616 detections and build 34,087 clusters while `sources.firms.enabled` was
+   * false. A product enabled under a disabled source is not a feed this deployment offers.
+   *
+   * Refused **before the run lease**, exactly as a disabled product is, so there is no run row, no
+   * health evidence and — the part that matters most — no coverage recorded for hours nobody was
+   * allowed to read. The reason names which switch is off, because the fix differs.
+   */
+  if (!product.sourceEnabled) {
+    const reason = `source ${descriptor.sourceId} is disabled`;
+    logger.log('warn', 'ingestion.source_disabled', {
+      ...base,
+      stage: 'lease',
+      status: 'SKIPPED',
+      detail: reason,
+    });
+    return finish('SKIPPED', null, null, reason);
+  }
+
   if (!product.enabled || product.status === 'RETIRED') {
     const reason = product.enabled
       ? `${descriptor.productCode} is retired`

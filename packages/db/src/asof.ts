@@ -1459,6 +1459,60 @@ export async function evidenceItemsAsOf(
     rows.push(...result.rows);
   }
 
+  /*
+   * `EV:FDS:<clusterVersionId>:<count>` — the detection set behind a cluster summary.
+   *
+   * Bucketed by hand rather than through `byKind`, because that map keeps only the *third* segment
+   * and an FDS id carries its count in a fourth. Dropping it would make the row's id differ from
+   * the one the caller asked for, and the evidence endpoint matches on exactly that.
+   *
+   * Resolvable precisely when its cluster version is: the set is reconstructed through membership
+   * at that version's knowledge time, so if the version is not visible here neither is the set.
+   */
+  const detectionSetIds = options.ids.filter((id) => id.startsWith('EV:FDS:'));
+  if (detectionSetIds.length > 0) {
+    const byVersion = new Map<string, { readonly id: string; readonly count: string }>();
+    for (const id of detectionSetIds) {
+      const parts = id.split(':');
+      const versionId = parts[2];
+      const count = parts[3];
+      if (versionId === undefined || count === undefined) continue;
+      byVersion.set(versionId, { id, count });
+    }
+    if (byVersion.size > 0) {
+      const result = await sql<{
+        version_id: string;
+        public_id: string;
+        observed_at: Date | null;
+        ingested_at: Date;
+      }>`
+        SELECT v.id::text        AS version_id,
+               c.public_id       AS public_id,
+               v.last_detected_at AS observed_at,
+               v.as_of           AS ingested_at
+        FROM geonerva.fire_cluster_versions v
+        JOIN geonerva.fire_clusters c ON c.id = v.cluster_id
+        WHERE v.id = ANY(${sql.val([...byVersion.keys()])}::bigint[])
+          AND v.as_of <= ${options.asOf}
+        ORDER BY v.id
+      `.execute(db);
+      for (const row of result.rows) {
+        const asked = byVersion.get(row.version_id);
+        if (asked === undefined) continue;
+        rows.push({
+          id: asked.id,
+          kind: 'FDS',
+          summary: `the ${asked.count} detections behind fire cluster ${row.public_id} summary ${row.version_id}`,
+          source_id: 'firms',
+          product_id: null,
+          observed_at: row.observed_at,
+          ingested_at: row.ingested_at,
+          url: null,
+        });
+      }
+    }
+  }
+
   return rows.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
 }
 
@@ -1836,6 +1890,8 @@ export async function observationEvidenceAsOf(
 /** `EV:FCV:<id>` — one fire-cluster summary version. */
 export interface ClusterEvidenceRow {
   readonly cluster_version_id: string;
+  /** The cluster's internal id, which the detection-set reconstruction needs (`EV:FDS`). */
+  readonly cluster_id: string;
   readonly cluster_public_id: string;
   readonly as_of: Date;
   readonly n_total: number;
@@ -1857,6 +1913,7 @@ export async function clusterEvidenceAsOf(
 ): Promise<ClusterEvidenceRow | null> {
   const result = await sql<ClusterEvidenceRow>`
     SELECT v.id::text                       AS cluster_version_id,
+           v.cluster_id::text               AS cluster_id,
            c.public_id                      AS cluster_public_id,
            v.as_of,
            v.n_total,
