@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>GeoNerva overview card</title>
+    <style>
+      /*
+       * Sized 1200x1500 (4:5) because that is the tallest aspect LinkedIn renders in the mobile
+       * feed, so the diagram gets the most screen it can. Rendered at deviceScaleFactor 2.
+       *
+       * Everything is sized generously: this is read at thumbnail size while someone scrolls, so
+       * nothing here is smaller than 26px at 1x, and the flow runs top-to-bottom because that is
+       * how a phone is read.
+       */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        width: 1200px;
+        height: 1500px;
+        background: #0f1724;
+        font-family:
+          'Segoe UI Variable Display',
+          'Segoe UI',
+          -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+        color: #e8edf5;
+        display: flex;
+        flex-direction: column;
+        padding: 64px 72px 56px;
+      }
+
+      .brand {
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #6da8ff;
+      }
+
+      h1 {
+        margin-top: 18px;
+        font-size: 61px;
+        line-height: 1.06;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+      }
+
+      .sub {
+        margin-top: 20px;
+        font-size: 30px;
+        line-height: 1.4;
+        color: #9fb0c8;
+        font-weight: 400;
+        max-width: 950px;
+      }
+
+      .label {
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #7f92ad;
+        margin-bottom: 20px;
+      }
+
+      .sources {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 18px;
+      }
+
+      .src {
+        background: #151f31;
+        border: 3px solid #2c3a52;
+        border-radius: 18px;
+        padding: 24px 12px;
+        text-align: center;
+      }
+
+      .src .n {
+        font-size: 31px;
+        font-weight: 700;
+        color: #e8edf5;
+      }
+
+      .src .w {
+        margin-top: 8px;
+        font-size: 23px;
+        color: #8b9db6;
+      }
+
+      .arrow {
+        text-align: center;
+        font-size: 40px;
+        line-height: 1;
+        color: #4d6a94;
+        margin: 22px 0;
+      }
+
+      .engine {
+        border: 4px solid #6da8ff;
+        border-radius: 22px;
+        background: linear-gradient(180deg, #16243c 0%, #131d30 100%);
+        padding: 34px 40px;
+        text-align: center;
+      }
+
+      .engine .t {
+        font-size: 40px;
+        font-weight: 800;
+        color: #ffffff;
+      }
+
+      .engine .d {
+        margin-top: 14px;
+        font-size: 29px;
+        color: #a9bcd6;
+        line-height: 1.35;
+      }
+
+      .points {
+        margin-top: 10px;
+        margin-bottom: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .p {
+        display: flex;
+        align-items: flex-start;
+        gap: 22px;
+      }
+
+      .tick {
+        flex: 0 0 auto;
+        width: 46px;
+        height: 46px;
+        border-radius: 12px;
+        background: #1c3a2b;
+        border: 3px solid #3f9e6a;
+        color: #6ee7a0;
+        font-size: 28px;
+        font-weight: 800;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .p .txt {
+        font-size: 30px;
+        line-height: 1.34;
+        padding-top: 4px;
+      }
+
+      .p .txt b {
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .p .txt span {
+        color: #93a6c0;
+      }
+
+      .foot {
+        margin-top: auto;
+        padding-top: 34px;
+        border-top: 3px solid #23304a;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 25px;
+        color: #7f92ad;
+      }
+
+      .foot b {
+        color: #c6d4e8;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="brand">GeoNerva</div>
+    <h1>Natural-hazard intelligence<br />that admits what it doesn't know</h1>
+    <p class="sub">
+      Open-source. For any place on earth: what's changing, how unusual it is, and where every
+      number came from.
+    </p>
+
+    <div style="margin-top: 46px">
+      <div class="label">Four public feeds</div>
+      <div class="sources">
+        <div class="src">
+          <div class="n">USGS</div>
+          <div class="w">earthquakes</div>
+        </div>
+        <div class="src">
+          <div class="n">EMSC</div>
+          <div class="w">earthquakes</div>
+        </div>
+        <div class="src">
+          <div class="n">GDACS</div>
+          <div class="w">6 hazard types</div>
+        </div>
+        <div class="src">
+          <div class="n">NASA FIRMS</div>
+          <div class="w">thermal pixels</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow">▼</div>
+
+    <div class="engine">
+      <div class="t">Match &nbsp;·&nbsp; Cluster &nbsp;·&nbsp; Date-stamp</div>
+      <div class="d">
+        Duplicate reports merged into one event.<br />
+        230,000 satellite pixels a day grouped into areas of activity.
+      </div>
+    </div>
+
+    <div class="arrow">▼</div>
+
+    <div class="points">
+      <div class="p">
+        <div class="tick">✓</div>
+        <div class="txt">
+          <b>A copy is never confirmation.</b>
+          <span>Two agencies agreeing is corroboration. One republishing the other is not.</span>
+        </div>
+      </div>
+      <div class="p">
+        <div class="tick">✓</div>
+        <div class="txt">
+          <b>“Nothing is happening” ≠ “we can't tell you”.</b>
+          <span>No source, feed down, not yet processed and genuinely quiet are four answers.</span>
+        </div>
+      </div>
+      <div class="p">
+        <div class="tick">✓</div>
+        <div class="txt">
+          <b>Every claim cites its evidence.</b>
+          <span>Each number links to the record it came from.</span>
+        </div>
+      </div>
+      <div class="p">
+        <div class="tick">✓</div>
+        <div class="txt">
+          <b>Ask it what it knew last Tuesday.</b>
+          <span>Replay any past moment — later facts never leak backwards.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <div><b>No AI required.</b> Every sentence is deterministic.</div>
+      <div>Apache-2.0</div>
+    </div>
+  </body>
+</html>

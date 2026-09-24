@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>GeoNerva simple card</title>
+    <style>
+      /*
+       * The stripped version: a pipeline, and a sample of what the product actually says.
+       *
+       * Showing the answer is what makes this understandable in one glance — including the line
+       * that refuses, which is the whole point of the project and is hard to convey in prose.
+       * Nothing is smaller than 28px at 1x. 1200x1200 square.
+       */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        width: 1200px;
+        height: 1200px;
+        background: #0f1724;
+        font-family:
+          'Segoe UI Variable Display',
+          'Segoe UI',
+          -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+        color: #e8edf5;
+        display: flex;
+        flex-direction: column;
+        padding: 58px 66px 52px;
+      }
+
+      h1 {
+        font-size: 62px;
+        font-weight: 800;
+        line-height: 1.04;
+        letter-spacing: -0.02em;
+      }
+
+      h1 em {
+        font-style: normal;
+        color: #6da8ff;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin-top: 34px;
+      }
+
+      .src {
+        background: #151f31;
+        border: 3px solid #2c3a52;
+        border-radius: 16px;
+        padding: 22px 8px;
+        text-align: center;
+        font-size: 30px;
+        font-weight: 700;
+      }
+
+      .arrow {
+        text-align: center;
+        font-size: 38px;
+        color: #4d6a94;
+        margin: 14px 0;
+      }
+
+      .engine {
+        text-align: center;
+        font-size: 36px;
+        font-weight: 700;
+        color: #ffffff;
+        border: 4px solid #6da8ff;
+        border-radius: 18px;
+        background: #16243c;
+        padding: 26px;
+      }
+
+      .engine small {
+        display: block;
+        margin-top: 10px;
+        font-size: 27px;
+        font-weight: 400;
+        color: #a9bcd6;
+      }
+
+      /* The mock answer. Deliberately styled like a product surface, not like a slide. */
+      .answer {
+        margin-top: 18px;
+        background: #f7f9fc;
+        border-radius: 20px;
+        padding: 30px 34px 26px;
+        color: #16202f;
+      }
+
+      .answer .place {
+        font-size: 27px;
+        font-weight: 700;
+        color: #5b6b82;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .line {
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        padding: 12px 0;
+        border-bottom: 2px solid #e2e8f0;
+        font-size: 31px;
+      }
+
+      .line:last-child {
+        border-bottom: none;
+        padding-bottom: 2px;
+      }
+
+      .line .k {
+        flex: 0 0 268px;
+        font-weight: 700;
+        color: #16202f;
+      }
+
+      .line .v {
+        color: #33445c;
+      }
+
+      .line .v b {
+        color: #16202f;
+      }
+
+      .pill {
+        display: inline-block;
+        font-size: 23px;
+        font-weight: 700;
+        padding: 5px 13px;
+        border-radius: 999px;
+        margin-left: 4px;
+        vertical-align: 2px;
+      }
+
+      .ok {
+        background: #dcf3e4;
+        color: #1c6b3a;
+      }
+      .warn {
+        background: #fdeccd;
+        color: #8a5410;
+      }
+      .none {
+        background: #e6eaf0;
+        color: #53617a;
+      }
+
+      .foot {
+        margin-top: auto;
+        padding-top: 26px;
+        font-size: 27px;
+        color: #8b9db6;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .foot b {
+        color: #e8edf5;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>It tells you what's happening —<br /><em>and when it can't.</em></h1>
+
+    <div class="row">
+      <div class="src">USGS</div>
+      <div class="src">EMSC</div>
+      <div class="src">GDACS</div>
+      <div class="src">NASA FIRMS</div>
+    </div>
+
+    <div class="arrow">▼</div>
+
+    <div class="engine">
+      Match · Cluster · Date-stamp
+      <small>Duplicate reports become one event. A copy never counts as confirmation.</small>
+    </div>
+
+    <div class="arrow">▼</div>
+
+    <div class="answer">
+      <div class="place">What one answer looks like</div>
+      <div class="line">
+        <div class="k">Earthquakes</div>
+        <div class="v"><b>2</b> — M4.8 at 31 km <span class="pill ok">2 sources agree</span></div>
+      </div>
+      <div class="line">
+        <div class="k">Fire activity</div>
+        <div class="v"><b>18</b> areas, nearest 0.2 km <span class="pill ok">satellite</span></div>
+      </div>
+      <div class="line">
+        <div class="k">Floods</div>
+        <div class="v">None <span class="pill ok">looked, saw nothing</span></div>
+      </div>
+      <div class="line">
+        <div class="k">Weather warnings</div>
+        <div class="v">No source here <span class="pill none">can't tell you</span></div>
+      </div>
+      <div class="line">
+        <div class="k">Cyclones</div>
+        <div class="v">Feed not read yet <span class="warn pill">not a zero</span></div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <div><b>GeoNerva</b> · open-source hazard intelligence</div>
+      <div>Apache-2.0</div>
+    </div>
+  </body>
+</html>
