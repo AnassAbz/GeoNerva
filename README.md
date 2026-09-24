@@ -51,6 +51,7 @@ These are deliberate and documented rather than hidden. None of them is a defect
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | [docs/PRODUCT.md](docs/PRODUCT.md)                         | Product definition, v1 scope, information architecture, language rules          |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)               | System design: ingestion, correlation, geospatial, baselines, What Changed, API |
+| [docs/DIAGRAMS.md](docs/DIAGRAMS.md)                       | Mermaid diagrams: providers, worker, storage, replay, packages, availability    |
 | [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md)               | Verified provider contracts, limits, licences, attribution                      |
 | [docs/DOMAIN_MODEL.md](docs/DOMAIN_MODEL.md)               | Entities, time semantics, database design                                       |
 | [docs/DECISIONS.md](docs/DECISIONS.md)                     | Architecture decision records                                                   |
