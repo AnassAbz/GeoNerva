@@ -25,7 +25,7 @@
   "dependencies": {
     "@geonerva/domain": "workspace:*",
     "kysely": "0.29.6",
-    "pg": "8.23.0"
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@types/pg": "8.23.1",
