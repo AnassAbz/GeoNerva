@@ -18,7 +18,7 @@
     "@geonerva/geo": "workspace:*",
     "@geonerva/http": "workspace:*",
     "@geonerva/sources": "workspace:*",
-    "kysely": "0.29.6"
+    "kysely": "0.29.7"
   },
   "devDependencies": {
     "@geonerva/test-fixtures": "workspace:*"
