@@ -12,7 +12,7 @@ name: geonerva
 
 services:
   db:
-    image: postgis/postgis:17-3.4@sha256:d0b5a6ecab18997637f55a83cb4a9467391de5645916cfa1b6f2a8d19eee7be5
+    image: postgis/postgis:18-3.6@sha256:4a43e3c3e5d55b9208240fc71db543b79c638766280c625a425bd0a2390989c4
     environment:
       POSTGRES_DB: geonerva
       POSTGRES_USER: geonerva
